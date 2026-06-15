@@ -1,0 +1,6 @@
+version: 3
+tasks:
+  default:
+    cmds:
+      - docker compose down
+      - docker compose up -d --build --force-recreate

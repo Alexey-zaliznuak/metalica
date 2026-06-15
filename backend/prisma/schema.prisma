@@ -1,0 +1,159 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  MANAGER
+  DESIGNER
+  ADMIN
+}
+
+enum OrderStatus {
+  NEW
+  IN_PROGRESS
+  IN_REVISION
+  DONE
+}
+
+enum OrderSource {
+  MANUAL
+  BLUESALES
+}
+
+enum MessageKind {
+  NORMAL
+  REVISION_REQUEST
+  REVISION_ANSWER
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  username     String    @unique
+  name         String
+  role         Role      @default(MANAGER)
+  passwordHash String
+  messages     Message[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([role])
+}
+
+model Order {
+  id            Int                 @id @default(autoincrement())
+  orderNumber   String              @unique
+  title         String?
+  status        OrderStatus         @default(NEW)
+  source        OrderSource         @default(MANUAL)
+  messages      Message[]
+  // Лид (клиент из BlueSales), создавший заказ
+  lead          Lead?               @relation(fields: [leadId], references: [id])
+  leadId        Int?
+  // Подмодель с «сырыми» данными заказа из BlueSales (1-к-1)
+  bluesalesInfo BluesalesOrderInfo?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([status])
+  @@index([source])
+  @@index([leadId])
+}
+
+// Данные заказа, специфичные для BlueSales (1-к-1 с Order)
+model BluesalesOrderInfo {
+  id            Int       @id @default(autoincrement())
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId       Int       @unique
+  // id заказа в BlueSales — ключ идемпотентности импорта
+  bsOrderId     Int       @unique
+  bsNumber      String?
+  // Статус заказа в BS (order.orderStatus)
+  orderStatusId Int?
+  orderStatus   String?
+  // CRM-статус клиента/воронки (order.crmStatus), если есть
+  crmStatusId   Int?
+  crmStatus     String?
+  totalSum      Float?
+  // Когда заказ создан в BlueSales (order.date)
+  bsCreatedAt   DateTime?
+  // Полный ответ BS на случай будущих полей / отладки
+  rawPayload    Json?
+  lastSyncedAt  DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([orderStatusId])
+  @@index([crmStatusId])
+  @@index([bsCreatedAt])
+}
+
+// Лид (клиент из BlueSales)
+model Lead {
+  id           Int      @id @default(autoincrement())
+  // id клиента в BlueSales — ключ идемпотентности синка
+  bsCustomerId Int?     @unique
+  name         String?
+  fullName     String?
+  // Ссылка на диалог в ВК-группе (переписка сообщество <-> лид)
+  vkDialogUrl  String?
+  vkUserId     String?
+  crmStatus    String?
+  orders       Order[]
+  lastSyncedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([crmStatus])
+}
+
+// Служебное состояние фоновых синхронизаций (наблюдаемость / курсоры)
+model SyncState {
+  id            Int       @id @default(autoincrement())
+  // Уникальный ключ задачи синка, напр. "bluesales:orders", "bluesales:leads"
+  key           String    @unique
+  lastRunAt     DateTime?
+  lastSuccessAt DateTime?
+  lastError     String?
+  cursor        String?
+  itemsSynced   Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Message {
+  id          Int          @id @default(autoincrement())
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     Int
+  author      User         @relation(fields: [authorId], references: [id])
+  authorId    Int
+  kind        MessageKind  @default(NORMAL)
+  body        String?
+  // Self-relation: an ANSWER points to the REQUEST it resolves (revision pairing)
+  answerTo    Message?     @relation("RevisionPair", fields: [answerToId], references: [id])
+  answerToId  Int?
+  answeredBy  Message[]    @relation("RevisionPair")
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([orderId, kind])
+  @@index([answerToId])
+}
+
+model Attachment {
+  id        Int      @id @default(autoincrement())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId Int
+  objectKey String
+  filename  String
+  mimeType  String?
+  kind      String   @default("attachment")
+  createdAt DateTime @default(now())
+
+  @@index([messageId])
+}
