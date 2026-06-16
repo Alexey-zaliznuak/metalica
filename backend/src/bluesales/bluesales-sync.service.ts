@@ -1,21 +1,31 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { OrderSource, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BluesalesApiService, BsCustomer, BsOrder } from './bluesales-api.service';
 
-const SYNC_KEY_ORDERS = 'bluesales:orders';
+const SYNC_KEY_FAST = 'bluesales:fast-sync';
+const SYNC_KEY_REFRESH = 'bluesales:refresh-loop';
+
+/** Перекрытие окна инкрементального синка — берём с запасом, чтобы не пропустить заказы на границе. */
+const FAST_SYNC_OVERLAP_MINUTES = 70;
+
+const REFRESH_BATCH_SIZE = 30;
+const REFRESH_PAUSE_MS = 1200;
+/** Заказы не старше 2 месяцев попадают в фоновый обход. */
+const REFRESH_LOOKBACK_DAYS = 60;
 
 @Injectable()
-export class BluesalesSyncService implements OnModuleInit {
+export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BluesalesSyncService.name);
   private readonly enabled: boolean;
-  private readonly syncDays: number;
   private readonly vkGroupId: string;
 
-  // Защита от наложения прогонов (cron раз в минуту)
-  private isRunning = false;
+  /** Защита от параллельного запуска быстрого синка. */
+  private fastSyncRunning = false;
+  /** Флаг остановки фонового цикла (выставляется при shutdown). */
+  private loopActive = false;
 
   constructor(
     private readonly api: BluesalesApiService,
@@ -23,89 +33,182 @@ export class BluesalesSyncService implements OnModuleInit {
     private readonly config: ConfigService,
   ) {
     this.enabled = this.config.get<string>('BLUESALES_ENABLED', 'true') !== 'false';
-    this.syncDays = Number(this.config.get<string>('BLUESALES_SYNC_DAYS', '7')) || 7;
     this.vkGroupId = this.config.get<string>('BLUESALES_VK_GROUP_ID', '');
   }
 
   onModuleInit(): void {
     if (!this.enabled) {
       this.logger.warn('BlueSales sync отключён (BLUESALES_ENABLED=false)');
-    } else if (!this.api.isConfigured) {
+      return;
+    }
+    if (!this.api.isConfigured) {
       this.logger.warn(
         'BlueSales sync включён, но не заданы BLUESALES_LOGIN / BLUESALES_PASSWORD',
       );
-    } else {
-      this.logger.log(`BlueSales sync активен (период: последние ${this.syncDays} дн.)`);
+      return;
     }
+    this.logger.log('BlueSales sync активен: быстрый cron каждые 5 мин + фоновый refresh-loop');
+    this.loopActive = true;
+    // Запускаем цикл после небольшой паузы, чтобы приложение успело подняться.
+    setTimeout(() => void this.runRefreshLoop(), 5000);
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
-  async handleCron(): Promise<void> {
-    if (!this.enabled || !this.api.isConfigured) {
-      return;
-    }
-    if (this.isRunning) {
-      this.logger.debug('Предыдущий прогон ещё выполняется — пропуск');
-      return;
-    }
-    this.isRunning = true;
-    try {
-      await this.syncOrders();
-    } catch (err) {
-      this.logger.error(`Ошибка синхронизации BlueSales: ${(err as Error).message}`);
-    } finally {
-      this.isRunning = false;
-    }
+  onModuleDestroy(): void {
+    this.loopActive = false;
   }
+
+  // ─── Быстрый инкрементальный синк (каждые 5 минут) ────────────────────────
 
   /**
-   * Тянет заказы за последние N дней и upsert-ит их в нашу систему вместе с
-   * лидами (клиентами). Лиды и заказы обновляются в рамках одного прогона —
-   * единая очередь запросов к BlueSales не позволяет слать их одновременно.
+   * Каждые 5 минут тянет заказы за последние ~70 минут и досоздаёт новые.
+   * Перекрытие 70 мин исключает пропуск заказов на границе интервалов.
    */
-  async syncOrders(): Promise<{ orders: number; leads: number }> {
-    const now = new Date();
-    const dateFrom = new Date(now.getTime() - this.syncDays * 24 * 60 * 60 * 1000);
-
-    await this.markRun(SYNC_KEY_ORDERS);
-
-    let orders: BsOrder[];
+  @Cron('*/5 * * * *')
+  async handleFastSync(): Promise<void> {
+    if (!this.enabled || !this.api.isConfigured) return;
+    if (this.fastSyncRunning) {
+      this.logger.debug('Быстрый синк ещё выполняется — пропуск');
+      return;
+    }
+    this.fastSyncRunning = true;
     try {
-      orders = await this.api.getOrders(dateFrom, now);
+      await this.runFastSync();
     } catch (err) {
-      await this.markError(SYNC_KEY_ORDERS, (err as Error).message);
+      this.logger.error(`Быстрый синк BS ошибка: ${(err as Error).message}`);
+      await this.markError(SYNC_KEY_FAST, (err as Error).message);
+    } finally {
+      this.fastSyncRunning = false;
+    }
+  }
+
+  async runFastSync(): Promise<{ orders: number; leads: number }> {
+    const now = new Date();
+    const dateFrom = new Date(now.getTime() - FAST_SYNC_OVERLAP_MINUTES * 60 * 1000);
+
+    await this.markRun(SYNC_KEY_FAST);
+
+    let bsOrders: BsOrder[];
+    try {
+      bsOrders = await this.api.getOrders(dateFrom, now);
+    } catch (err) {
+      await this.markError(SYNC_KEY_FAST, (err as Error).message);
       throw err;
     }
 
     const leadIds = new Set<number>();
-    let ordersSynced = 0;
+    let synced = 0;
 
-    for (const bsOrder of orders) {
+    for (const bsOrder of bsOrders) {
       try {
         const leadId = await this.upsertLead(bsOrder.customer ?? null);
-        if (leadId) {
-          leadIds.add(leadId);
-        }
+        if (leadId) leadIds.add(leadId);
         await this.upsertOrder(bsOrder, leadId);
-        ordersSynced += 1;
+        synced++;
       } catch (err) {
         this.logger.error(
-          `Не удалось обработать заказ BS#${bsOrder.id}: ${(err as Error).message}`,
+          `Быстрый синк: не удалось обработать BS#${bsOrder.id}: ${(err as Error).message}`,
         );
       }
     }
 
-    await this.markSuccess(SYNC_KEY_ORDERS, ordersSynced);
-    this.logger.log(
-      `BlueSales sync: заказов ${ordersSynced}/${orders.length}, лидов ${leadIds.size}`,
-    );
-    return { orders: ordersSynced, leads: leadIds.size };
+    await this.markSuccess(SYNC_KEY_FAST, synced);
+    this.logger.log(`Быстрый синк BS: заказов ${synced}/${bsOrders.length}, лидов ${leadIds.size}`);
+    return { orders: synced, leads: leadIds.size };
   }
 
-  private async upsertLead(customer: BsCustomer | null): Promise<number | null> {
-    if (!customer?.id) {
-      return null;
+  // ─── Фоновый refresh-loop ──────────────────────────────────────────────────
+
+  /**
+   * Бесконечный цикл: берёт батч из 20 самых давно обновлённых заказов
+   * (не старше 2 месяцев) и актуализирует их через ids-фильтр BS API.
+   * Между итерациями — пауза 1 с, чтобы другие операции могли использовать API.
+   */
+  private async runRefreshLoop(): Promise<void> {
+    this.logger.log('Фоновый refresh-loop запущен');
+
+    while (this.loopActive) {
+      try {
+        await this.refreshBatch();
+      } catch (err) {
+        this.logger.error(`Refresh-loop ошибка: ${(err as Error).message}`);
+        await this.markError(SYNC_KEY_REFRESH, (err as Error).message);
+      }
+
+      // Пауза даёт другим запросам к BS API (от менеджеров) попасть в очередь.
+      await this.sleep(REFRESH_PAUSE_MS);
     }
+
+    this.logger.log('Фоновый refresh-loop остановлен');
+  }
+
+  private async refreshBatch(): Promise<void> {
+    const startedAt = Date.now();
+    const lookbackDate = new Date(Date.now() - REFRESH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+    const batch = await this.prisma.bluesalesOrderInfo.findMany({
+      where: {
+        bsCreatedAt: { gte: lookbackDate },
+      },
+      orderBy: { lastSyncedAt: 'asc' },
+      take: REFRESH_BATCH_SIZE,
+      select: { bsOrderId: true },
+    });
+
+    if (batch.length === 0) {
+      // Нет заказов для обновления — ждём подольше, чтобы не спамить в БД.
+      await this.sleep(10_000);
+      return;
+    }
+
+    const ids = batch.map((b) => b.bsOrderId);
+    await this.markRun(SYNC_KEY_REFRESH);
+
+    let bsOrders: BsOrder[];
+    try {
+      bsOrders = await this.api.getOrdersByIds(ids);
+    } catch (err) {
+      await this.markError(SYNC_KEY_REFRESH, (err as Error).message);
+      throw err;
+    }
+
+    const returnedIds = new Set(bsOrders.map((o) => o.id));
+    let synced = 0;
+
+    for (const bsOrder of bsOrders) {
+      try {
+        const leadId = await this.upsertLead(bsOrder.customer ?? null);
+        await this.upsertOrder(bsOrder, leadId);
+        synced++;
+      } catch (err) {
+        this.logger.error(
+          `Refresh-loop: не удалось обработать BS#${bsOrder.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Для заказов, которые BS не вернул (удалены / недоступны), всё равно
+    // обновляем lastSyncedAt, чтобы они не застряли наверху очереди.
+    const missingIds = ids.filter((id) => !returnedIds.has(id));
+    if (missingIds.length > 0) {
+      await this.prisma.bluesalesOrderInfo.updateMany({
+        where: { bsOrderId: { in: missingIds } },
+        data: { lastSyncedAt: new Date() },
+      });
+    }
+
+    await this.markSuccess(SYNC_KEY_REFRESH, synced);
+
+    const elapsedMs = Date.now() - startedAt;
+    this.logger.debug(
+      `Refresh-loop: обновлено ${synced}, пропущено (нет в BS) ${missingIds.length}, время ${elapsedMs} мс`,
+    );
+  }
+
+  // ─── Upsert-логика (общая для обоих процессов) ────────────────────────────
+
+  async upsertLead(customer: BsCustomer | null): Promise<number | null> {
+    if (!customer?.id) return null;
+
     const fullName = (customer.fullName ?? '').trim() || null;
     const name = fullName ? fullName.split(/\s+/)[0] : null;
     const vkUserId = customer.vk?.id ? String(customer.vk.id) : null;
@@ -114,32 +217,16 @@ export class BluesalesSyncService implements OnModuleInit {
 
     const lead = await this.prisma.lead.upsert({
       where: { bsCustomerId: customer.id },
-      create: {
-        bsCustomerId: customer.id,
-        name,
-        fullName,
-        vkUserId,
-        vkDialogUrl,
-        crmStatus,
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        name,
-        fullName,
-        vkUserId,
-        vkDialogUrl,
-        crmStatus,
-        lastSyncedAt: new Date(),
-      },
+      create: { bsCustomerId: customer.id, name, fullName, vkUserId, vkDialogUrl, crmStatus, lastSyncedAt: new Date() },
+      update: { name, fullName, vkUserId, vkDialogUrl, crmStatus, lastSyncedAt: new Date() },
     });
     return lead.id;
   }
 
-  private async upsertOrder(bsOrder: BsOrder, leadId: number | null): Promise<void> {
+  async upsertOrder(bsOrder: BsOrder, leadId: number | null): Promise<void> {
     const orderNumber = this.resolveOrderNumber(bsOrder);
     const title = `Заказ номер ${orderNumber}`;
     const bsCreatedAt = this.parseDate(bsOrder.date);
-    // У заказа BS нет собственного crmStatus — это статус клиента в воронке
     const crm = bsOrder.customer?.crmStatus ?? null;
 
     const infoData = {
@@ -172,21 +259,13 @@ export class BluesalesSyncService implements OnModuleInit {
       return;
     }
 
-    // Заказа с таким bsOrderId ещё нет — создаём (или переиспользуем
-    // существующий заказ с тем же номером, напр. созданный вручную).
-    const sameNumber = await this.prisma.order.findUnique({
-      where: { orderNumber },
-    });
-
+    const sameNumber = await this.prisma.order.findUnique({ where: { orderNumber } });
     if (sameNumber) {
       await this.prisma.bluesalesOrderInfo.create({
         data: { ...infoData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
       });
       if (leadId && sameNumber.leadId !== leadId) {
-        await this.prisma.order.update({
-          where: { id: sameNumber.id },
-          data: { leadId },
-        });
+        await this.prisma.order.update({ where: { id: sameNumber.id }, data: { leadId } });
       }
       return;
     }
@@ -197,17 +276,16 @@ export class BluesalesSyncService implements OnModuleInit {
         title,
         source: OrderSource.BLUESALES,
         leadId: leadId ?? undefined,
-        bluesalesInfo: {
-          create: { ...infoData, bsOrderId: bsOrder.id },
-        },
+        bluesalesInfo: { create: { ...infoData, bsOrderId: bsOrder.id } },
       },
     });
   }
 
+  // ─── Вспомогательные методы ───────────────────────────────────────────────
+
   private resolveOrderNumber(bsOrder: BsOrder): string {
     const candidate =
-      this.firstNonEmpty(bsOrder.internalNumber, bsOrder.externalNumber) ??
-      bsOrder.id;
+      this.firstNonEmpty(bsOrder.internalNumber, bsOrder.externalNumber) ?? bsOrder.id;
     return String(candidate);
   }
 
@@ -215,55 +293,40 @@ export class BluesalesSyncService implements OnModuleInit {
     ...values: Array<number | string | null | undefined>
   ): number | string | null {
     for (const v of values) {
-      if (v !== null && v !== undefined && String(v).trim() !== '') {
-        return v;
-      }
+      if (v !== null && v !== undefined && String(v).trim() !== '') return v;
     }
     return null;
   }
 
-  /**
-   * Ссылка на диалог сообщество↔лид в ВК. Для VK-клиентов используем
-   * customer.vk.messagesGroupId; если его нет — фолбэк на BLUESALES_VK_GROUP_ID.
-   */
   private buildVkDialogUrl(customer: BsCustomer): string | null {
     const userId = customer.vk?.id ? String(customer.vk.id) : null;
-    if (!userId) {
-      return null;
-    }
+    if (!userId) return null;
     const groupId = customer.vk?.messagesGroupId
       ? String(customer.vk.messagesGroupId)
       : this.vkGroupId || null;
-    if (!groupId) {
-      return null;
-    }
+    if (!groupId) return null;
     return `https://vk.com/gim${groupId}?sel=${userId}`;
   }
 
   /** BlueSales отдаёт даты как "DD.MM.YYYY" (опц. " HH:mm:ss"). */
   private parseDate(value?: string | null): Date | null {
-    if (!value) {
-      return null;
-    }
+    if (!value) return null;
     const match = value.match(
       /^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/,
     );
     if (match) {
       const [, dd, mm, yyyy, hh = '0', min = '0', ss = '0'] = match;
       const parsed = new Date(
-        Date.UTC(
-          Number(yyyy),
-          Number(mm) - 1,
-          Number(dd),
-          Number(hh),
-          Number(min),
-          Number(ss),
-        ),
+        Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), Number(ss)),
       );
       return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
     const fallback = new Date(value);
     return Number.isNaN(fallback.getTime()) ? null : fallback;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async markRun(key: string): Promise<void> {

@@ -198,6 +198,22 @@ export class BluesalesApiService {
     return `${y}-${m}-${d}`;
   }
 
+  /** Получить конкретные заказы по списку BS-идентификаторов (до 500 штук). */
+  async getOrdersByIds(ids: number[]): Promise<BsOrder[]> {
+    if (ids.length === 0) return [];
+    const result = await this.send<GetOrdersResponse>('orders.get', {
+      dateFrom: null,
+      dateTill: null,
+      orderStatuses: [],
+      customerId: null,
+      ids,
+      internalNumbers: null,
+      pageSize: ids.length,
+      startRowNumber: 0,
+    });
+    return result.orders ?? [];
+  }
+
   /** Постранично получить все заказы за период [dateFrom, dateTo]. */
   async getOrders(dateFrom?: Date, dateTo?: Date): Promise<BsOrder[]> {
     const baseData = {
