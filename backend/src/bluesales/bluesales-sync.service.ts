@@ -142,16 +142,23 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async refreshBatch(): Promise<void> {
+    // Засекаем время именно одной итерации: выборка из БД + запрос в BS + upsert в нашу БД.
     const startedAt = Date.now();
+
+    // Refresh-loop не трогает старые архивные заказы. Сейчас обновляем только заказы
+    // с датой создания в BS не старше REFRESH_LOOKBACK_DAYS (60 дней).
     const lookbackDate = new Date(Date.now() - REFRESH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
+    // Берём небольшую пачку заказов, которые дольше всего не обновлялись.
+    // lastSyncedAt обновляется после каждого успешного upsert, поэтому такая сортировка
+    // равномерно "прокручивает" все актуальные заказы по кругу.
     const batch = await this.prisma.bluesalesOrderInfo.findMany({
       where: {
         bsCreatedAt: { gte: lookbackDate },
       },
       orderBy: { lastSyncedAt: 'asc' },
       take: REFRESH_BATCH_SIZE,
-      select: { bsOrderId: true },
+      select: { bsOrderId: true, lastSyncedAt: true },
     });
 
     if (batch.length === 0) {
@@ -161,21 +168,35 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     const ids = batch.map((b) => b.bsOrderId);
+    // Так как batch отсортирован по lastSyncedAt ASC, первый элемент — самый
+    // давно синхронизированный заказ. Этот лаг показывает, за сколько времени
+    // refresh-loop делает полный круг по актуальным заказам.
+    const oldestSyncLagMs = startedAt - batch[0].lastSyncedAt.getTime();
+
+    // Фиксируем старт прогона в SyncState, чтобы в БД было видно,
+    // что refresh-loop живой и когда он последний раз запускался.
     await this.markRun(SYNC_KEY_REFRESH);
 
     let bsOrders: BsOrder[];
     try {
+      // Один лёгкий запрос к BlueSales по ids вместо тяжёлой выгрузки за период.
+      // Внутри api.getOrdersByIds всё равно используется общий mutex, поэтому
+      // параллельных запросов к BS из нашего бэкенда не будет.
       bsOrders = await this.api.getOrdersByIds(ids);
     } catch (err) {
       await this.markError(SYNC_KEY_REFRESH, (err as Error).message);
       throw err;
     }
 
+    // Нужно понять, какие id BlueSales вернул. Если какого-то id нет в ответе,
+    // это может означать удаление/недоступность заказа; обработаем это ниже.
     const returnedIds = new Set(bsOrders.map((o) => o.id));
     let synced = 0;
 
     for (const bsOrder of bsOrders) {
       try {
+        // В ответе заказа лежит customer, поэтому обновляем лида и сам заказ вместе.
+        // upsertOrder также обновит BluesalesOrderInfo.lastSyncedAt.
         const leadId = await this.upsertLead(bsOrder.customer ?? null);
         await this.upsertOrder(bsOrder, leadId);
         synced++;
@@ -198,9 +219,11 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     await this.markSuccess(SYNC_KEY_REFRESH, synced);
 
+    // Логируем длительность пачки, чтобы видеть, сколько времени API BS и upsert
+    // реально занимают на REFRESH_BATCH_SIZE заказов.
     const elapsedMs = Date.now() - startedAt;
     this.logger.debug(
-      `Refresh-loop: обновлено ${synced}, пропущено (нет в BS) ${missingIds.length}, время ${elapsedMs} мс`,
+      `Refresh-loop: обновлено ${synced}, пропущено (нет в BS) ${missingIds.length}, время батча ${elapsedMs} мс, лаг старейшего ${this.formatDuration(oldestSyncLagMs)}`,
     );
   }
 
@@ -327,6 +350,19 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private formatDuration(ms: number): string {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const days = Math.floor(totalSeconds / 86_400);
+    const hours = Math.floor((totalSeconds % 86_400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (days > 0) return `${days}д ${hours}ч`;
+    if (hours > 0) return `${hours}ч ${minutes}м`;
+    if (minutes > 0) return `${minutes}м ${seconds}с`;
+    return `${seconds}с`;
   }
 
   private async markRun(key: string): Promise<void> {

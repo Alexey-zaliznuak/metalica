@@ -182,9 +182,10 @@ export class BluesalesApiService {
 
       // Другой пользователь организации уже выполняет запрос — ждём и повторяем.
       if (errorText.includes('Уже выполняется одно или несколько других обращений к API')) {
-        const MAX_ATTEMPTS = 10;
+        const MAX_ATTEMPTS = 20;
         if (attempt <= MAX_ATTEMPTS) {
-          const delaySec = Math.min(attempt * 2, 30);
+          // Первые 5 попыток — быстро (до 30с), потом фиксированные 30с паузы.
+          const delaySec = Math.min(attempt * 3, 30);
           this.logger.warn(
             `BlueSales: параллельный запрос в организации, ждём ${delaySec}s (попытка ${attempt}/${MAX_ATTEMPTS})`,
           );
