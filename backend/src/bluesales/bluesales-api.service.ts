@@ -121,7 +121,7 @@ export class BluesalesApiService {
     return Number.isFinite(seconds) ? seconds : null;
   }
 
-  private async sendRaw<T>(method: string, data?: unknown): Promise<T> {
+  private async sendRaw<T>(method: string, data?: unknown, attempt = 1): Promise<T> {
     if (!this.isConfigured) {
       throw new BluesalesAuthError('BlueSales credentials are not configured');
     }
@@ -176,7 +176,20 @@ export class BluesalesApiService {
             `BlueSales: другая сессия онлайн, ждём ${delay + 1}s и повторяем`,
           );
           await this.sleep((delay + 1) * 1000);
-          return this.sendRaw<T>(method, data);
+          return this.sendRaw<T>(method, data, attempt);
+        }
+      }
+
+      // Другой пользователь организации уже выполняет запрос — ждём и повторяем.
+      if (errorText.includes('Уже выполняется одно или несколько других обращений к API')) {
+        const MAX_ATTEMPTS = 10;
+        if (attempt <= MAX_ATTEMPTS) {
+          const delaySec = Math.min(attempt * 2, 30);
+          this.logger.warn(
+            `BlueSales: параллельный запрос в организации, ждём ${delaySec}s (попытка ${attempt}/${MAX_ATTEMPTS})`,
+          );
+          await this.sleep(delaySec * 1000);
+          return this.sendRaw<T>(method, data, attempt + 1);
         }
       }
 
