@@ -33,6 +33,10 @@ services:
   backend:
     build:
       context: ./backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
     env_file:
       - .env
     restart: unless-stopped
