@@ -249,6 +249,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   async upsertOrder(bsOrder: BsOrder, leadId: number | null): Promise<void> {
     const orderNumber = this.resolveOrderNumber(bsOrder);
     const title = `Заказ номер ${orderNumber}`;
+    const dialogLink = this.resolveDialogLink(bsOrder);
     const bsCreatedAt = this.parseDate(bsOrder.date);
     const crm = bsOrder.customer?.crmStatus ?? null;
 
@@ -276,7 +277,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         }),
         this.prisma.order.update({
           where: { id: existing.orderId },
-          data: leadId ? { leadId } : {},
+          data: {
+            ...(leadId ? { leadId } : {}),
+            dialogLink,
+          },
         }),
       ]);
       return;
@@ -287,8 +291,15 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.bluesalesOrderInfo.create({
         data: { ...infoData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
       });
-      if (leadId && sameNumber.leadId !== leadId) {
-        await this.prisma.order.update({ where: { id: sameNumber.id }, data: { leadId } });
+      const shouldUpdateLead = leadId && sameNumber.leadId !== leadId;
+      if (shouldUpdateLead || sameNumber.dialogLink !== dialogLink) {
+        await this.prisma.order.update({
+          where: { id: sameNumber.id },
+          data: {
+            ...(shouldUpdateLead ? { leadId } : {}),
+            dialogLink,
+          },
+        });
       }
       return;
     }
@@ -299,6 +310,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         title,
         source: OrderSource.BLUESALES,
         leadId: leadId ?? undefined,
+        dialogLink,
         bluesalesInfo: { create: { ...infoData, bsOrderId: bsOrder.id } },
       },
     });
@@ -310,6 +322,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const candidate =
       this.firstNonEmpty(bsOrder.internalNumber, bsOrder.externalNumber) ?? bsOrder.id;
     return String(candidate);
+  }
+
+  private resolveDialogLink(bsOrder: BsOrder): string | null {
+    const candidate = bsOrder.dialogLink;
+    if (typeof candidate !== 'string') return null;
+    const normalized = candidate.trim();
+    return normalized.length > 0 ? normalized : null;
   }
 
   private firstNonEmpty(

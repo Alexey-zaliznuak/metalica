@@ -151,6 +151,7 @@ export class OrdersService {
     return {
       ...base,
       source: order.source,
+      dialogLink: order.dialogLink,
       deliveryManager: order.deliveryManager,
       onboardingManager: order.onboardingManager,
       sketchDesigner: order.sketchDesigner,
@@ -415,6 +416,7 @@ export class OrdersService {
     title: string | null;
     source: OrderSource;
     createdAt: Date;
+    dialogLink?: string | null;
     deliveryManager?: {
       id: number;
       name: string;
@@ -457,6 +459,7 @@ export class OrdersService {
       orderNumber: order.orderNumber,
       title: order.title,
       source: order.source,
+      dialogLink: order.dialogLink ?? null,
       deliveryManager: order.deliveryManager ?? null,
       onboardingManager: order.onboardingManager ?? null,
       sketchDesigner: order.sketchDesigner ?? null,
