@@ -346,7 +346,7 @@ function InfoRow({
   label,
   value,
 }: {
-  label: string
+  label: ReactNode
   value: ReactNode
 }) {
   return (
@@ -399,8 +399,10 @@ function OrderInfoPanel({
   canReassignResponsible,
   updatingOrderStatus,
   updatingResponsible,
+  updatingDialogLink,
   onOrderStatusChange,
   onResponsibleChange,
+  onDialogLinkChange,
 }: {
   order: Order
   orderStatusOptions: BluesalesStatusOption[]
@@ -409,6 +411,7 @@ function OrderInfoPanel({
   canReassignResponsible: boolean
   updatingOrderStatus: boolean
   updatingResponsible: boolean
+  updatingDialogLink: boolean
   onOrderStatusChange: (statusId: number) => void
   onResponsibleChange: (
     field:
@@ -418,14 +421,23 @@ function OrderInfoPanel({
       | 'revisionDesignerId',
     userId: number | '',
   ) => void
+  onDialogLinkChange: (dialogLink: string) => void
 }) {
   const bs = order.bluesalesInfo
   const lead = order.lead
   const dash = '—'
+  const [editingDialogLink, setEditingDialogLink] = useState(false)
+  const [dialogLinkDraft, setDialogLinkDraft] = useState(order.dialogLink ?? '')
   const bluesalesCustomerUrl =
     lead?.bsCustomerId != null
       ? `https://bluesales.ru/app/Customers/CustomerView.aspx?id=${lead.bsCustomerId}`
       : null
+
+  useEffect(() => {
+    if (!editingDialogLink) {
+      setDialogLinkDraft(order.dialogLink ?? '')
+    }
+  }, [order.dialogLink, editingDialogLink])
 
   return (
     <Paper
@@ -604,29 +616,74 @@ function OrderInfoPanel({
           <Stack divider={<Divider flexItem />}>
             <InfoRow label="№ в BS" value={bs.bsNumber ?? bs.bsOrderId} />
             <InfoRow
-              label="Даилог BS"
-              value={
+              label={
                 order.dialogLink ? (
                   <Link
                     href={order.dialogLink}
                     target="_blank"
                     rel="noopener noreferrer"
+                    sx={{ fontWeight: 700 }}
+                  >
+                    Даилог BS
+                  </Link>
+                ) : (
+                  'Даилог BS'
+                )
+              }
+              value={
+                editingDialogLink ? (
+                  <Stack direction="row" spacing={0.5} alignItems="center">
+                    <TextField
+                      size="small"
+                      value={dialogLinkDraft}
+                      placeholder="Вставьте ссылку"
+                      onChange={(e) => setDialogLinkDraft(e.target.value)}
+                      disabled={updatingDialogLink}
+                      sx={{ minWidth: 180 }}
+                    />
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        onDialogLinkChange(dialogLinkDraft)
+                        setEditingDialogLink(false)
+                      }}
+                      disabled={updatingDialogLink}
+                    >
+                      OK
+                    </Button>
+                    <Button
+                      size="small"
+                      color="inherit"
+                      onClick={() => {
+                        setDialogLinkDraft(order.dialogLink ?? '')
+                        setEditingDialogLink(false)
+                      }}
+                      disabled={updatingDialogLink}
+                    >
+                      Отмена
+                    </Button>
+                  </Stack>
+                ) : (
+                  <Typography
+                    component="button"
+                    variant="body2"
+                    onClick={() => setEditingDialogLink(true)}
                     sx={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 0.5,
+                      p: 0,
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      color: order.dialogLink ? 'primary.main' : 'text.secondary',
+                      textDecoration: order.dialogLink ? 'underline' : 'none',
                       fontWeight: 700,
                     }}
                   >
-                    Открыть
-                    <OpenInNewIcon sx={{ fontSize: 15 }} />
-                  </Link>
-                ) : (
-                  dash
+                    {order.dialogLink || 'Нажмите, чтобы добавить'}
+                  </Typography>
                 )
               }
             />
-            <Box sx={{ py: 0.6 }}>
+            <Box sx={{ py: 1.2 }}>
               <TextField
                 select
                 label="Статус заказа"
@@ -756,6 +813,7 @@ export default function OrderThreadPage() {
   const [editError, setEditError] = useState<string | null>(null)
   const [updatingOrderStatus, setUpdatingOrderStatus] = useState(false)
   const [updatingResponsible, setUpdatingResponsible] = useState(false)
+  const [updatingDialogLink, setUpdatingDialogLink] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -868,6 +926,21 @@ export default function OrderThreadPage() {
       setSendError('Не удалось изменить ответственного')
     } finally {
       setUpdatingResponsible(false)
+    }
+  }
+
+  const handleDialogLinkChange = async (dialogLink: string) => {
+    if (!order) return
+    setUpdatingDialogLink(true)
+    try {
+      const { data } = await client.patch<Order>(`/orders/${orderId}`, {
+        dialogLink: dialogLink.trim() ? dialogLink.trim() : null,
+      })
+      setOrder(data)
+    } catch {
+      setSendError('Не удалось сохранить поле "Даилог BS"')
+    } finally {
+      setUpdatingDialogLink(false)
     }
   }
 
@@ -1344,11 +1417,15 @@ export default function OrderThreadPage() {
         canReassignResponsible={canReassignResponsible}
         updatingOrderStatus={updatingOrderStatus}
         updatingResponsible={updatingResponsible}
+        updatingDialogLink={updatingDialogLink}
         onOrderStatusChange={(statusId) => {
           void handleOrderStatusChange(statusId)
         }}
         onResponsibleChange={(field, userId) => {
           void handleResponsibleChange(field, userId)
+        }}
+        onDialogLinkChange={(dialogLink) => {
+          void handleDialogLinkChange(dialogLink)
         }}
       />
 
