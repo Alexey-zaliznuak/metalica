@@ -26,7 +26,6 @@ import {
   List,
   ListItemButton,
   ListItemText,
-  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -44,20 +43,19 @@ import { useAuth } from '../auth/AuthContext'
 import type { BluesalesStatusOption, Order, OrdersBoardSettings, User } from '../api/types'
 import { formatLastActivity } from '../utils'
 
-const NO_CRM_COLUMN_ID = -1
+const NO_ORDER_STATUS_COLUMN_ID = -1
 
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
-  selectedCrmStatusIds: [],
+  selectedOrderStatusIds: [],
   columnOrder: [],
-  orderStatusFilter: null,
   searchQuery: '',
-  showNoCrmColumn: true,
+  showNoOrderStatusColumn: true,
 }
 
 interface BoardColumn {
   id: number
   name: string
-  isNoCrm: boolean
+  isNoOrderStatus: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,37 +65,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseBoardSettings(raw: unknown): OrdersBoardSettings {
   if (!isRecord(raw)) return DEFAULT_BOARD_SETTINGS
 
-  const selectedCrmStatusIds = Array.isArray(raw.selectedCrmStatusIds)
-    ? raw.selectedCrmStatusIds
+  const selectedOrderStatusIds = Array.isArray(raw.selectedOrderStatusIds)
+    ? raw.selectedOrderStatusIds
         .map((value) => Number(value))
         .filter((value) => Number.isInteger(value) && value >= 0)
+    : Array.isArray(raw.selectedCrmStatusIds)
+      ? raw.selectedCrmStatusIds
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0)
     : []
 
   const columnOrder = Array.isArray(raw.columnOrder)
     ? raw.columnOrder
         .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value >= NO_CRM_COLUMN_ID)
+        .filter((value) => Number.isInteger(value) && value >= NO_ORDER_STATUS_COLUMN_ID)
     : []
 
-  const legacyStatusFilter = raw.bsStatusFilter
-  const rawStatusFilter =
-    raw.orderStatusFilter !== undefined ? raw.orderStatusFilter : legacyStatusFilter
-  const orderStatusFilter =
-    rawStatusFilter === null ||
-    (typeof rawStatusFilter === 'number' && Number.isInteger(rawStatusFilter))
-      ? rawStatusFilter
-      : null
-
   const searchQuery = typeof raw.searchQuery === 'string' ? raw.searchQuery : ''
-  const showNoCrmColumn =
-    typeof raw.showNoCrmColumn === 'boolean' ? raw.showNoCrmColumn : true
+  const showNoOrderStatusColumn =
+    typeof raw.showNoOrderStatusColumn === 'boolean'
+      ? raw.showNoOrderStatusColumn
+      : typeof raw.showNoCrmColumn === 'boolean'
+        ? raw.showNoCrmColumn
+        : true
 
   return {
-    selectedCrmStatusIds,
+    selectedOrderStatusIds,
     columnOrder,
-    orderStatusFilter,
     searchQuery,
-    showNoCrmColumn,
+    showNoOrderStatusColumn,
   }
 }
 
@@ -105,13 +101,15 @@ function normalizeColumns(
   allStatusIds: number[],
   selectedIdsRaw: number[],
   columnOrderRaw: number[],
-  showNoCrmColumn: boolean,
+  showNoOrderStatusColumn: boolean,
 ): { selectedIds: number[]; columnOrder: number[] } {
   const available = new Set(allStatusIds)
   const selected = selectedIdsRaw
     .filter((id, index, arr) => available.has(id) && arr.indexOf(id) === index)
   const selectedIds = selected.length > 0 ? selected : allStatusIds
-  const requiredIds = showNoCrmColumn ? [...selectedIds, NO_CRM_COLUMN_ID] : selectedIds
+  const requiredIds = showNoOrderStatusColumn
+    ? [...selectedIds, NO_ORDER_STATUS_COLUMN_ID]
+    : selectedIds
   const requiredSet = new Set(requiredIds)
   const ordered = columnOrderRaw.filter(
     (id, index, arr) => requiredSet.has(id) && arr.indexOf(id) === index,
@@ -124,16 +122,14 @@ export default function OrdersPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [orders, setOrders] = useState<Order[]>([])
-  const [crmStatuses, setCrmStatuses] = useState<BluesalesStatusOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
-  const [orderStatusFilter, setOrderStatusFilter] = useState<number | ''>('')
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
-  const [selectedCrmStatusIds, setSelectedCrmStatusIds] = useState<number[]>([])
-  const [showNoCrmColumn, setShowNoCrmColumn] = useState(true)
+  const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
+  const [showNoOrderStatusColumn, setShowNoOrderStatusColumn] = useState(true)
   const [columnOrder, setColumnOrder] = useState<number[]>([])
   const [draggingColumnId, setDraggingColumnId] = useState<number | null>(null)
   const [draggingOrderId, setDraggingOrderId] = useState<number | null>(null)
@@ -153,16 +149,14 @@ export default function OrdersPage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const fetchOrders = useCallback(async (q: string, statusId: number | '') => {
+  const fetchOrders = useCallback(async (q: string, statusIds: number[]) => {
     setLoading(true)
     setError(null)
     try {
       const { data } = await client.get<{ items: Order[] }>('/orders', {
         params: {
           q: q || undefined,
-          orderStatusId: statusId === '' ? undefined : statusId,
-          page: 1,
-          limit: 300,
+          orderStatusIds: statusIds.join(','),
         },
       })
       setOrders(data.items)
@@ -177,47 +171,43 @@ export default function OrdersPage() {
     if (!initialized) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      fetchOrders(search, orderStatusFilter)
+      fetchOrders(search, selectedOrderStatusIds)
     }, 300)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [search, orderStatusFilter, initialized, fetchOrders])
+  }, [search, selectedOrderStatusIds, initialized, fetchOrders])
 
   useEffect(() => {
     let active = true
-    void Promise.all([
-      client.get<BluesalesStatusOption[]>('/orders/order-statuses'),
-      client.get<BluesalesStatusOption[]>('/orders/crm-statuses'),
-    ])
-      .then(([bsRes, crmRes]) => {
+    void client
+      .get<BluesalesStatusOption[]>('/orders/order-statuses')
+      .then((res) => {
         if (!active) return
-        setOrderStatuses(bsRes.data)
-        setCrmStatuses(crmRes.data)
+        setOrderStatuses(res.data)
 
         const baseSettings = isRecord(user?.frontendSettings) ? user.frontendSettings : {}
         const parsed = parseBoardSettings(
           isRecord(baseSettings.ordersBoard) ? baseSettings.ordersBoard : undefined,
         )
-        const allCrmStatusIds = crmRes.data.map((status) => status.id)
+        const allOrderStatusIds = res.data.map((status) => status.id)
         const normalized = normalizeColumns(
-          allCrmStatusIds,
-          parsed.selectedCrmStatusIds,
+          allOrderStatusIds,
+          parsed.selectedOrderStatusIds,
           parsed.columnOrder,
-          parsed.showNoCrmColumn,
+          parsed.showNoOrderStatusColumn,
         )
 
         setFrontendSettingsBase(baseSettings)
         setSearch(parsed.searchQuery)
-        setOrderStatusFilter(parsed.orderStatusFilter ?? '')
-        setShowNoCrmColumn(parsed.showNoCrmColumn)
-        setSelectedCrmStatusIds(normalized.selectedIds)
+        setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
+        setSelectedOrderStatusIds(normalized.selectedIds)
         setColumnOrder(normalized.columnOrder)
         setInitialized(true)
       })
       .catch(() => {
         if (!active) return
-        setBootError('Не удалось загрузить CRM-статусы')
+        setBootError('Не удалось загрузить статусы заказов')
         setInitialized(true)
       })
     return () => {
@@ -229,12 +219,10 @@ export default function OrdersPage() {
     if (!initialized) return
     const timeout = setTimeout(() => {
       const boardSettings: OrdersBoardSettings = {
-        selectedCrmStatusIds,
+        selectedOrderStatusIds,
         columnOrder,
-        orderStatusFilter:
-          orderStatusFilter === '' ? null : orderStatusFilter,
         searchQuery: search,
-        showNoCrmColumn,
+        showNoOrderStatusColumn,
       }
       const frontendSettings = {
         ...frontendSettingsBase,
@@ -258,9 +246,8 @@ export default function OrdersPage() {
   }, [
     initialized,
     search,
-    orderStatusFilter,
-    selectedCrmStatusIds,
-    showNoCrmColumn,
+    selectedOrderStatusIds,
+    showNoOrderStatusColumn,
     columnOrder,
     frontendSettingsBase,
   ])
@@ -277,7 +264,7 @@ export default function OrdersPage() {
       setDialogOpen(false)
       setNewOrderNumber('')
       setNewTitle('')
-      void fetchOrders(search, orderStatusFilter)
+      void fetchOrders(search, selectedOrderStatusIds)
       navigate(`/orders/${data.id}`)
     } catch {
       setCreateError('Не удалось создать заказ. Возможно, номер уже занят.')
@@ -287,26 +274,26 @@ export default function OrdersPage() {
   }
 
   const boardColumns = useMemo<BoardColumn[]>(() => {
-    const byId = new Map(crmStatuses.map((status) => [status.id, status]))
+    const byId = new Map(orderStatuses.map((status) => [status.id, status]))
     const allColumns = columnOrder
       .filter(
         (id) =>
-          id === NO_CRM_COLUMN_ID ||
-          (id >= 0 && selectedCrmStatusIds.includes(id) && byId.has(id)),
+          id === NO_ORDER_STATUS_COLUMN_ID ||
+          (id >= 0 && selectedOrderStatusIds.includes(id) && byId.has(id)),
       )
       .map((id) =>
-        id === NO_CRM_COLUMN_ID
-          ? { id, name: 'Без CRM-статуса', isNoCrm: true }
-          : { id, name: byId.get(id)!.name, isNoCrm: false },
+        id === NO_ORDER_STATUS_COLUMN_ID
+          ? { id, name: 'Без статуса заказа', isNoOrderStatus: true }
+          : { id, name: byId.get(id)!.name, isNoOrderStatus: false },
       )
     return allColumns
-  }, [crmStatuses, columnOrder, selectedCrmStatusIds])
+  }, [orderStatuses, columnOrder, selectedOrderStatusIds])
 
   const ordersByColumn = useMemo(() => {
     const map = new Map<number, Order[]>()
     boardColumns.forEach((column) => map.set(column.id, []))
     for (const order of orders) {
-      const columnId = order.crmStatusId ?? NO_CRM_COLUMN_ID
+      const columnId = order.orderStatusId ?? NO_ORDER_STATUS_COLUMN_ID
       if (map.has(columnId)) {
         map.get(columnId)!.push(order)
       }
@@ -316,14 +303,14 @@ export default function OrdersPage() {
 
   const isEmpty = useMemo(() => !loading && orders.length === 0, [loading, orders.length])
 
-  const crmStatusNameById = useMemo(() => {
+  const orderStatusNameById = useMemo(() => {
     const map = new Map<number, string>()
-    crmStatuses.forEach((status) => map.set(status.id, status.name))
+    orderStatuses.forEach((status) => map.set(status.id, status.name))
     return map
-  }, [crmStatuses])
+  }, [orderStatuses])
 
-  const toggleCrmStatus = (statusId: number) => {
-    setSelectedCrmStatusIds((prev) => {
+  const toggleOrderStatus = (statusId: number) => {
+    setSelectedOrderStatusIds((prev) => {
       const exists = prev.includes(statusId)
       if (exists) {
         const next = prev.filter((id) => id !== statusId)
@@ -337,13 +324,15 @@ export default function OrdersPage() {
     })
   }
 
-  const toggleNoCrmColumn = (checked: boolean) => {
-    setShowNoCrmColumn(checked)
+  const toggleNoOrderStatusColumn = (checked: boolean) => {
+    setShowNoOrderStatusColumn(checked)
     setColumnOrder((prev) => {
       if (checked) {
-        return prev.includes(NO_CRM_COLUMN_ID) ? prev : [...prev, NO_CRM_COLUMN_ID]
+        return prev.includes(NO_ORDER_STATUS_COLUMN_ID)
+          ? prev
+          : [...prev, NO_ORDER_STATUS_COLUMN_ID]
       }
-      return prev.filter((id) => id !== NO_CRM_COLUMN_ID)
+      return prev.filter((id) => id !== NO_ORDER_STATUS_COLUMN_ID)
     })
   }
 
@@ -364,41 +353,42 @@ export default function OrdersPage() {
       const current = orders.find((order) => order.id === orderId)
       if (!current) return
 
-      const currentColumnId = current.crmStatusId ?? NO_CRM_COLUMN_ID
+      const currentColumnId = current.orderStatusId ?? NO_ORDER_STATUS_COLUMN_ID
       if (currentColumnId === targetColumnId) return
+      if (targetColumnId === NO_ORDER_STATUS_COLUMN_ID) return
 
-      const nextCrmStatusId = targetColumnId === NO_CRM_COLUMN_ID ? null : targetColumnId
-      const nextCrmStatus =
-        targetColumnId === NO_CRM_COLUMN_ID
-          ? null
-          : (crmStatusNameById.get(targetColumnId) ?? null)
+      const nextOrderStatusId = targetColumnId
+      const nextOrderStatus = orderStatusNameById.get(targetColumnId) ?? null
 
       const prevOrders = orders
       setMovingOrderId(orderId)
       setOrders((prev) =>
         prev.map((order) =>
           order.id === orderId
-            ? { ...order, crmStatusId: nextCrmStatusId, crmStatus: nextCrmStatus }
+            ? {
+                ...order,
+                orderStatusId: nextOrderStatusId,
+                orderStatus: nextOrderStatus,
+              }
             : order,
         ),
       )
 
       try {
-        const { data } = await client.patch<Order>(`/orders/${orderId}/crm-status`, {
-          crmStatusId: nextCrmStatusId,
-          crmStatus: nextCrmStatus,
+        const { data } = await client.patch<Order>(`/orders/${orderId}/order-status`, {
+          statusId: nextOrderStatusId,
         })
         setOrders((prev) => prev.map((order) => (order.id === orderId ? data : order)))
       } catch {
         setOrders(prevOrders)
         setError(
-          'Не удалось переместить заказ. Для ручных заказов CRM-статус не меняется.',
+          'Не удалось переместить заказ. Для ручных заказов статус в BlueSales не меняется.',
         )
       } finally {
         setMovingOrderId(null)
       }
     },
-    [crmStatusNameById, orders],
+    [orderStatusNameById, orders],
   )
 
   return (
@@ -415,7 +405,7 @@ export default function OrdersPage() {
             Заказы
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Перетаскивайте колонки и карточки заказов между CRM-статусами
+            Колонки построены по статусам заказа. Перетаскивайте карточки между ними.
           </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
@@ -424,7 +414,7 @@ export default function OrdersPage() {
             startIcon={<ViewWeekIcon />}
             onClick={() => setColumnsDialogOpen(true)}
           >
-            Колонки CRM
+            Колонки статусов
           </Button>
           <Button
             variant="contained"
@@ -451,23 +441,6 @@ export default function OrdersPage() {
             ),
           }}
         />
-        <TextField
-          select
-          label="Статус заказа"
-          value={orderStatusFilter === '' ? '' : String(orderStatusFilter)}
-          onChange={(e) =>
-            setOrderStatusFilter(e.target.value ? Number(e.target.value) : '')
-          }
-          size="small"
-          sx={{ minWidth: { sm: 200 } }}
-        >
-          <MenuItem value="">Все статусы заказа</MenuItem>
-          {orderStatuses.map((status) => (
-            <MenuItem key={status.id} value={String(status.id)}>
-              {status.name}
-            </MenuItem>
-          ))}
-        </TextField>
       </Stack>
 
       {error && (
@@ -705,20 +678,20 @@ export default function OrdersPage() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>CRM-колонки</DialogTitle>
+        <DialogTitle>Колонки по статусам заказа</DialogTitle>
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
-            Выберите CRM-статусы, которые должны быть колонками. Порядок меняется
+            Выберите статусы заказа, которые должны быть колонками. Порядок меняется
             перетаскиванием колонок на доске.
           </DialogContentText>
           <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
             <Button
               size="small"
               onClick={() => {
-                const allIds = crmStatuses.map((status) => status.id)
-                setSelectedCrmStatusIds(allIds)
-                setShowNoCrmColumn(true)
-                setColumnOrder([...allIds, NO_CRM_COLUMN_ID])
+                const allIds = orderStatuses.map((status) => status.id)
+                setSelectedOrderStatusIds(allIds)
+                setShowNoOrderStatusColumn(true)
+                setColumnOrder([...allIds, NO_ORDER_STATUS_COLUMN_ID])
               }}
             >
               Выбрать все
@@ -726,8 +699,8 @@ export default function OrdersPage() {
             <Button
               size="small"
               onClick={() => {
-                setSelectedCrmStatusIds([])
-                setShowNoCrmColumn(false)
+                setSelectedOrderStatusIds([])
+                setShowNoOrderStatusColumn(false)
                 setColumnOrder([])
               }}
             >
@@ -736,19 +709,22 @@ export default function OrdersPage() {
           </Stack>
 
           <List sx={{ py: 0 }}>
-            <ListItemButton sx={{ borderRadius: 1 }} onClick={() => toggleNoCrmColumn(!showNoCrmColumn)}>
+            <ListItemButton
+              sx={{ borderRadius: 1 }}
+              onClick={() => toggleNoOrderStatusColumn(!showNoOrderStatusColumn)}
+            >
               <FormControlLabel
-                control={<Checkbox checked={showNoCrmColumn} />}
+                control={<Checkbox checked={showNoOrderStatusColumn} />}
                 onClick={(event) => event.preventDefault()}
-                label={<ListItemText primary="Без CRM-статуса" />}
+                label={<ListItemText primary="Без статуса заказа" />}
               />
             </ListItemButton>
-            {crmStatuses.map((status) => {
-              const checked = selectedCrmStatusIds.includes(status.id)
+            {orderStatuses.map((status) => {
+              const checked = selectedOrderStatusIds.includes(status.id)
               return (
                 <ListItemButton
                   key={status.id}
-                  onClick={() => toggleCrmStatus(status.id)}
+                  onClick={() => toggleOrderStatus(status.id)}
                   sx={{ borderRadius: 1 }}
                 >
                   <FormControlLabel

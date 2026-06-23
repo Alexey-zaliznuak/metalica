@@ -103,11 +103,10 @@ export interface Order {
 }
 
 export interface OrdersBoardSettings {
-  selectedCrmStatusIds: number[]
+  selectedOrderStatusIds: number[]
   columnOrder: number[]
-  orderStatusFilter: number | null
   searchQuery: string
-  showNoCrmColumn: boolean
+  showNoOrderStatusColumn: boolean
 }
 
 export interface PaginatedResponse<T> {

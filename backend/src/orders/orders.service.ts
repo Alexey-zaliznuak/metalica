@@ -29,25 +29,35 @@ export class OrdersService {
 
   async findAll(
     orderStatusId?: number,
+    orderStatusIdsRaw?: string,
     crmStatusIdsRaw?: string,
     q?: string,
     page = 1,
     limit = 30,
   ) {
     const where: Prisma.OrderWhereInput = {};
+    const orderStatusIds = this.parseStatusIds(orderStatusIdsRaw);
     if (orderStatusId !== undefined && Number.isFinite(orderStatusId)) {
-      where.bluesalesInfo = { is: { orderStatusId } };
+      orderStatusIds.push(orderStatusId);
+    }
+    const normalizedOrderStatusIds = Array.from(new Set(orderStatusIds));
+    const shouldReturnAllForStatuses = normalizedOrderStatusIds.length > 0;
+
+    const bluesalesInfoFilter: Prisma.BluesalesOrderInfoWhereInput = {};
+    if (normalizedOrderStatusIds.length > 0) {
+      bluesalesInfoFilter.orderStatusId = { in: normalizedOrderStatusIds };
     }
     const crmStatusIds = this.parseStatusIds(crmStatusIdsRaw);
     if (crmStatusIds.length > 0) {
-      where.bluesalesInfo = {
-        is: {
-          ...(where.bluesalesInfo && 'is' in where.bluesalesInfo
-            ? where.bluesalesInfo.is
-            : {}),
-          crmStatusId: { in: crmStatusIds },
-        },
-      };
+      bluesalesInfoFilter.crmStatusId = { in: crmStatusIds };
+    }
+    if (shouldReturnAllForStatuses) {
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      bluesalesInfoFilter.bsCreatedAt = { gte: threeMonthsAgo };
+    }
+    if (Object.keys(bluesalesInfoFilter).length > 0) {
+      where.bluesalesInfo = { is: bluesalesInfoFilter };
     }
     if (q && q.trim()) {
       where.OR = [
@@ -56,16 +66,22 @@ export class OrdersService {
       ];
     }
 
-    const safeLimit = Math.min(Math.max(Math.trunc(limit) || 30, 1), 100);
-    const safePage = Math.max(Math.trunc(page) || 1, 1);
+    const safeLimit = shouldReturnAllForStatuses
+      ? null
+      : Math.min(Math.max(Math.trunc(limit) || 30, 1), 100);
+    const safePage = shouldReturnAllForStatuses ? 1 : Math.max(Math.trunc(page) || 1, 1);
 
     const [total, orders] = await Promise.all([
       this.prisma.order.count({ where }),
       this.prisma.order.findMany({
         where,
         orderBy: { updatedAt: 'desc' },
-        skip: (safePage - 1) * safeLimit,
-        take: safeLimit,
+        ...(safeLimit
+          ? {
+              skip: (safePage - 1) * safeLimit,
+              take: safeLimit,
+            }
+          : {}),
         include: {
           deliveryManager: { select: this.userSelect },
           onboardingManager: { select: this.userSelect },
@@ -89,8 +105,8 @@ export class OrdersService {
       items,
       total,
       page: safePage,
-      limit: safeLimit,
-      totalPages: Math.max(Math.ceil(total / safeLimit), 1),
+      limit: safeLimit ?? total,
+      totalPages: safeLimit ? Math.max(Math.ceil(total / safeLimit), 1) : 1,
     };
   }
 

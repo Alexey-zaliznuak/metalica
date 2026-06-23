@@ -1,17 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
+  Autocomplete,
   Box,
-  Checkbox,
   CircularProgress,
-  FormControl,
-  InputLabel,
-  ListItemText,
-  MenuItem,
-  OutlinedInput,
   Paper,
-  Select,
-  type SelectChangeEvent,
   Stack,
   Table,
   TableBody,
@@ -19,6 +12,8 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -28,6 +23,8 @@ import { useAuth } from '../auth/AuthContext'
 import type { BluesalesStatusOption, User, WorkloadMetric } from '../api/types'
 
 type WorkloadFilter = 'MANAGER' | 'DESIGNER'
+type SortDirection = 'asc' | 'desc'
+type SortField = 'PRIMARY_ORDERS' | 'SECONDARY_ORDERS'
 
 const FILTER_LABELS: Record<WorkloadFilter, string> = {
   MANAGER: 'Менеджеры',
@@ -73,6 +70,8 @@ export default function WorkloadPage() {
   const [items, setItems] = useState<WorkloadMetric[]>([])
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
+  const [sortField, setSortField] = useState<SortField>('PRIMARY_ORDERS')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [frontendSettingsBase, setFrontendSettingsBase] = useState<
     Record<string, unknown>
   >({})
@@ -169,6 +168,27 @@ export default function WorkloadPage() {
     return items.filter((item) => item.role === filter)
   }, [filter, items])
 
+  const sortedVisibleItems = useMemo(() => {
+    const getPrimaryOrders = (item: WorkloadMetric) =>
+      item.role === 'MANAGER' ? item.deliveryOrders : item.sketchOrders
+    const getSecondaryOrders = (item: WorkloadMetric) =>
+      item.role === 'MANAGER' ? item.onboardingOrders : item.revisionOrders
+
+    const sorted = [...visibleItems].sort((a, b) => {
+      const aValue =
+        sortField === 'PRIMARY_ORDERS' ? getPrimaryOrders(a) : getSecondaryOrders(a)
+      const bValue =
+        sortField === 'PRIMARY_ORDERS' ? getPrimaryOrders(b) : getSecondaryOrders(b)
+      const diff = aValue - bValue
+      if (diff !== 0) {
+        return sortDirection === 'asc' ? diff : -diff
+      }
+      return a.name.localeCompare(b.name, 'ru')
+    })
+
+    return sorted
+  }, [visibleItems, sortDirection, sortField])
+
   const managersCount = useMemo(
     () => items.filter((item) => item.role === 'MANAGER').length,
     [items],
@@ -178,19 +198,19 @@ export default function WorkloadPage() {
     [items],
   )
 
-  const statusNameById = useMemo(() => {
-    const map = new Map<number, string>()
-    orderStatuses.forEach((status) => map.set(status.id, status.name))
-    return map
-  }, [orderStatuses])
-
-  const selectedStatusLabels = useMemo(
-    () =>
-      selectedOrderStatusIds
-        .map((id) => statusNameById.get(id))
-        .filter((name): name is string => Boolean(name)),
-    [selectedOrderStatusIds, statusNameById],
+  const selectedStatuses = useMemo(
+    () => orderStatuses.filter((status) => selectedOrderStatusIds.includes(status.id)),
+    [orderStatuses, selectedOrderStatusIds],
   )
+
+  const handleSortChange = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortField(field)
+    setSortDirection('desc')
+  }
 
   if (loading || statusesLoading) {
     return (
@@ -218,38 +238,32 @@ export default function WorkloadPage() {
       )}
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
-        <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 360 } }}>
-          <InputLabel id="workload-status-filter-label">Статусы заказов</InputLabel>
-          <Select
-            labelId="workload-status-filter-label"
-            multiple
-            value={selectedOrderStatusIds.map(String)}
-            onChange={(event: SelectChangeEvent<string[]>) => {
-              const raw = event.target.value
-              const values = (typeof raw === 'string' ? raw.split(',') : raw)
-                .map((value) => Number(value))
-                .filter((value) => Number.isInteger(value) && value >= 0)
-              if (values.length === 0) return
-              setSelectedOrderStatusIds(values)
-            }}
-            input={<OutlinedInput label="Статусы заказов" />}
-            renderValue={() =>
-              selectedStatusLabels.length > 0
-                ? selectedStatusLabels.join(', ')
-                : 'Статусы не выбраны'
-            }
-          >
-            {orderStatuses.map((status) => {
-              const checked = selectedOrderStatusIds.includes(status.id)
-              return (
-                <MenuItem key={status.id} value={String(status.id)}>
-                  <Checkbox checked={checked} />
-                  <ListItemText primary={status.name} />
-                </MenuItem>
-              )
-            })}
-          </Select>
-        </FormControl>
+        <Autocomplete
+          multiple
+          disableCloseOnSelect
+          options={orderStatuses}
+          value={selectedStatuses}
+          getOptionLabel={(option) => option.name}
+          isOptionEqualToValue={(option, value) => option.id === value.id}
+          onChange={(_, values) => {
+            if (values.length === 0) return
+            setSelectedOrderStatusIds(values.map((status) => status.id))
+          }}
+          size="small"
+          sx={{ minWidth: { xs: '100%', sm: 360 } }}
+          renderInput={(params) => <TextField {...params} placeholder="Выбрать статусы" />}
+          renderTags={() => null}
+          popupIcon={null}
+          noOptionsText="Нет статусов"
+          renderOption={(props, option, { selected }) => (
+            <li {...props}>
+              <Box component="span" sx={{ mr: 1.5, color: 'text.secondary' }}>
+                {selected ? '✓' : ''}
+              </Box>
+              {option.name}
+            </li>
+          )}
+        />
         <ToggleButtonGroup
           value={filter}
           exclusive
@@ -274,22 +288,34 @@ export default function WorkloadPage() {
               <TableRow>
                 <TableCell sx={{ fontWeight: 700 }}>Пользователь</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>
-                  {filter === 'MANAGER' ? 'Ведение' : 'Эскизы'}
+                  <TableSortLabel
+                    active={sortField === 'PRIMARY_ORDERS'}
+                    direction={sortField === 'PRIMARY_ORDERS' ? sortDirection : 'desc'}
+                    onClick={() => handleSortChange('PRIMARY_ORDERS')}
+                  >
+                    {filter === 'MANAGER' ? 'Ведение' : 'Эскизы'}
+                  </TableSortLabel>
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>
-                  {filter === 'MANAGER' ? 'Оформление' : 'Правки'}
+                  <TableSortLabel
+                    active={sortField === 'SECONDARY_ORDERS'}
+                    direction={sortField === 'SECONDARY_ORDERS' ? sortDirection : 'desc'}
+                    onClick={() => handleSortChange('SECONDARY_ORDERS')}
+                  >
+                    {filter === 'MANAGER' ? 'Оформление' : 'Правки'}
+                  </TableSortLabel>
                 </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {visibleItems.length === 0 && (
+              {sortedVisibleItems.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
                     <Typography color="text.secondary">Нет пользователей</Typography>
                   </TableCell>
                 </TableRow>
               )}
-              {visibleItems.map((item) => (
+              {sortedVisibleItems.map((item) => (
                 <TableRow key={item.userId} hover>
                   <TableCell>
                     <Typography sx={{ fontWeight: 700 }}>{item.name}</Typography>

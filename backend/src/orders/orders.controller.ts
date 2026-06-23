@@ -25,6 +25,7 @@ export class OrdersController {
   @Get()
   findAll(
     @Query('orderStatusId') orderStatusId?: string,
+    @Query('orderStatusIds') orderStatusIds?: string,
     @Query('crmStatusIds') crmStatusIds?: string,
     @Query('q') q?: string,
     @Query('page') page?: string,
@@ -32,6 +33,7 @@ export class OrdersController {
   ) {
     return this.orders.findAll(
       orderStatusId !== undefined ? Number(orderStatusId) : undefined,
+      orderStatusIds,
       crmStatusIds,
       q,
       page ? Number(page) : undefined,
