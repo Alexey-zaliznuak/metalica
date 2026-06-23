@@ -632,14 +632,14 @@ function OrderInfoPanel({
               }
               value={
                 editingDialogLink ? (
-                  <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Stack direction="row" spacing={0.25} alignItems="center">
                     <TextField
                       size="small"
                       value={dialogLinkDraft}
                       placeholder="Вставьте ссылку"
                       onChange={(e) => setDialogLinkDraft(e.target.value)}
                       disabled={updatingDialogLink}
-                      sx={{ minWidth: 180 }}
+                      sx={{ minWidth: 168 }}
                     />
                     <Button
                       size="small"
@@ -648,6 +648,7 @@ function OrderInfoPanel({
                         setEditingDialogLink(false)
                       }}
                       disabled={updatingDialogLink}
+                      sx={{ minWidth: 40, px: 1 }}
                     >
                       OK
                     </Button>
@@ -659,27 +660,38 @@ function OrderInfoPanel({
                         setEditingDialogLink(false)
                       }}
                       disabled={updatingDialogLink}
+                      sx={{ minWidth: 56, px: 1 }}
                     >
                       Отмена
                     </Button>
                   </Stack>
                 ) : (
-                  <Typography
+                  <Stack
                     component="button"
-                    variant="body2"
+                    direction="row"
+                    spacing={0.5}
+                    alignItems="center"
                     onClick={() => setEditingDialogLink(true)}
                     sx={{
                       p: 0,
                       border: 'none',
                       background: 'none',
                       cursor: 'pointer',
-                      color: order.dialogLink ? 'primary.main' : 'text.secondary',
-                      textDecoration: order.dialogLink ? 'underline' : 'none',
+                      color: 'text.primary',
+                      textDecoration: 'underline dashed',
+                      textUnderlineOffset: 3,
                       fontWeight: 700,
+                      opacity: order.dialogLink ? 0.88 : 0.72,
+                      '&:hover': {
+                        opacity: 1,
+                      },
                     }}
                   >
-                    {order.dialogLink || 'Нажмите, чтобы добавить'}
-                  </Typography>
+                    <Typography variant="body2" component="span" sx={{ fontWeight: 700 }}>
+                      {order.dialogLink || 'Нажмите, чтобы добавить'}
+                    </Typography>
+                    <EditIcon sx={{ fontSize: 14, opacity: 0.7 }} />
+                  </Stack>
                 )
               }
             />
