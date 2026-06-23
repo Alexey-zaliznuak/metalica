@@ -17,7 +17,7 @@ import GroupIcon from '@mui/icons-material/Group'
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn'
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
 import type { ReactNode } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { roleLabel } from '../utils'
 
@@ -65,6 +65,8 @@ function initials(name: string): string {
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const isOrdersBoardPage = location.pathname === '/orders'
 
   const handleLogout = () => {
     logout()
@@ -169,7 +171,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       </AppBar>
 
       <Container
-        maxWidth="lg"
+        maxWidth={isOrdersBoardPage ? 'xl' : 'lg'}
         sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', py: 3 }}
       >
         {children}
