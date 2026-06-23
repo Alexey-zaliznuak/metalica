@@ -113,6 +113,15 @@ function initials(name: string): string {
     .join('')
 }
 
+function canEditOrderResponsibles(role: string | undefined, scopes: string[] | undefined): boolean {
+  if ((role ?? '').toUpperCase() === 'ADMIN') return true
+  const normalizedScopes = (scopes ?? []).map((scope) => scope.toUpperCase())
+  return (
+    normalizedScopes.includes('ORDERS_CHANGE_RESPONSIBLE') ||
+    normalizedScopes.includes('ORDERS.CHANGE_RESPONSIBLE')
+  )
+}
+
 // Decide which side a message sits on. We anchor the current user to the right,
 // otherwise designers go left / managers go right as a visual convention.
 function isOwnSide(authorId: number, currentUserId: number | undefined): boolean {
@@ -385,13 +394,30 @@ function SectionTitle({
 function OrderInfoPanel({
   order,
   orderStatusOptions,
+  managerAssignees,
+  designerAssignees,
+  canReassignResponsible,
   updatingOrderStatus,
+  updatingResponsible,
   onOrderStatusChange,
+  onResponsibleChange,
 }: {
   order: Order
   orderStatusOptions: BluesalesStatusOption[]
+  managerAssignees: OrderAssignee[]
+  designerAssignees: OrderAssignee[]
+  canReassignResponsible: boolean
   updatingOrderStatus: boolean
+  updatingResponsible: boolean
   onOrderStatusChange: (statusId: number) => void
+  onResponsibleChange: (
+    field:
+      | 'deliveryManagerId'
+      | 'onboardingManagerId'
+      | 'sketchDesignerId'
+      | 'revisionDesignerId',
+    userId: number | '',
+  ) => void
 }) {
   const bs = order.bluesalesInfo
   const lead = order.lead
@@ -426,22 +452,152 @@ function OrderInfoPanel({
           }
         />
         <InfoRow label="Создан" value={formatDateTime(order.createdAt)} />
-        <InfoRow
-          label="Менеджер ведения"
-          value={order.deliveryManager?.name ?? dash}
-        />
-        <InfoRow
-          label="Менеджер оформления"
-          value={order.onboardingManager?.name ?? dash}
-        />
-        <InfoRow
-          label="Художник эскиза"
-          value={order.sketchDesigner?.name ?? dash}
-        />
-        <InfoRow
-          label="Художник правок"
-          value={order.revisionDesigner?.name ?? dash}
-        />
+        <Box sx={{ py: 0.6 }}>
+          <TextField
+            select
+            label="Менеджер ведения"
+            size="small"
+            value={order.deliveryManager?.id != null ? String(order.deliveryManager.id) : ''}
+            onChange={(e) =>
+              onResponsibleChange(
+                'deliveryManagerId',
+                e.target.value ? Number(e.target.value) : '',
+              )
+            }
+            fullWidth
+            disabled={!canReassignResponsible || updatingResponsible}
+            helperText={
+              managerAssignees.length === 0
+                ? 'Нет пользователей с ролью менеджера'
+                : !canReassignResponsible
+                  ? 'Только просмотр: нужен скоуп на изменение ответственных'
+                  : undefined
+            }
+          >
+            <MenuItem value="">Не назначен</MenuItem>
+            {order.deliveryManager &&
+              !managerAssignees.some((assignee) => assignee.id === order.deliveryManager!.id) && (
+                <MenuItem value={String(order.deliveryManager.id)}>
+                  {order.deliveryManager.name}
+                </MenuItem>
+              )}
+            {managerAssignees.map((assignee) => (
+              <MenuItem key={assignee.id} value={String(assignee.id)}>
+                {assignee.name}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+        <Box sx={{ py: 0.6 }}>
+          <TextField
+            select
+            label="Менеджер оформления"
+            size="small"
+            value={order.onboardingManager?.id != null ? String(order.onboardingManager.id) : ''}
+            onChange={(e) =>
+              onResponsibleChange(
+                'onboardingManagerId',
+                e.target.value ? Number(e.target.value) : '',
+              )
+            }
+            fullWidth
+            disabled={!canReassignResponsible || updatingResponsible}
+            helperText={
+              managerAssignees.length === 0
+                ? 'Нет пользователей с ролью менеджера'
+                : !canReassignResponsible
+                  ? 'Только просмотр: нужен скоуп на изменение ответственных'
+                  : undefined
+            }
+          >
+            <MenuItem value="">Не назначен</MenuItem>
+            {order.onboardingManager &&
+              !managerAssignees.some((assignee) => assignee.id === order.onboardingManager!.id) && (
+                <MenuItem value={String(order.onboardingManager.id)}>
+                  {order.onboardingManager.name}
+                </MenuItem>
+              )}
+            {managerAssignees.map((assignee) => (
+              <MenuItem key={assignee.id} value={String(assignee.id)}>
+                {assignee.name}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+        <Box sx={{ py: 0.6 }}>
+          <TextField
+            select
+            label="Художник эскиза"
+            size="small"
+            value={order.sketchDesigner?.id != null ? String(order.sketchDesigner.id) : ''}
+            onChange={(e) =>
+              onResponsibleChange(
+                'sketchDesignerId',
+                e.target.value ? Number(e.target.value) : '',
+              )
+            }
+            fullWidth
+            disabled={!canReassignResponsible || updatingResponsible}
+            helperText={
+              designerAssignees.length === 0
+                ? 'Нет пользователей с ролью художника'
+                : !canReassignResponsible
+                  ? 'Только просмотр: нужен скоуп на изменение ответственных'
+                  : undefined
+            }
+          >
+            <MenuItem value="">Не назначен</MenuItem>
+            {order.sketchDesigner &&
+              !designerAssignees.some((assignee) => assignee.id === order.sketchDesigner!.id) && (
+                <MenuItem value={String(order.sketchDesigner.id)}>
+                  {order.sketchDesigner.name}
+                </MenuItem>
+              )}
+            {designerAssignees.map((assignee) => (
+              <MenuItem key={assignee.id} value={String(assignee.id)}>
+                {assignee.name}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+        <Box sx={{ py: 0.6 }}>
+          <TextField
+            select
+            label="Художник правок"
+            size="small"
+            value={order.revisionDesigner?.id != null ? String(order.revisionDesigner.id) : ''}
+            onChange={(e) =>
+              onResponsibleChange(
+                'revisionDesignerId',
+                e.target.value ? Number(e.target.value) : '',
+              )
+            }
+            fullWidth
+            disabled={!canReassignResponsible || updatingResponsible}
+            helperText={
+              designerAssignees.length === 0
+                ? 'Нет пользователей с ролью художника'
+                : !canReassignResponsible
+                  ? 'Только просмотр: нужен скоуп на изменение ответственных'
+                  : undefined
+            }
+          >
+            <MenuItem value="">Не назначен</MenuItem>
+            {order.revisionDesigner &&
+              !designerAssignees.some(
+                (assignee) => assignee.id === order.revisionDesigner!.id,
+              ) && (
+                <MenuItem value={String(order.revisionDesigner.id)}>
+                  {order.revisionDesigner.name}
+                </MenuItem>
+              )}
+            {designerAssignees.map((assignee) => (
+              <MenuItem key={assignee.id} value={String(assignee.id)}>
+                {assignee.name}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
       </Stack>
 
       {bs && (
@@ -587,12 +743,11 @@ export default function OrderThreadPage() {
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [updatingOrderStatus, setUpdatingOrderStatus] = useState(false)
+  const [updatingResponsible, setUpdatingResponsible] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
-  const canReassignResponsible =
-    user?.role === 'ADMIN' ||
-    (user?.scopes ?? []).includes('ORDERS_CHANGE_RESPONSIBLE')
+  const canReassignResponsible = canEditOrderResponsibles(user?.role, user?.scopes)
 
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -678,6 +833,29 @@ export default function OrderThreadPage() {
       setSendError('Не удалось изменить статус заказа')
     } finally {
       setUpdatingOrderStatus(false)
+    }
+  }
+
+  const handleResponsibleChange = async (
+    field:
+      | 'deliveryManagerId'
+      | 'onboardingManagerId'
+      | 'sketchDesignerId'
+      | 'revisionDesignerId',
+    userId: number | '',
+  ) => {
+    if (!order || !canReassignResponsible) return
+    setUpdatingResponsible(true)
+    try {
+      const payload: UpdateOrderPayload = {
+        [field]: userId === '' ? null : userId,
+      }
+      const { data } = await client.patch<Order>(`/orders/${orderId}`, payload)
+      setOrder(data)
+    } catch {
+      setSendError('Не удалось изменить ответственного')
+    } finally {
+      setUpdatingResponsible(false)
     }
   }
 
@@ -1147,9 +1325,16 @@ export default function OrderThreadPage() {
       <OrderInfoPanel
         order={order}
         orderStatusOptions={orderStatusOptions}
+        managerAssignees={managerAssignees}
+        designerAssignees={designerAssignees}
+        canReassignResponsible={canReassignResponsible}
         updatingOrderStatus={updatingOrderStatus}
+        updatingResponsible={updatingResponsible}
         onOrderStatusChange={(statusId) => {
           void handleOrderStatusChange(statusId)
+        }}
+        onResponsibleChange={(field, userId) => {
+          void handleResponsibleChange(field, userId)
         }}
       />
 
