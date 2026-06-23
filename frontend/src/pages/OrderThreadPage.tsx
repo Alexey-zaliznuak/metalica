@@ -1178,75 +1178,103 @@ export default function OrderThreadPage() {
               onChange={(e) => setEditTitle(e.target.value)}
               fullWidth
             />
-            {canReassignResponsible && (
-              <>
-                <TextField
-                  select
-                  label="Менеджер ведения"
-                  value={editDeliveryManagerId === '' ? '' : String(editDeliveryManagerId)}
-                  onChange={(e) =>
-                    setEditDeliveryManagerId(e.target.value ? Number(e.target.value) : '')
-                  }
-                  fullWidth
-                >
-                  <MenuItem value="">Не назначен</MenuItem>
-                  {managerAssignees.map((assignee) => (
-                    <MenuItem key={assignee.id} value={String(assignee.id)}>
-                      {assignee.name}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  select
-                  label="Менеджер оформления"
-                  value={editOnboardingManagerId === '' ? '' : String(editOnboardingManagerId)}
-                  onChange={(e) =>
-                    setEditOnboardingManagerId(e.target.value ? Number(e.target.value) : '')
-                  }
-                  fullWidth
-                >
-                  <MenuItem value="">Не назначен</MenuItem>
-                  {managerAssignees.map((assignee) => (
-                    <MenuItem key={assignee.id} value={String(assignee.id)}>
-                      {assignee.name}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  select
-                  label="Художник эскиза"
-                  value={editSketchDesignerId === '' ? '' : String(editSketchDesignerId)}
-                  onChange={(e) =>
-                    setEditSketchDesignerId(e.target.value ? Number(e.target.value) : '')
-                  }
-                  fullWidth
-                >
-                  <MenuItem value="">Не назначен</MenuItem>
-                  {designerAssignees.map((assignee) => (
-                    <MenuItem key={assignee.id} value={String(assignee.id)}>
-                      {assignee.name}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  select
-                  label="Художник правок"
-                  value={editRevisionDesignerId === '' ? '' : String(editRevisionDesignerId)}
-                  onChange={(e) =>
-                    setEditRevisionDesignerId(e.target.value ? Number(e.target.value) : '')
-                  }
-                  fullWidth
-                  helperText="Назначайте ответственных по ролям"
-                >
-                  <MenuItem value="">Не назначен</MenuItem>
-                  {designerAssignees.map((assignee) => (
-                    <MenuItem key={assignee.id} value={String(assignee.id)}>
-                      {assignee.name}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              </>
-            )}
+            <TextField
+              select
+              label="Менеджер ведения"
+              value={editDeliveryManagerId === '' ? '' : String(editDeliveryManagerId)}
+              onChange={(e) =>
+                setEditDeliveryManagerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {editDeliveryManagerId !== '' &&
+                !managerAssignees.some((assignee) => assignee.id === editDeliveryManagerId) && (
+                  <MenuItem value={String(editDeliveryManagerId)}>
+                    {order.deliveryManager?.name ?? `Пользователь #${editDeliveryManagerId}`}
+                  </MenuItem>
+                )}
+              {managerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Менеджер оформления"
+              value={editOnboardingManagerId === '' ? '' : String(editOnboardingManagerId)}
+              onChange={(e) =>
+                setEditOnboardingManagerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {editOnboardingManagerId !== '' &&
+                !managerAssignees.some((assignee) => assignee.id === editOnboardingManagerId) && (
+                  <MenuItem value={String(editOnboardingManagerId)}>
+                    {order.onboardingManager?.name ?? `Пользователь #${editOnboardingManagerId}`}
+                  </MenuItem>
+                )}
+              {managerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Художник эскиза"
+              value={editSketchDesignerId === '' ? '' : String(editSketchDesignerId)}
+              onChange={(e) =>
+                setEditSketchDesignerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {editSketchDesignerId !== '' &&
+                !designerAssignees.some((assignee) => assignee.id === editSketchDesignerId) && (
+                  <MenuItem value={String(editSketchDesignerId)}>
+                    {order.sketchDesigner?.name ?? `Пользователь #${editSketchDesignerId}`}
+                  </MenuItem>
+                )}
+              {designerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Художник правок"
+              value={editRevisionDesignerId === '' ? '' : String(editRevisionDesignerId)}
+              onChange={(e) =>
+                setEditRevisionDesignerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+              helperText={
+                canReassignResponsible
+                  ? 'Назначайте ответственных по ролям'
+                  : 'Только просмотр: нужен скоуп на изменение ответственных'
+              }
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {editRevisionDesignerId !== '' &&
+                !designerAssignees.some((assignee) => assignee.id === editRevisionDesignerId) && (
+                  <MenuItem value={String(editRevisionDesignerId)}>
+                    {order.revisionDesigner?.name ?? `Пользователь #${editRevisionDesignerId}`}
+                  </MenuItem>
+                )}
+              {designerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
