@@ -173,6 +173,18 @@ export interface DesignerMetric {
   avgRevisionSeconds: number
 }
 
+export interface WorkloadMetric {
+  userId: number
+  name: string
+  username: string
+  role: UserRole
+  deliveryOrders: number
+  onboardingOrders: number
+  sketchOrders: number
+  revisionOrders: number
+  revisionOrdersWithOpenRequest: number
+}
+
 export interface LoginResponse {
   accessToken: string
   user: User

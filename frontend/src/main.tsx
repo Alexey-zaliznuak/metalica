@@ -11,6 +11,7 @@ import OrdersPage from './pages/OrdersPage'
 import OrderThreadPage from './pages/OrderThreadPage'
 import MetricsPage from './pages/MetricsPage'
 import UsersPage from './pages/UsersPage'
+import WorkloadPage from './pages/WorkloadPage'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -46,6 +47,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <ProtectedRoute>
                   <AppLayout>
                     <MetricsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/workload"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <WorkloadPage />
                   </AppLayout>
                 </ProtectedRoute>
               }

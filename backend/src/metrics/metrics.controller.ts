@@ -16,4 +16,9 @@ export class MetricsController {
   byDesigner() {
     return this.metrics.byDesigner();
   }
+
+  @Get('workload')
+  workload() {
+    return this.metrics.workload();
+  }
 }
