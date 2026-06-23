@@ -86,6 +86,7 @@ export interface Order {
   orderNumber: string
   title: string | null
   source: OrderSource
+  dialogLink?: string | null
   orderStatusId: number | null
   orderStatus: string | null
   crmStatusId?: number | null

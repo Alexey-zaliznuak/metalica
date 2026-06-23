@@ -603,6 +603,29 @@ function OrderInfoPanel({
           </SectionTitle>
           <Stack divider={<Divider flexItem />}>
             <InfoRow label="№ в BS" value={bs.bsNumber ?? bs.bsOrderId} />
+            <InfoRow
+              label="Даилог BS"
+              value={
+                order.dialogLink ? (
+                  <Link
+                    href={order.dialogLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Открыть
+                    <OpenInNewIcon sx={{ fontSize: 15 }} />
+                  </Link>
+                ) : (
+                  dash
+                )
+              }
+            />
             <Box sx={{ py: 0.6 }}>
               <TextField
                 select
