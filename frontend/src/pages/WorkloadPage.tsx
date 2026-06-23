@@ -70,6 +70,7 @@ export default function WorkloadPage() {
   const [items, setItems] = useState<WorkloadMetric[]>([])
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
+  const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [sortField, setSortField] = useState<SortField>('PRIMARY_ORDERS')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [frontendSettingsBase, setFrontendSettingsBase] = useState<
@@ -241,6 +242,12 @@ export default function WorkloadPage() {
         <Autocomplete
           multiple
           disableCloseOnSelect
+          open={statusFilterOpen}
+          onOpen={() => setStatusFilterOpen(true)}
+          onClose={(_, reason) => {
+            if (reason === 'selectOption') return
+            setStatusFilterOpen(false)
+          }}
           options={orderStatuses}
           value={selectedStatuses}
           getOptionLabel={(option) => option.name}
@@ -292,6 +299,11 @@ export default function WorkloadPage() {
                     active={sortField === 'PRIMARY_ORDERS'}
                     direction={sortField === 'PRIMARY_ORDERS' ? sortDirection : 'desc'}
                     onClick={() => handleSortChange('PRIMARY_ORDERS')}
+                    sx={{
+                      color: 'text.primary',
+                      '&.Mui-active': { color: 'text.primary' },
+                      '& .MuiTableSortLabel-icon': { color: 'text.secondary !important' },
+                    }}
                   >
                     {filter === 'MANAGER' ? 'Ведение' : 'Эскизы'}
                   </TableSortLabel>
@@ -301,6 +313,11 @@ export default function WorkloadPage() {
                     active={sortField === 'SECONDARY_ORDERS'}
                     direction={sortField === 'SECONDARY_ORDERS' ? sortDirection : 'desc'}
                     onClick={() => handleSortChange('SECONDARY_ORDERS')}
+                    sx={{
+                      color: 'text.primary',
+                      '&.Mui-active': { color: 'text.primary' },
+                      '& .MuiTableSortLabel-icon': { color: 'text.secondary !important' },
+                    }}
                   >
                     {filter === 'MANAGER' ? 'Оформление' : 'Правки'}
                   </TableSortLabel>
