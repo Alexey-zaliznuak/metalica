@@ -422,6 +422,10 @@ function OrderInfoPanel({
   const bs = order.bluesalesInfo
   const lead = order.lead
   const dash = '—'
+  const bluesalesCustomerUrl =
+    lead?.bsCustomerId != null
+      ? `https://bluesales.ru/app/Customers/CustomerView.aspx?id=${lead.bsCustomerId}`
+      : null
 
   return (
     <Paper
@@ -671,6 +675,29 @@ function OrderInfoPanel({
             {lead.name && lead.name !== lead.fullName && (
               <InfoRow label="Имя" value={lead.name} />
             )}
+            <InfoRow
+              label="ID клиента в BS"
+              value={
+                bluesalesCustomerUrl ? (
+                  <Link
+                    href={bluesalesCustomerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {lead.vkUserId ?? String(lead.bsCustomerId)}
+                    <OpenInNewIcon sx={{ fontSize: 15 }} />
+                  </Link>
+                ) : (
+                  lead.vkUserId ?? dash
+                )
+              }
+            />
             <InfoRow label="CRM-статус" value={lead.crmStatus ?? dash} />
             <InfoRow
               label="Диалог в ВК"
