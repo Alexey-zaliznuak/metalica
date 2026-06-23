@@ -237,25 +237,11 @@ export class OrdersService {
         userId === null ? { disconnect: true } : { connect: { id: userId } };
     }
 
-    const order = await this.prisma.order.update({
+    await this.prisma.order.update({
       where: { id },
       data,
-      include: {
-        deliveryManager: { select: this.userSelect },
-        onboardingManager: { select: this.userSelect },
-        sketchDesigner: { select: this.userSelect },
-        revisionDesigner: { select: this.userSelect },
-        bluesalesInfo: {
-          select: {
-            orderStatusId: true,
-            orderStatus: true,
-            crmStatusId: true,
-            crmStatus: true,
-          },
-        },
-      },
     });
-    return this.withStats(order);
+    return this.findOne(id);
   }
 
   async getAssignees() {
