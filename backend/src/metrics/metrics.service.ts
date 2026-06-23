@@ -179,7 +179,7 @@ export class MetricsService {
         LIMIT 1
       ) lm ON TRUE
       WHERE o."revisionDesignerId" IS NOT NULL
-        AND lm."kind" = ${MessageKind.REVISION_REQUEST}
+        AND lm."kind" = 'REVISION_REQUEST'::"MessageKind"
       GROUP BY o."revisionDesignerId"
     `;
     const map = new Map<number, number>();
