@@ -192,6 +192,11 @@ export class OrdersService {
       data.title = title.length > 0 ? title : null;
     }
 
+    if (dto.dialogLink !== undefined) {
+      const dialogLink = (dto.dialogLink ?? '').trim();
+      data.dialogLink = dialogLink.length > 0 ? dialogLink : null;
+    }
+
     if (dto.deliveryManagerId !== undefined) {
       const userId = await this.validateAssigneeRole(
         dto.deliveryManagerId,

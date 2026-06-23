@@ -672,10 +672,6 @@ function OrderInfoPanel({
               label="Создан в BS"
               value={formatDateTime(bs.bsCreatedAt)}
             />
-            <InfoRow
-              label="CRM-статус"
-              value={bs.crmStatus ?? dash}
-            />
           </Stack>
         </Box>
       )}
@@ -751,6 +747,7 @@ export default function OrderThreadPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [editNumber, setEditNumber] = useState('')
   const [editTitle, setEditTitle] = useState('')
+  const [editDialogLink, setEditDialogLink] = useState('')
   const [editDeliveryManagerId, setEditDeliveryManagerId] = useState<number | ''>('')
   const [editOnboardingManagerId, setEditOnboardingManagerId] = useState<number | ''>('')
   const [editSketchDesignerId, setEditSketchDesignerId] = useState<number | ''>('')
@@ -878,6 +875,7 @@ export default function OrderThreadPage() {
     if (!order) return
     setEditNumber(order.orderNumber)
     setEditTitle(order.title || '')
+    setEditDialogLink(order.dialogLink ?? '')
     setEditDeliveryManagerId(order.deliveryManager?.id ?? '')
     setEditOnboardingManagerId(order.onboardingManager?.id ?? '')
     setEditSketchDesignerId(order.sketchDesigner?.id ?? '')
@@ -894,6 +892,7 @@ export default function OrderThreadPage() {
       const payload: UpdateOrderPayload = {
         orderNumber: editNumber.trim(),
         title: editTitle.trim(),
+        dialogLink: editDialogLink.trim() ? editDialogLink.trim() : null,
         ...(canReassignResponsible
           ? {
               deliveryManagerId: editDeliveryManagerId === '' ? null : editDeliveryManagerId,
@@ -1376,6 +1375,12 @@ export default function OrderThreadPage() {
               label="Наименование (необязательно)"
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Даилог BS (ссылка)"
+              value={editDialogLink}
+              onChange={(e) => setEditDialogLink(e.target.value)}
               fullWidth
             />
             <TextField

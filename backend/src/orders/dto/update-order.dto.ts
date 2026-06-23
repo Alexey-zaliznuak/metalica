@@ -20,6 +20,11 @@ export class UpdateOrderDto {
   title?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  dialogLink?: string | null;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   deliveryManagerId?: number | null;

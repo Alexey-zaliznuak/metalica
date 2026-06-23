@@ -38,6 +38,7 @@ export interface UpdateUserPayload {
 export interface UpdateOrderPayload {
   orderNumber?: string
   title?: string
+  dialogLink?: string | null
   deliveryManagerId?: number | null
   onboardingManagerId?: number | null
   sketchDesignerId?: number | null
