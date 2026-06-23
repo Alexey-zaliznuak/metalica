@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role } from '@prisma/client';
+import { Prisma, Role, UserScope } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -13,9 +13,23 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
+  private userListSelect = {
+    id: true,
+    username: true,
+    name: true,
+    role: true,
+    scopes: true,
+    createdAt: true,
+  } as const;
+
+  private normalizeScopes(scopes?: UserScope[]) {
+    if (!scopes) return undefined;
+    return Array.from(new Set(scopes));
+  }
+
   findAll() {
     return this.prisma.user.findMany({
-      select: { id: true, username: true, name: true, role: true, createdAt: true },
+      select: this.userListSelect,
       orderBy: { id: 'asc' },
     });
   }
@@ -33,9 +47,10 @@ export class UsersService {
         username,
         name: dto.name.trim(),
         role: dto.role ?? Role.MANAGER,
+        scopes: this.normalizeScopes(dto.scopes) ?? [],
         passwordHash,
       },
-      select: { id: true, username: true, name: true, role: true, createdAt: true },
+      select: this.userListSelect,
     });
   }
 
@@ -66,6 +81,10 @@ export class UsersService {
       data.role = dto.role;
     }
 
+    if (dto.scopes !== undefined) {
+      data.scopes = this.normalizeScopes(dto.scopes) ?? [];
+    }
+
     if (dto.password) {
       data.passwordHash = await bcrypt.hash(dto.password, 10);
     }
@@ -73,7 +92,7 @@ export class UsersService {
     return this.prisma.user.update({
       where: { id },
       data,
-      select: { id: true, username: true, name: true, role: true, createdAt: true },
+      select: this.userListSelect,
     });
   }
 }

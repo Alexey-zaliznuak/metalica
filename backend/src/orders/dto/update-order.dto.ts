@@ -1,11 +1,13 @@
-import { IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { OrderStatus } from '@prisma/client';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class UpdateOrderDto {
-  @IsOptional()
-  @IsEnum(OrderStatus)
-  status?: OrderStatus;
-
   @IsOptional()
   @IsString()
   @MinLength(1)
@@ -16,4 +18,24 @@ export class UpdateOrderDto {
   @IsString()
   @MaxLength(300)
   title?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  deliveryManagerId?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  onboardingManagerId?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  sketchDesignerId?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  revisionDesignerId?: number | null;
 }

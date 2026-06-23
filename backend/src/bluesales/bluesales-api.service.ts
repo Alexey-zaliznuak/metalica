@@ -68,6 +68,12 @@ export interface GetCustomersResponse {
   customers: BsCustomer[];
 }
 
+interface SetOrderStatusPayload {
+  orderId?: number;
+  id?: number;
+  status: number;
+}
+
 const MAX_PAGE_SIZE = 500;
 
 @Injectable()
@@ -75,6 +81,7 @@ export class BluesalesApiService {
   private readonly logger = new Logger(BluesalesApiService.name);
   private readonly login: string;
   private readonly passwordHash: string;
+  private pausedUntilTs: number | null = null;
 
   // Очередь сериализации запросов (single-session на логин)
   private chain: Promise<unknown> = Promise.resolve();
@@ -106,6 +113,28 @@ export class BluesalesApiService {
 
   private async sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private getPauseRemainingMs(): number {
+    if (!this.pausedUntilTs) {
+      return 0;
+    }
+    return Math.max(0, this.pausedUntilTs - Date.now());
+  }
+
+  private async waitIfPaused(): Promise<void> {
+    while (true) {
+      const remainingMs = this.getPauseRemainingMs();
+      if (remainingMs <= 0) {
+        this.pausedUntilTs = null;
+        return;
+      }
+
+      this.logger.warn(
+        `BlueSales API временно заблокирован, ожидание ${Math.ceil(remainingMs / 1000)}с`,
+      );
+      await this.sleep(Math.min(remainingMs, 1000));
+    }
   }
 
   private parseCountdown(error: string): number | null {
@@ -202,7 +231,32 @@ export class BluesalesApiService {
 
   /** Публичный отправитель — все вызовы проходят через очередь. */
   send<T>(method: string, data?: unknown): Promise<T> {
-    return this.enqueue(() => this.sendRaw<T>(method, data));
+    return this.enqueue(async () => {
+      await this.waitIfPaused();
+      return this.sendRaw<T>(method, data);
+    });
+  }
+
+  pauseForMinutes(minutes: number): Date {
+    const durationMs = Math.max(1, Math.floor(minutes)) * 60 * 1000;
+    this.pausedUntilTs = Date.now() + durationMs;
+    const until = new Date(this.pausedUntilTs);
+    this.logger.warn(`BlueSales API заблокирован до ${until.toISOString()}`);
+    return until;
+  }
+
+  unblock(): void {
+    this.pausedUntilTs = null;
+    this.logger.warn('BlueSales API разблокирован досрочно');
+  }
+
+  getPauseState(): { isPaused: boolean; pausedUntil: string | null; remainingSeconds: number } {
+    const remainingMs = this.getPauseRemainingMs();
+    return {
+      isPaused: remainingMs > 0,
+      pausedUntil: remainingMs > 0 ? new Date((this.pausedUntilTs as number)).toISOString() : null,
+      remainingSeconds: Math.ceil(remainingMs / 1000),
+    };
   }
 
   private formatDate(date: Date): string {
@@ -267,5 +321,28 @@ export class BluesalesApiService {
       }
     }
     return items;
+  }
+
+  /**
+   * Изменяет статус заказа в BlueSales.
+   * В API встречаются разные имена ключа id, поэтому пробуем оба варианта.
+   */
+  async setOrderStatus(orderId: number, statusId: number): Promise<void> {
+    const payloads: SetOrderStatusPayload[] = [
+      { orderId, status: statusId },
+      { id: orderId, status: statusId },
+    ];
+
+    const errors: string[] = [];
+    for (const payload of payloads) {
+      try {
+        await this.send<unknown>('orders.setStatus', payload);
+        return;
+      } catch (err) {
+        errors.push((err as Error).message);
+      }
+    }
+
+    throw new BluesalesError(`orders.setStatus failed: ${errors.join(' | ')}`);
   }
 }

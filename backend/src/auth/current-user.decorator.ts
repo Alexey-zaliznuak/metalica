@@ -5,6 +5,8 @@ export interface AuthUser {
   username: string;
   name: string;
   role: string;
+  scopes: string[];
+  frontendSettings?: Record<string, unknown> | null;
 }
 
 export const CurrentUser = createParamDecorator(

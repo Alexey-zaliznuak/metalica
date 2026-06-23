@@ -5,15 +5,35 @@ import { BluesalesApiService } from './bluesales-api.service';
  * Временный контроллер для ручного тестирования BlueSales API.
  * Удалить после проверки функциональности ids-фильтра.
  */
-@Controller('bluesales/test')
+@Controller('bluesales')
 export class BluesalesController {
   constructor(private readonly api: BluesalesApiService) {}
+
+  @Get('pause')
+  pauseForFiveMinutes() {
+    const pausedUntil = this.api.pauseForMinutes(5);
+    return {
+      ok: true,
+      message: 'Все обращения к BlueSales API приостановлены на 5 минут',
+      pausedUntil: pausedUntil.toISOString(),
+    };
+  }
+
+  @Get('unpause')
+  unpause() {
+    this.api.unblock();
+    return {
+      ok: true,
+      message: 'Обращения к BlueSales API разблокированы досрочно',
+      ...this.api.getPauseState(),
+    };
+  }
 
   /**
    * GET /bluesales/test/orders-by-ids?ids=123,456,789
    * Проверяет работу фильтра ids в orders.get
    */
-  @Get('orders-by-ids')
+  @Get('test/orders-by-ids')
   async getOrdersByIds(@Query('ids') idsParam: string) {
     const ids = (idsParam ?? '')
       .split(',')
@@ -28,6 +48,7 @@ export class BluesalesController {
 
     return {
       requestedIds: ids,
+      ...this.api.getPauseState(),
       returnedCount: orders.length,
       returnedIds: orders.map((o) => o.id),
       orders,

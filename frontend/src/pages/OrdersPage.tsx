@@ -1,26 +1,34 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+} from 'react'
 import {
   Alert,
   Badge,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
+  Divider,
+  FormControlLabel,
   InputAdornment,
+  List,
+  ListItemButton,
+  ListItemText,
   MenuItem,
   Paper,
-  Pagination,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   TextField,
   Tooltip,
   Typography,
@@ -28,29 +36,111 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import SearchIcon from '@mui/icons-material/Search'
 import EditNoteIcon from '@mui/icons-material/EditNote'
+import ViewWeekIcon from '@mui/icons-material/ViewWeek'
+import SyncAltIcon from '@mui/icons-material/SyncAlt'
 import { useNavigate } from 'react-router-dom'
-import client from '../api/client'
-import type { Order, OrderStatus, PaginatedResponse } from '../api/types'
-import {
-  ORDER_STATUSES,
-  ORDER_STATUS_COLORS,
-  ORDER_STATUS_LABELS,
-  formatLastActivity,
-} from '../utils'
+import client, { USER_KEY } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
+import type { BluesalesStatusOption, Order, OrdersBoardSettings, User } from '../api/types'
+import { formatLastActivity } from '../utils'
+
+const NO_CRM_COLUMN_ID = -1
+
+const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
+  selectedCrmStatusIds: [],
+  columnOrder: [],
+  bsStatusFilter: null,
+  searchQuery: '',
+  showNoCrmColumn: true,
+}
+
+interface BoardColumn {
+  id: number
+  name: string
+  isNoCrm: boolean
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseBoardSettings(raw: unknown): OrdersBoardSettings {
+  if (!isRecord(raw)) return DEFAULT_BOARD_SETTINGS
+
+  const selectedCrmStatusIds = Array.isArray(raw.selectedCrmStatusIds)
+    ? raw.selectedCrmStatusIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0)
+    : []
+
+  const columnOrder = Array.isArray(raw.columnOrder)
+    ? raw.columnOrder
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= NO_CRM_COLUMN_ID)
+    : []
+
+  const bsStatusFilter =
+    raw.bsStatusFilter === null ||
+    (typeof raw.bsStatusFilter === 'number' && Number.isInteger(raw.bsStatusFilter))
+      ? raw.bsStatusFilter
+      : null
+
+  const searchQuery = typeof raw.searchQuery === 'string' ? raw.searchQuery : ''
+  const showNoCrmColumn =
+    typeof raw.showNoCrmColumn === 'boolean' ? raw.showNoCrmColumn : true
+
+  return {
+    selectedCrmStatusIds,
+    columnOrder,
+    bsStatusFilter,
+    searchQuery,
+    showNoCrmColumn,
+  }
+}
+
+function normalizeColumns(
+  allStatusIds: number[],
+  selectedIdsRaw: number[],
+  columnOrderRaw: number[],
+  showNoCrmColumn: boolean,
+): { selectedIds: number[]; columnOrder: number[] } {
+  const available = new Set(allStatusIds)
+  const selected = selectedIdsRaw
+    .filter((id, index, arr) => available.has(id) && arr.indexOf(id) === index)
+  const selectedIds = selected.length > 0 ? selected : allStatusIds
+  const requiredIds = showNoCrmColumn ? [...selectedIds, NO_CRM_COLUMN_ID] : selectedIds
+  const requiredSet = new Set(requiredIds)
+  const ordered = columnOrderRaw.filter(
+    (id, index, arr) => requiredSet.has(id) && arr.indexOf(id) === index,
+  )
+  const missing = requiredIds.filter((id) => !ordered.includes(id))
+  return { selectedIds, columnOrder: [...ordered, ...missing] }
+}
 
 export default function OrdersPage() {
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [orders, setOrders] = useState<Order[]>([])
+  const [crmStatuses, setCrmStatuses] = useState<BluesalesStatusOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [bootError, setBootError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<OrderStatus | ''>('')
+  const [bsStatusFilter, setBsStatusFilter] = useState<number | ''>('')
+  const [bsStatuses, setBsStatuses] = useState<BluesalesStatusOption[]>([])
+  const [selectedCrmStatusIds, setSelectedCrmStatusIds] = useState<number[]>([])
+  const [showNoCrmColumn, setShowNoCrmColumn] = useState(true)
+  const [columnOrder, setColumnOrder] = useState<number[]>([])
+  const [draggingColumnId, setDraggingColumnId] = useState<number | null>(null)
+  const [draggingOrderId, setDraggingOrderId] = useState<number | null>(null)
+  const [movingOrderId, setMovingOrderId] = useState<number | null>(null)
+  const [columnsDialogOpen, setColumnsDialogOpen] = useState(false)
+  const [initialized, setInitialized] = useState(false)
 
-  const PAGE_SIZE = 30
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const [total, setTotal] = useState(0)
+  const [frontendSettingsBase, setFrontendSettingsBase] = useState<
+    Record<string, unknown>
+  >({})
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newOrderNumber, setNewOrderNumber] = useState('')
@@ -60,46 +150,116 @@ export default function OrdersPage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const fetchOrders = useCallback(
-    async (q: string, status: OrderStatus | '', pageNum: number) => {
-      setLoading(true)
-      setError(null)
-      try {
-        const { data } = await client.get<PaginatedResponse<Order>>('/orders', {
-          params: {
-            q: q || undefined,
-            status: status || undefined,
-            page: pageNum,
-            limit: PAGE_SIZE,
-          },
-        })
-        setOrders(data.items)
-        setTotalPages(data.totalPages)
-        setTotal(data.total)
-      } catch {
-        setError('Не удалось загрузить заказы')
-      } finally {
-        setLoading(false)
-      }
-    },
-    [],
-  )
+  const fetchOrders = useCallback(async (q: string, statusId: number | '') => {
+    setLoading(true)
+    setError(null)
+    try {
+      const { data } = await client.get<{ items: Order[] }>('/orders', {
+        params: {
+          q: q || undefined,
+          bsStatusId: statusId === '' ? undefined : statusId,
+          page: 1,
+          limit: 300,
+        },
+      })
+      setOrders(data.items)
+    } catch {
+      setError('Не удалось загрузить заказы')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-  // Reset to first page when filters change.
   useEffect(() => {
-    setPage(1)
-  }, [search, statusFilter])
-
-  // Debounced fetch on search / filter / page change.
-  useEffect(() => {
+    if (!initialized) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      fetchOrders(search, statusFilter, page)
+      fetchOrders(search, bsStatusFilter)
     }, 300)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [search, statusFilter, page, fetchOrders])
+  }, [search, bsStatusFilter, initialized, fetchOrders])
+
+  useEffect(() => {
+    let active = true
+    void Promise.all([
+      client.get<BluesalesStatusOption[]>('/orders/bs-statuses'),
+      client.get<BluesalesStatusOption[]>('/orders/crm-statuses'),
+    ])
+      .then(([bsRes, crmRes]) => {
+        if (!active) return
+        setBsStatuses(bsRes.data)
+        setCrmStatuses(crmRes.data)
+
+        const baseSettings = isRecord(user?.frontendSettings) ? user.frontendSettings : {}
+        const parsed = parseBoardSettings(
+          isRecord(baseSettings.ordersBoard) ? baseSettings.ordersBoard : undefined,
+        )
+        const allCrmStatusIds = crmRes.data.map((status) => status.id)
+        const normalized = normalizeColumns(
+          allCrmStatusIds,
+          parsed.selectedCrmStatusIds,
+          parsed.columnOrder,
+          parsed.showNoCrmColumn,
+        )
+
+        setFrontendSettingsBase(baseSettings)
+        setSearch(parsed.searchQuery)
+        setBsStatusFilter(parsed.bsStatusFilter ?? '')
+        setShowNoCrmColumn(parsed.showNoCrmColumn)
+        setSelectedCrmStatusIds(normalized.selectedIds)
+        setColumnOrder(normalized.columnOrder)
+        setInitialized(true)
+      })
+      .catch(() => {
+        if (!active) return
+        setBootError('Не удалось загрузить CRM-статусы')
+        setInitialized(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [user?.frontendSettings])
+
+  useEffect(() => {
+    if (!initialized) return
+    const timeout = setTimeout(() => {
+      const boardSettings: OrdersBoardSettings = {
+        selectedCrmStatusIds,
+        columnOrder,
+        bsStatusFilter: bsStatusFilter === '' ? null : bsStatusFilter,
+        searchQuery: search,
+        showNoCrmColumn,
+      }
+      const frontendSettings = {
+        ...frontendSettingsBase,
+        ordersBoard: boardSettings,
+      }
+      void client.patch<User>('/auth/frontend-settings', { frontendSettings }).then(({ data }) => {
+        const rawUser = localStorage.getItem(USER_KEY)
+        if (!rawUser) return
+        try {
+          const cached = JSON.parse(rawUser) as User
+          localStorage.setItem(
+            USER_KEY,
+            JSON.stringify({ ...cached, frontendSettings: data.frontendSettings }),
+          )
+        } catch {
+          /* ignore invalid cache */
+        }
+      })
+    }, 600)
+    return () => clearTimeout(timeout)
+  }, [
+    initialized,
+    search,
+    bsStatusFilter,
+    selectedCrmStatusIds,
+    showNoCrmColumn,
+    columnOrder,
+    frontendSettingsBase,
+  ])
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
@@ -113,6 +273,7 @@ export default function OrdersPage() {
       setDialogOpen(false)
       setNewOrderNumber('')
       setNewTitle('')
+      void fetchOrders(search, bsStatusFilter)
       navigate(`/orders/${data.id}`)
     } catch {
       setCreateError('Не удалось создать заказ. Возможно, номер уже занят.')
@@ -121,9 +282,119 @@ export default function OrdersPage() {
     }
   }
 
-  const isEmpty = useMemo(
-    () => !loading && orders.length === 0,
-    [loading, orders.length],
+  const boardColumns = useMemo<BoardColumn[]>(() => {
+    const byId = new Map(crmStatuses.map((status) => [status.id, status]))
+    const allColumns = columnOrder
+      .filter(
+        (id) =>
+          id === NO_CRM_COLUMN_ID ||
+          (id >= 0 && selectedCrmStatusIds.includes(id) && byId.has(id)),
+      )
+      .map((id) =>
+        id === NO_CRM_COLUMN_ID
+          ? { id, name: 'Без CRM-статуса', isNoCrm: true }
+          : { id, name: byId.get(id)!.name, isNoCrm: false },
+      )
+    return allColumns
+  }, [crmStatuses, columnOrder, selectedCrmStatusIds])
+
+  const ordersByColumn = useMemo(() => {
+    const map = new Map<number, Order[]>()
+    boardColumns.forEach((column) => map.set(column.id, []))
+    for (const order of orders) {
+      const columnId = order.crmStatusId ?? NO_CRM_COLUMN_ID
+      if (map.has(columnId)) {
+        map.get(columnId)!.push(order)
+      }
+    }
+    return map
+  }, [orders, boardColumns])
+
+  const isEmpty = useMemo(() => !loading && orders.length === 0, [loading, orders.length])
+
+  const crmStatusNameById = useMemo(() => {
+    const map = new Map<number, string>()
+    crmStatuses.forEach((status) => map.set(status.id, status.name))
+    return map
+  }, [crmStatuses])
+
+  const toggleCrmStatus = (statusId: number) => {
+    setSelectedCrmStatusIds((prev) => {
+      const exists = prev.includes(statusId)
+      if (exists) {
+        const next = prev.filter((id) => id !== statusId)
+        setColumnOrder((currentOrder) => currentOrder.filter((id) => id !== statusId))
+        return next
+      }
+      setColumnOrder((currentOrder) =>
+        currentOrder.includes(statusId) ? currentOrder : [...currentOrder, statusId],
+      )
+      return [...prev, statusId]
+    })
+  }
+
+  const toggleNoCrmColumn = (checked: boolean) => {
+    setShowNoCrmColumn(checked)
+    setColumnOrder((prev) => {
+      if (checked) {
+        return prev.includes(NO_CRM_COLUMN_ID) ? prev : [...prev, NO_CRM_COLUMN_ID]
+      }
+      return prev.filter((id) => id !== NO_CRM_COLUMN_ID)
+    })
+  }
+
+  const handleColumnDrop = (targetColumnId: number) => {
+    if (draggingColumnId == null || draggingColumnId === targetColumnId) return
+    setColumnOrder((prev) => {
+      const withoutDragged = prev.filter((id) => id !== draggingColumnId)
+      const targetIndex = withoutDragged.indexOf(targetColumnId)
+      if (targetIndex < 0) return prev
+      const next = [...withoutDragged]
+      next.splice(targetIndex, 0, draggingColumnId)
+      return next
+    })
+  }
+
+  const moveOrderToColumn = useCallback(
+    async (orderId: number, targetColumnId: number) => {
+      const current = orders.find((order) => order.id === orderId)
+      if (!current) return
+
+      const currentColumnId = current.crmStatusId ?? NO_CRM_COLUMN_ID
+      if (currentColumnId === targetColumnId) return
+
+      const nextCrmStatusId = targetColumnId === NO_CRM_COLUMN_ID ? null : targetColumnId
+      const nextCrmStatus =
+        targetColumnId === NO_CRM_COLUMN_ID
+          ? null
+          : (crmStatusNameById.get(targetColumnId) ?? null)
+
+      const prevOrders = orders
+      setMovingOrderId(orderId)
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === orderId
+            ? { ...order, crmStatusId: nextCrmStatusId, crmStatus: nextCrmStatus }
+            : order,
+        ),
+      )
+
+      try {
+        const { data } = await client.patch<Order>(`/orders/${orderId}/crm-status`, {
+          crmStatusId: nextCrmStatusId,
+          crmStatus: nextCrmStatus,
+        })
+        setOrders((prev) => prev.map((order) => (order.id === orderId ? data : order)))
+      } catch {
+        setOrders(prevOrders)
+        setError(
+          'Не удалось переместить заказ. Для ручных заказов CRM-статус не меняется.',
+        )
+      } finally {
+        setMovingOrderId(null)
+      }
+    },
+    [crmStatusNameById, orders],
   )
 
   return (
@@ -140,16 +411,25 @@ export default function OrdersPage() {
             Заказы
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Список заказов, статусы и активность по правкам
+            Перетаскивайте колонки и карточки заказов между CRM-статусами
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => setDialogOpen(true)}
-        >
-          Создать заказ
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button
+            variant="outlined"
+            startIcon={<ViewWeekIcon />}
+            onClick={() => setColumnsDialogOpen(true)}
+          >
+            Колонки CRM
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setDialogOpen(true)}
+          >
+            Создать заказ
+          </Button>
+        </Stack>
       </Stack>
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
@@ -169,132 +449,205 @@ export default function OrdersPage() {
         />
         <TextField
           select
-          label="Статус"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as OrderStatus | '')}
+          label="BS-статус"
+          value={bsStatusFilter === '' ? '' : String(bsStatusFilter)}
+          onChange={(e) => setBsStatusFilter(e.target.value ? Number(e.target.value) : '')}
           size="small"
           sx={{ minWidth: { sm: 200 } }}
         >
-          <MenuItem value="">Все статусы</MenuItem>
-          {ORDER_STATUSES.map((s) => (
-            <MenuItem key={s} value={s}>
-              {ORDER_STATUS_LABELS[s]}
+          <MenuItem value="">Все BS-статусы</MenuItem>
+          {bsStatuses.map((status) => (
+            <MenuItem key={status.id} value={String(status.id)}>
+              {status.name}
             </MenuItem>
           ))}
         </TextField>
       </Stack>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
-      <Paper variant="outlined" sx={{ borderRadius: 1.5, overflow: 'hidden' }}>
-        <TableContainer>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Номер</TableCell>
-                <TableCell>Название</TableCell>
-                <TableCell>Статус</TableCell>
-                <TableCell align="center">Правки</TableCell>
-                <TableCell>Последняя активность</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {loading && (
-                <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 6 }}>
-                    <CircularProgress />
-                  </TableCell>
-                </TableRow>
-              )}
-              {isEmpty && (
-                <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 6 }}>
-                    <Typography color="text.secondary">
-                      Заказы не найдены
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-              {!loading &&
-                orders.map((order) => (
-                  <TableRow
-                    key={order.id}
-                    hover
-                    onClick={() => navigate(`/orders/${order.id}`)}
-                    sx={{ cursor: 'pointer' }}
+      {bootError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {bootError}
+        </Alert>
+      )}
+
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 1.5,
+          borderRadius: 1.5,
+          minHeight: 440,
+          overflowX: 'auto',
+          bgcolor: '#f7f9fc',
+        }}
+      >
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+            <CircularProgress />
+          </Box>
+        ) : boardColumns.length === 0 ? (
+          <Box sx={{ textAlign: 'center', py: 8 }}>
+            <Typography color="text.secondary" sx={{ mb: 1 }}>
+              Выберите хотя бы одну колонку для отображения доски.
+            </Typography>
+            <Button variant="outlined" onClick={() => setColumnsDialogOpen(true)}>
+              Настроить колонки
+            </Button>
+          </Box>
+        ) : (
+          <Stack direction="row" spacing={1.5} alignItems="flex-start">
+            {boardColumns.map((column) => {
+              const columnOrders = ordersByColumn.get(column.id) ?? []
+              return (
+                <Paper
+                  key={column.id}
+                  variant="outlined"
+                  draggable
+                  onDragStart={() => setDraggingColumnId(column.id)}
+                  onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
+                  onDrop={() => handleColumnDrop(column.id)}
+                  onDragEnd={() => setDraggingColumnId(null)}
+                  sx={{
+                    width: 320,
+                    flexShrink: 0,
+                    borderRadius: 1.5,
+                    borderColor:
+                      draggingColumnId === column.id ? 'primary.main' : 'divider',
+                    background: '#fff',
+                  }}
+                >
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    sx={{ px: 1.5, py: 1.2 }}
                   >
-                    <TableCell sx={{ fontWeight: 600 }}>
-                      {order.orderNumber}
-                    </TableCell>
-                    <TableCell>{order.title || '—'}</TableCell>
-                    <TableCell>
-                      <Chip
-                        size="small"
-                        label={ORDER_STATUS_LABELS[order.status]}
-                        color={ORDER_STATUS_COLORS[order.status]}
-                        variant="filled"
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Tooltip
-                        title={
-                          order.openRevisions > 0
-                            ? `Открытых правок: ${order.openRevisions}`
-                            : 'Все правки закрыты'
-                        }
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                      {column.name}
+                    </Typography>
+                    <Chip size="small" label={columnOrders.length} />
+                  </Stack>
+                  <Divider />
+                  <Stack
+                    spacing={1}
+                    sx={{ p: 1, maxHeight: 560, overflowY: 'auto' }}
+                    onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
+                    onDrop={() => {
+                      if (draggingOrderId != null) {
+                        void moveOrderToColumn(draggingOrderId, column.id)
+                      }
+                    }}
+                  >
+                    {columnOrders.length === 0 && (
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ textAlign: 'center', py: 3 }}
                       >
-                        <Badge
-                          color="warning"
-                          badgeContent={order.openRevisions}
-                          invisible={order.openRevisions === 0}
-                          overlap="circular"
-                        >
-                          <Chip
-                            size="small"
-                            icon={<EditNoteIcon />}
-                            label={order.revisionCount}
-                            variant="outlined"
-                          />
-                        </Badge>
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {formatLastActivity(order.lastMessageAt)}
+                        Нет заказов
                       </Typography>
-                    </TableCell>
-                  </TableRow>
-                ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                    )}
+                    {columnOrders.map((order) => {
+                      const canMoveCard = order.source === 'BLUESALES'
+                      return (
+                        <Paper
+                          key={order.id}
+                          variant="outlined"
+                          draggable={canMoveCard}
+                          onDragStart={() => {
+                            if (canMoveCard) setDraggingOrderId(order.id)
+                          }}
+                          onDragEnd={() => setDraggingOrderId(null)}
+                          onClick={() => navigate(`/orders/${order.id}`)}
+                          sx={{
+                            p: 1.2,
+                            borderRadius: 1.3,
+                            cursor: 'pointer',
+                            opacity: movingOrderId === order.id ? 0.6 : 1,
+                            '&:hover': { borderColor: 'primary.main', boxShadow: 1 },
+                          }}
+                        >
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                            {order.orderNumber}
+                          </Typography>
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{ mb: 1, minHeight: 20 }}
+                          >
+                            {order.title || 'Без названия'}
+                          </Typography>
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            justifyContent="space-between"
+                          >
+                            <Chip
+                              size="small"
+                              label={order.bsStatus ?? '—'}
+                              color={order.bsStatus ? 'info' : 'default'}
+                              variant={order.bsStatus ? 'filled' : 'outlined'}
+                            />
+                            <Tooltip
+                              title={
+                                order.openRevisions > 0
+                                  ? `Открытых правок: ${order.openRevisions}`
+                                  : 'Все правки закрыты'
+                              }
+                            >
+                              <Badge
+                                color="warning"
+                                badgeContent={order.openRevisions}
+                                invisible={order.openRevisions === 0}
+                                overlap="circular"
+                              >
+                                <Chip
+                                  size="small"
+                                  icon={<EditNoteIcon />}
+                                  label={order.revisionCount}
+                                  variant="outlined"
+                                />
+                              </Badge>
+                            </Tooltip>
+                          </Stack>
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.5}
+                            sx={{ mt: 0.8 }}
+                          >
+                            <SyncAltIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
+                            <Typography variant="caption" color="text.secondary">
+                              {canMoveCard
+                                ? 'Можно перетаскивать'
+                                : 'Ручной заказ: статус не переносится'}
+                            </Typography>
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.4 }}>
+                            {formatLastActivity(order.lastMessageAt)}
+                          </Typography>
+                        </Paper>
+                      )
+                    })}
+                  </Stack>
+                </Paper>
+              )
+            })}
+          </Stack>
+        )}
       </Paper>
 
-      {!loading && total > 0 && (
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          spacing={1}
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ mt: 2 }}
-        >
-          <Typography variant="body2" color="text.secondary">
-            Показано {orders.length} из {total}
-          </Typography>
-          {totalPages > 1 && (
-            <Pagination
-              count={totalPages}
-              page={page}
-              onChange={(_, value) => setPage(value)}
-              color="primary"
-              shape="rounded"
-            />
-          )}
-        </Stack>
+      {!loading && (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+          Показано заказов: {orders.length}
+          {isEmpty ? ' (ничего не найдено по текущим фильтрам)' : ''}
+        </Typography>
       )}
 
       <Dialog
@@ -332,14 +685,79 @@ export default function OrdersPage() {
               type="submit"
               variant="contained"
               disabled={creating || !newOrderNumber.trim()}
-              startIcon={
-                creating ? <CircularProgress size={18} color="inherit" /> : null
-              }
+              startIcon={creating ? <CircularProgress size={18} color="inherit" /> : null}
             >
               Создать
             </Button>
           </DialogActions>
         </form>
+      </Dialog>
+
+      <Dialog
+        open={columnsDialogOpen}
+        onClose={() => setColumnsDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>CRM-колонки</DialogTitle>
+        <DialogContent dividers>
+          <DialogContentText sx={{ mb: 2 }}>
+            Выберите CRM-статусы, которые должны быть колонками. Порядок меняется
+            перетаскиванием колонок на доске.
+          </DialogContentText>
+          <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+            <Button
+              size="small"
+              onClick={() => {
+                const allIds = crmStatuses.map((status) => status.id)
+                setSelectedCrmStatusIds(allIds)
+                setShowNoCrmColumn(true)
+                setColumnOrder([...allIds, NO_CRM_COLUMN_ID])
+              }}
+            >
+              Выбрать все
+            </Button>
+            <Button
+              size="small"
+              onClick={() => {
+                setSelectedCrmStatusIds([])
+                setShowNoCrmColumn(false)
+                setColumnOrder([])
+              }}
+            >
+              Снять все
+            </Button>
+          </Stack>
+
+          <List sx={{ py: 0 }}>
+            <ListItemButton sx={{ borderRadius: 1 }} onClick={() => toggleNoCrmColumn(!showNoCrmColumn)}>
+              <FormControlLabel
+                control={<Checkbox checked={showNoCrmColumn} />}
+                onClick={(event) => event.preventDefault()}
+                label={<ListItemText primary="Без CRM-статуса" />}
+              />
+            </ListItemButton>
+            {crmStatuses.map((status) => {
+              const checked = selectedCrmStatusIds.includes(status.id)
+              return (
+                <ListItemButton
+                  key={status.id}
+                  onClick={() => toggleCrmStatus(status.id)}
+                  sx={{ borderRadius: 1 }}
+                >
+                  <FormControlLabel
+                    control={<Checkbox checked={checked} />}
+                    onClick={(event) => event.preventDefault()}
+                    label={<ListItemText primary={status.name} />}
+                  />
+                </ListItemButton>
+              )
+            })}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setColumnsDialogOpen(false)}>Закрыть</Button>
+        </DialogActions>
       </Dialog>
     </Box>
   )

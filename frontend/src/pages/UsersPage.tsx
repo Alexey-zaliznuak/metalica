@@ -35,8 +35,15 @@ import type {
   CreateUserPayload,
   UpdateUserPayload,
   UserRole,
+  UserScope,
 } from '../api/types'
-import { ASSIGNABLE_ROLES, formatDateTime, roleLabel } from '../utils'
+import {
+  ASSIGNABLE_ROLES,
+  ASSIGNABLE_SCOPES,
+  formatDateTime,
+  roleLabel,
+  scopeLabel,
+} from '../utils'
 
 const ROLE_CHIP_COLOR: Record<string, 'default' | 'primary' | 'secondary' | 'warning'> = {
   ADMIN: 'warning',
@@ -57,6 +64,7 @@ export default function UsersPage() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [role, setRole] = useState<UserRole>('MANAGER')
+  const [scopes, setScopes] = useState<UserScope[]>([])
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -86,6 +94,7 @@ export default function UsersPage() {
     setPassword('')
     setShowPassword(false)
     setRole('MANAGER')
+    setScopes([])
     setFormError(null)
     setDialogOpen(true)
   }
@@ -97,6 +106,7 @@ export default function UsersPage() {
     setPassword('')
     setShowPassword(false)
     setRole(u.role)
+    setScopes(u.scopes ?? [])
     setFormError(null)
     setDialogOpen(true)
   }
@@ -122,6 +132,7 @@ export default function UsersPage() {
           username: username.trim(),
           name: name.trim(),
           role,
+          scopes,
         }
         if (password.length >= 6) {
           payload.password = password
@@ -137,6 +148,7 @@ export default function UsersPage() {
           name: name.trim(),
           password,
           role,
+          scopes,
         }
         const { data } = await client.post<AdminUser>('/users', payload)
         setUsers((prev) => [...prev, data])
@@ -197,6 +209,7 @@ export default function UsersPage() {
                 <TableCell>Логин</TableCell>
                 <TableCell>Имя</TableCell>
                 <TableCell>Роль</TableCell>
+                <TableCell>Скоупы</TableCell>
                 <TableCell>Создан</TableCell>
                 <TableCell align="right">Действия</TableCell>
               </TableRow>
@@ -204,14 +217,14 @@ export default function UsersPage() {
             <TableBody>
               {loading && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
                     <CircularProgress />
                   </TableCell>
                 </TableRow>
               )}
               {!loading && users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
                     <Typography color="text.secondary">
                       Пользователей пока нет
                     </Typography>
@@ -231,6 +244,24 @@ export default function UsersPage() {
                         color={ROLE_CHIP_COLOR[u.role] ?? 'default'}
                         variant="filled"
                       />
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        {(u.scopes ?? []).length === 0 ? (
+                          <Typography variant="body2" color="text.secondary">
+                            —
+                          </Typography>
+                        ) : (
+                          (u.scopes ?? []).map((scope) => (
+                            <Chip
+                              key={`${u.id}-${scope}`}
+                              size="small"
+                              label={scopeLabel(scope)}
+                              variant="outlined"
+                            />
+                          ))
+                        )}
+                      </Stack>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">
@@ -316,6 +347,35 @@ export default function UsersPage() {
                 {ASSIGNABLE_ROLES.map((r) => (
                   <MenuItem key={r.value} value={r.value}>
                     {r.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                select
+                label="Скоупы"
+                value={scopes}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setScopes(
+                    typeof next === 'string'
+                      ? (next.split(',') as UserScope[])
+                      : (next as UserScope[]),
+                  )
+                }}
+                fullWidth
+                SelectProps={{
+                  multiple: true,
+                  renderValue: (selected) => {
+                    const values = selected as UserScope[]
+                    if (values.length === 0) return 'Без дополнительных прав'
+                    return values.map((scope) => scopeLabel(scope)).join(', ')
+                  },
+                }}
+                helperText="Дополнительные права поверх роли"
+              >
+                {ASSIGNABLE_SCOPES.map((scope) => (
+                  <MenuItem key={scope.value} value={scope.value}>
+                    {scope.label}
                   </MenuItem>
                 ))}
               </TextField>

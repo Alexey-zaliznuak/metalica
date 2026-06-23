@@ -46,19 +46,18 @@ import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
 import type {
+  BluesalesStatusOption,
   Message,
   MessageKind,
+  OrderAssignee,
   Order,
   OrderMetrics,
-  OrderStatus,
   UpdateOrderPayload,
   UploadResponse,
 } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { BRAND, ACCENT } from '../theme'
 import {
-  ORDER_STATUSES,
-  ORDER_STATUS_LABELS,
   formatDateTime,
   formatDuration,
   formatTime,
@@ -69,6 +68,11 @@ interface PendingImage {
   id: string
   file: File
   previewUrl: string
+}
+
+interface AssigneesResponse {
+  managers: OrderAssignee[]
+  designers: OrderAssignee[]
 }
 
 function plural(n: number, one: string, few: string, many: string): string {
@@ -395,10 +399,7 @@ function OrderInfoPanel({ order }: { order: Order }) {
       </SectionTitle>
       <Stack divider={<Divider flexItem />}>
         <InfoRow label="Номер" value={order.orderNumber} />
-        <InfoRow
-          label="Наш статус"
-          value={ORDER_STATUS_LABELS[order.status]}
-        />
+        <InfoRow label="BS-статус" value={order.bsStatus ?? dash} />
         <InfoRow
           label="Источник"
           value={
@@ -411,6 +412,22 @@ function OrderInfoPanel({ order }: { order: Order }) {
           }
         />
         <InfoRow label="Создан" value={formatDateTime(order.createdAt)} />
+        <InfoRow
+          label="Менеджер ведения"
+          value={order.deliveryManager?.name ?? dash}
+        />
+        <InfoRow
+          label="Менеджер оформления"
+          value={order.onboardingManager?.name ?? dash}
+        />
+        <InfoRow
+          label="Художник эскиза"
+          value={order.sketchDesigner?.name ?? dash}
+        />
+        <InfoRow
+          label="Художник правок"
+          value={order.revisionDesigner?.name ?? dash}
+        />
       </Stack>
 
       {bs && (
@@ -498,6 +515,9 @@ export default function OrderThreadPage() {
   const { user } = useAuth()
 
   const [order, setOrder] = useState<Order | null>(null)
+  const [bsStatuses, setBsStatuses] = useState<BluesalesStatusOption[]>([])
+  const [managerAssignees, setManagerAssignees] = useState<OrderAssignee[]>([])
+  const [designerAssignees, setDesignerAssignees] = useState<OrderAssignee[]>([])
   const [metrics, setMetrics] = useState<OrderMetrics | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
@@ -514,24 +534,37 @@ export default function OrderThreadPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [editNumber, setEditNumber] = useState('')
   const [editTitle, setEditTitle] = useState('')
+  const [editDeliveryManagerId, setEditDeliveryManagerId] = useState<number | ''>('')
+  const [editOnboardingManagerId, setEditOnboardingManagerId] = useState<number | ''>('')
+  const [editSketchDesignerId, setEditSketchDesignerId] = useState<number | ''>('')
+  const [editRevisionDesignerId, setEditRevisionDesignerId] = useState<number | ''>('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  const [updatingBsStatus, setUpdatingBsStatus] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
+  const canReassignResponsible =
+    user?.role === 'ADMIN' ||
+    (user?.scopes ?? []).includes('ORDERS_CHANGE_RESPONSIBLE')
 
   const loadAll = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [orderRes, metricsRes, messagesRes] = await Promise.all([
+      const [orderRes, metricsRes, messagesRes, statusesRes, assigneesRes] = await Promise.all([
         client.get<Order>(`/orders/${orderId}`),
         client.get<OrderMetrics>(`/orders/${orderId}/metrics`),
         client.get<Message[]>(`/orders/${orderId}/messages`),
+        client.get<BluesalesStatusOption[]>('/orders/bs-statuses'),
+        client.get<AssigneesResponse>('/orders/assignees'),
       ])
       setOrder(orderRes.data)
       setMetrics(metricsRes.data)
       setMessages(messagesRes.data)
+      setBsStatuses(statusesRes.data)
+      setManagerAssignees(assigneesRes.data.managers)
+      setDesignerAssignees(assigneesRes.data.designers)
     } catch {
       setError('Не удалось загрузить заказ')
     } finally {
@@ -563,18 +596,35 @@ export default function OrderThreadPage() {
     }
   }, [orderId])
 
-  const handleStatusChange = async (status: OrderStatus) => {
+  const bsStatusOptions = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const s of bsStatuses) {
+      map.set(s.id, s.name)
+    }
+    if (order?.bsStatusId != null && order.bsStatus) {
+      map.set(order.bsStatusId, order.bsStatus)
+    }
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+  }, [bsStatuses, order?.bsStatusId, order?.bsStatus])
+
+  const handleBsStatusChange = async (statusId: number) => {
     if (!order) return
+    const nextName = bsStatusOptions.find((s) => s.id === statusId)?.name ?? order.bsStatus
     const prev = order
-    setOrder({ ...order, status })
+    setUpdatingBsStatus(true)
+    setOrder({ ...order, bsStatusId: statusId, bsStatus: nextName ?? null })
     try {
-      const { data } = await client.patch<Order>(`/orders/${orderId}`, {
-        status,
+      const { data } = await client.patch<Order>(`/orders/${orderId}/bs-status`, {
+        statusId,
       })
       setOrder(data)
     } catch {
       setOrder(prev)
-      setSendError('Не удалось изменить статус')
+      setSendError('Не удалось изменить BS-статус')
+    } finally {
+      setUpdatingBsStatus(false)
     }
   }
 
@@ -582,6 +632,10 @@ export default function OrderThreadPage() {
     if (!order) return
     setEditNumber(order.orderNumber)
     setEditTitle(order.title || '')
+    setEditDeliveryManagerId(order.deliveryManager?.id ?? '')
+    setEditOnboardingManagerId(order.onboardingManager?.id ?? '')
+    setEditSketchDesignerId(order.sketchDesigner?.id ?? '')
+    setEditRevisionDesignerId(order.revisionDesigner?.id ?? '')
     setEditError(null)
     setEditOpen(true)
   }
@@ -594,6 +648,16 @@ export default function OrderThreadPage() {
       const payload: UpdateOrderPayload = {
         orderNumber: editNumber.trim(),
         title: editTitle.trim(),
+        ...(canReassignResponsible
+          ? {
+              deliveryManagerId: editDeliveryManagerId === '' ? null : editDeliveryManagerId,
+              onboardingManagerId:
+                editOnboardingManagerId === '' ? null : editOnboardingManagerId,
+              sketchDesignerId: editSketchDesignerId === '' ? null : editSketchDesignerId,
+              revisionDesignerId:
+                editRevisionDesignerId === '' ? null : editRevisionDesignerId,
+            }
+          : {}),
       }
       const { data } = await client.patch<Order>(`/orders/${orderId}`, payload)
       setOrder(data)
@@ -838,15 +902,30 @@ export default function OrderThreadPage() {
 
             <TextField
               select
-              label="Статус"
+              label="BS-статус"
               size="small"
-              value={order.status}
-              onChange={(e) => handleStatusChange(e.target.value as OrderStatus)}
+              value={order.bsStatusId != null ? String(order.bsStatusId) : ''}
+              onChange={(e) => {
+                if (!e.target.value) return
+                void handleBsStatusChange(Number(e.target.value))
+              }}
               sx={{ minWidth: 160 }}
+              disabled={
+                updatingBsStatus ||
+                order.source !== 'BLUESALES' ||
+                bsStatusOptions.length === 0
+              }
             >
-              {ORDER_STATUSES.map((s) => (
-                <MenuItem key={s} value={s}>
-                  {ORDER_STATUS_LABELS[s]}
+              {order.source !== 'BLUESALES' && <MenuItem value="">Недоступно</MenuItem>}
+              {order.source === 'BLUESALES' && <MenuItem value="">Не выбран</MenuItem>}
+              {order.bsStatusId != null && bsStatusOptions.length === 0 && (
+                <MenuItem value={String(order.bsStatusId)}>
+                  {order.bsStatus ?? `Статус #${order.bsStatusId}`}
+                </MenuItem>
+              )}
+              {bsStatusOptions.map((s) => (
+                <MenuItem key={s.id} value={String(s.id)}>
+                  {s.name}
                 </MenuItem>
               ))}
             </TextField>
@@ -1069,6 +1148,79 @@ export default function OrderThreadPage() {
               onChange={(e) => setEditTitle(e.target.value)}
               fullWidth
             />
+            <TextField
+              select
+              label="Менеджер ведения"
+              value={editDeliveryManagerId === '' ? '' : String(editDeliveryManagerId)}
+              onChange={(e) =>
+                setEditDeliveryManagerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {managerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Менеджер оформления"
+              value={editOnboardingManagerId === '' ? '' : String(editOnboardingManagerId)}
+              onChange={(e) =>
+                setEditOnboardingManagerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {managerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Художник эскиза"
+              value={editSketchDesignerId === '' ? '' : String(editSketchDesignerId)}
+              onChange={(e) =>
+                setEditSketchDesignerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {designerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Художник правок"
+              value={editRevisionDesignerId === '' ? '' : String(editRevisionDesignerId)}
+              onChange={(e) =>
+                setEditRevisionDesignerId(e.target.value ? Number(e.target.value) : '')
+              }
+              fullWidth
+              disabled={!canReassignResponsible}
+              helperText={
+                canReassignResponsible
+                  ? 'Назначайте ответственных по ролям'
+                  : 'Недостаточно прав: нужен скоуп на изменение ответственных'
+              }
+            >
+              <MenuItem value="">Не назначен</MenuItem>
+              {designerAssignees.map((assignee) => (
+                <MenuItem key={assignee.id} value={String(assignee.id)}>
+                  {assignee.name}
+                </MenuItem>
+              ))}
+            </TextField>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

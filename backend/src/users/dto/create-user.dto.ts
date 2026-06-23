@@ -1,5 +1,5 @@
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
-import { Role } from '@prisma/client';
+import { IsArray, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { Role, UserScope } from '@prisma/client';
 
 export class CreateUserDto {
   @IsString()
@@ -17,4 +17,9 @@ export class CreateUserDto {
   @IsOptional()
   @IsEnum(Role)
   role?: Role;
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(UserScope, { each: true })
+  scopes?: UserScope[];
 }

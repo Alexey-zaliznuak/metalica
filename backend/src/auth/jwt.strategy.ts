@@ -7,6 +7,7 @@ export interface JwtPayload {
   sub: number;
   username: string;
   role: string;
+  scopes?: string[];
 }
 
 @Injectable()
@@ -24,6 +25,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user) {
       throw new UnauthorizedException();
     }
-    return { id: user.id, username: user.username, name: user.name, role: user.role };
+    return {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      scopes: user.scopes,
+      frontendSettings: user.frontendSettings,
+    };
   }
 }

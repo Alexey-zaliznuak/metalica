@@ -1,34 +1,4 @@
-import type { OrderStatus, MessageKind, UserRole } from './api/types'
-
-export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
-  NEW: 'Новый',
-  IN_PROGRESS: 'В работе',
-  IN_REVISION: 'На правке',
-  DONE: 'Готов',
-}
-
-export const ORDER_STATUSES: OrderStatus[] = [
-  'NEW',
-  'IN_PROGRESS',
-  'IN_REVISION',
-  'DONE',
-]
-
-type ChipColor =
-  | 'default'
-  | 'primary'
-  | 'secondary'
-  | 'success'
-  | 'warning'
-  | 'info'
-  | 'error'
-
-export const ORDER_STATUS_COLORS: Record<OrderStatus, ChipColor> = {
-  NEW: 'secondary',
-  IN_PROGRESS: 'info',
-  IN_REVISION: 'warning',
-  DONE: 'success',
-}
+import type { MessageKind, UserRole } from './api/types'
 
 export const MESSAGE_KIND_LABELS: Record<MessageKind, string> = {
   NORMAL: 'Обычное',
@@ -52,6 +22,21 @@ export const ASSIGNABLE_ROLES: { value: string; label: string }[] = [
   { value: 'DESIGNER', label: ROLE_LABELS.DESIGNER },
   { value: 'ADMIN', label: ROLE_LABELS.ADMIN },
 ]
+
+export const SCOPE_LABELS: Record<string, string> = {
+  ORDERS_CHANGE_RESPONSIBLE: 'Изменять ответственных заказа',
+}
+
+export const ASSIGNABLE_SCOPES: { value: string; label: string }[] = [
+  {
+    value: 'ORDERS_CHANGE_RESPONSIBLE',
+    label: SCOPE_LABELS.ORDERS_CHANGE_RESPONSIBLE,
+  },
+]
+
+export function scopeLabel(scope: string): string {
+  return SCOPE_LABELS[scope] ?? scope
+}
 
 // Format a duration in seconds into a Russian human-readable string (ч/мин).
 export function formatDuration(seconds: number | null | undefined): string {

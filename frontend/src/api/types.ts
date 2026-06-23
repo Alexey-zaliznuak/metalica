@@ -1,10 +1,13 @@
 export type UserRole = 'DESIGNER' | 'MANAGER' | 'ADMIN' | string
+export type UserScope = 'ORDERS_CHANGE_RESPONSIBLE' | string
 
 export interface User {
   id: number
   name: string
   username: string
   role: UserRole
+  scopes: UserScope[]
+  frontendSettings?: Record<string, unknown> | null
 }
 
 export interface AdminUser {
@@ -12,6 +15,7 @@ export interface AdminUser {
   username: string
   name: string
   role: UserRole
+  scopes: UserScope[]
   createdAt: string
 }
 
@@ -20,6 +24,7 @@ export interface CreateUserPayload {
   name: string
   password: string
   role: UserRole
+  scopes?: UserScope[]
 }
 
 export interface UpdateUserPayload {
@@ -27,17 +32,24 @@ export interface UpdateUserPayload {
   name?: string
   password?: string
   role?: UserRole
+  scopes?: UserScope[]
 }
 
 export interface UpdateOrderPayload {
   orderNumber?: string
   title?: string
-  status?: OrderStatus
+  deliveryManagerId?: number | null
+  onboardingManagerId?: number | null
+  sketchDesignerId?: number | null
+  revisionDesignerId?: number | null
 }
 
-export type OrderStatus = 'NEW' | 'IN_PROGRESS' | 'IN_REVISION' | 'DONE'
-
 export type OrderSource = 'MANUAL' | 'BLUESALES'
+
+export interface BluesalesStatusOption {
+  id: number
+  name: string
+}
 
 export interface OrderLead {
   id: number
@@ -62,18 +74,40 @@ export interface BluesalesOrderInfo {
   lastSyncedAt: string | null
 }
 
+export interface OrderAssignee {
+  id: number
+  name: string
+  username: string
+  role: UserRole
+}
+
 export interface Order {
   id: number
   orderNumber: string
-  title: string
-  status: OrderStatus
+  title: string | null
+  source: OrderSource
+  bsStatusId: number | null
+  bsStatus: string | null
+  crmStatusId?: number | null
+  crmStatus?: string | null
   revisionCount: number
   openRevisions: number
   lastMessageAt: string | null
   createdAt: string
-  source?: OrderSource
+  deliveryManager?: OrderAssignee | null
+  onboardingManager?: OrderAssignee | null
+  sketchDesigner?: OrderAssignee | null
+  revisionDesigner?: OrderAssignee | null
   lead?: OrderLead | null
   bluesalesInfo?: BluesalesOrderInfo | null
+}
+
+export interface OrdersBoardSettings {
+  selectedCrmStatusIds: number[]
+  columnOrder: number[]
+  bsStatusFilter: number | null
+  searchQuery: string
+  showNoCrmColumn: boolean
 }
 
 export interface PaginatedResponse<T> {

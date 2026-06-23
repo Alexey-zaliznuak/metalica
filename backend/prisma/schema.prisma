@@ -13,11 +13,8 @@ enum Role {
   ADMIN
 }
 
-enum OrderStatus {
-  NEW
-  IN_PROGRESS
-  IN_REVISION
-  DONE
+enum UserScope {
+  ORDERS_CHANGE_RESPONSIBLE @map("orders.change_responsible")
 }
 
 enum OrderSource {
@@ -32,36 +29,52 @@ enum MessageKind {
 }
 
 model User {
-  id           Int       @id @default(autoincrement())
-  username     String    @unique
-  name         String
-  role         Role      @default(MANAGER)
-  passwordHash String
-  messages     Message[]
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                          Int       @id @default(autoincrement())
+  username                    String    @unique
+  name                        String
+  role                        Role      @default(MANAGER)
+  scopes                      UserScope[] @default([])
+  passwordHash                String
+  frontendSettings            Json?
+  messages                    Message[]
+  ordersAsDeliveryManager     Order[]   @relation("OrderDeliveryManager")
+  ordersAsOnboardingManager   Order[]   @relation("OrderOnboardingManager")
+  ordersAsSketchDesigner      Order[]   @relation("OrderSketchDesigner")
+  ordersAsRevisionDesigner    Order[]   @relation("OrderRevisionDesigner")
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   @@index([role])
 }
 
 model Order {
-  id            Int                 @id @default(autoincrement())
-  orderNumber   String              @unique
-  title         String?
-  status        OrderStatus         @default(NEW)
-  source        OrderSource         @default(MANUAL)
-  messages      Message[]
+  id                  Int                 @id @default(autoincrement())
+  orderNumber         String              @unique
+  title               String?
+  source              OrderSource         @default(MANUAL)
+  messages            Message[]
+  deliveryManager     User?               @relation("OrderDeliveryManager", fields: [deliveryManagerId], references: [id])
+  deliveryManagerId   Int?
+  onboardingManager   User?               @relation("OrderOnboardingManager", fields: [onboardingManagerId], references: [id])
+  onboardingManagerId Int?
+  sketchDesigner      User?               @relation("OrderSketchDesigner", fields: [sketchDesignerId], references: [id])
+  sketchDesignerId    Int?
+  revisionDesigner    User?               @relation("OrderRevisionDesigner", fields: [revisionDesignerId], references: [id])
+  revisionDesignerId  Int?
   // Лид (клиент из BlueSales), создавший заказ
-  lead          Lead?               @relation(fields: [leadId], references: [id])
-  leadId        Int?
+  lead                Lead?               @relation(fields: [leadId], references: [id])
+  leadId              Int?
   // Подмодель с «сырыми» данными заказа из BlueSales (1-к-1)
-  bluesalesInfo BluesalesOrderInfo?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  bluesalesInfo       BluesalesOrderInfo?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
-  @@index([status])
   @@index([source])
   @@index([leadId])
+  @@index([deliveryManagerId])
+  @@index([onboardingManagerId])
+  @@index([sketchDesignerId])
+  @@index([revisionDesignerId])
 }
 
 // Данные заказа, специфичные для BlueSales (1-к-1 с Order)

@@ -1,4 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,12 +23,39 @@ export class AuthService {
       throw new UnauthorizedException('Неверный логин или пароль');
     }
 
-    const payload = { sub: user.id, username: user.username, role: user.role };
+    const payload = {
+      sub: user.id,
+      username: user.username,
+      role: user.role,
+      scopes: user.scopes,
+    };
     const accessToken = await this.jwt.signAsync(payload);
 
     return {
       accessToken,
-      user: { id: user.id, name: user.name, username: user.username, role: user.role },
+      user: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        role: user.role,
+        scopes: user.scopes,
+        frontendSettings: user.frontendSettings,
+      },
     };
+  }
+
+  updateFrontendSettings(userId: number, frontendSettings: Record<string, unknown>) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { frontendSettings: frontendSettings as Prisma.InputJsonValue },
+      select: {
+        id: true,
+        username: true,
+        name: true,
+        role: true,
+        scopes: true,
+        frontendSettings: true,
+      },
+    });
   }
 }
