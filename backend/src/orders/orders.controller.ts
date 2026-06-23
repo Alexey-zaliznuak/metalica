@@ -12,7 +12,7 @@ import {
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { UpdateBluesalesStatusDto } from './dto/update-bluesales-status.dto';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateCrmStatusDto } from './dto/update-crm-status.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthUser, CurrentUser } from '../auth/current-user.decorator';
@@ -24,14 +24,14 @@ export class OrdersController {
 
   @Get()
   findAll(
-    @Query('bsStatusId') bsStatusId?: string,
+    @Query('orderStatusId') orderStatusId?: string,
     @Query('crmStatusIds') crmStatusIds?: string,
     @Query('q') q?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     return this.orders.findAll(
-      bsStatusId !== undefined ? Number(bsStatusId) : undefined,
+      orderStatusId !== undefined ? Number(orderStatusId) : undefined,
       crmStatusIds,
       q,
       page ? Number(page) : undefined,
@@ -39,9 +39,9 @@ export class OrdersController {
     );
   }
 
-  @Get('bs-statuses')
-  getBluesalesStatuses() {
-    return this.orders.getBluesalesStatuses();
+  @Get('order-statuses')
+  getOrderStatuses() {
+    return this.orders.getOrderStatuses();
   }
 
   @Get('crm-statuses')
@@ -73,12 +73,12 @@ export class OrdersController {
     return this.orders.update(id, dto, user);
   }
 
-  @Patch(':id/bs-status')
-  updateBsStatus(
+  @Patch(':id/order-status')
+  updateOrderStatus(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateBluesalesStatusDto,
+    @Body() dto: UpdateOrderStatusDto,
   ) {
-    return this.orders.updateBluesalesStatus(id, dto.statusId);
+    return this.orders.updateOrderStatus(id, dto.statusId);
   }
 
   @Patch(':id/crm-status')

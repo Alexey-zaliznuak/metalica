@@ -49,7 +49,7 @@ const NO_CRM_COLUMN_ID = -1
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedCrmStatusIds: [],
   columnOrder: [],
-  bsStatusFilter: null,
+  orderStatusFilter: null,
   searchQuery: '',
   showNoCrmColumn: true,
 }
@@ -79,10 +79,13 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
         .filter((value) => Number.isInteger(value) && value >= NO_CRM_COLUMN_ID)
     : []
 
-  const bsStatusFilter =
-    raw.bsStatusFilter === null ||
-    (typeof raw.bsStatusFilter === 'number' && Number.isInteger(raw.bsStatusFilter))
-      ? raw.bsStatusFilter
+  const legacyStatusFilter = raw.bsStatusFilter
+  const rawStatusFilter =
+    raw.orderStatusFilter !== undefined ? raw.orderStatusFilter : legacyStatusFilter
+  const orderStatusFilter =
+    rawStatusFilter === null ||
+    (typeof rawStatusFilter === 'number' && Number.isInteger(rawStatusFilter))
+      ? rawStatusFilter
       : null
 
   const searchQuery = typeof raw.searchQuery === 'string' ? raw.searchQuery : ''
@@ -92,7 +95,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
   return {
     selectedCrmStatusIds,
     columnOrder,
-    bsStatusFilter,
+    orderStatusFilter,
     searchQuery,
     showNoCrmColumn,
   }
@@ -127,8 +130,8 @@ export default function OrdersPage() {
   const [bootError, setBootError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
-  const [bsStatusFilter, setBsStatusFilter] = useState<number | ''>('')
-  const [bsStatuses, setBsStatuses] = useState<BluesalesStatusOption[]>([])
+  const [orderStatusFilter, setOrderStatusFilter] = useState<number | ''>('')
+  const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [selectedCrmStatusIds, setSelectedCrmStatusIds] = useState<number[]>([])
   const [showNoCrmColumn, setShowNoCrmColumn] = useState(true)
   const [columnOrder, setColumnOrder] = useState<number[]>([])
@@ -157,7 +160,7 @@ export default function OrdersPage() {
       const { data } = await client.get<{ items: Order[] }>('/orders', {
         params: {
           q: q || undefined,
-          bsStatusId: statusId === '' ? undefined : statusId,
+          orderStatusId: statusId === '' ? undefined : statusId,
           page: 1,
           limit: 300,
         },
@@ -174,22 +177,22 @@ export default function OrdersPage() {
     if (!initialized) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      fetchOrders(search, bsStatusFilter)
+      fetchOrders(search, orderStatusFilter)
     }, 300)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [search, bsStatusFilter, initialized, fetchOrders])
+  }, [search, orderStatusFilter, initialized, fetchOrders])
 
   useEffect(() => {
     let active = true
     void Promise.all([
-      client.get<BluesalesStatusOption[]>('/orders/bs-statuses'),
+      client.get<BluesalesStatusOption[]>('/orders/order-statuses'),
       client.get<BluesalesStatusOption[]>('/orders/crm-statuses'),
     ])
       .then(([bsRes, crmRes]) => {
         if (!active) return
-        setBsStatuses(bsRes.data)
+        setOrderStatuses(bsRes.data)
         setCrmStatuses(crmRes.data)
 
         const baseSettings = isRecord(user?.frontendSettings) ? user.frontendSettings : {}
@@ -206,7 +209,7 @@ export default function OrdersPage() {
 
         setFrontendSettingsBase(baseSettings)
         setSearch(parsed.searchQuery)
-        setBsStatusFilter(parsed.bsStatusFilter ?? '')
+        setOrderStatusFilter(parsed.orderStatusFilter ?? '')
         setShowNoCrmColumn(parsed.showNoCrmColumn)
         setSelectedCrmStatusIds(normalized.selectedIds)
         setColumnOrder(normalized.columnOrder)
@@ -228,7 +231,8 @@ export default function OrdersPage() {
       const boardSettings: OrdersBoardSettings = {
         selectedCrmStatusIds,
         columnOrder,
-        bsStatusFilter: bsStatusFilter === '' ? null : bsStatusFilter,
+        orderStatusFilter:
+          orderStatusFilter === '' ? null : orderStatusFilter,
         searchQuery: search,
         showNoCrmColumn,
       }
@@ -254,7 +258,7 @@ export default function OrdersPage() {
   }, [
     initialized,
     search,
-    bsStatusFilter,
+    orderStatusFilter,
     selectedCrmStatusIds,
     showNoCrmColumn,
     columnOrder,
@@ -273,7 +277,7 @@ export default function OrdersPage() {
       setDialogOpen(false)
       setNewOrderNumber('')
       setNewTitle('')
-      void fetchOrders(search, bsStatusFilter)
+      void fetchOrders(search, orderStatusFilter)
       navigate(`/orders/${data.id}`)
     } catch {
       setCreateError('Не удалось создать заказ. Возможно, номер уже занят.')
@@ -449,14 +453,16 @@ export default function OrdersPage() {
         />
         <TextField
           select
-          label="BS-статус"
-          value={bsStatusFilter === '' ? '' : String(bsStatusFilter)}
-          onChange={(e) => setBsStatusFilter(e.target.value ? Number(e.target.value) : '')}
+          label="Статус заказа"
+          value={orderStatusFilter === '' ? '' : String(orderStatusFilter)}
+          onChange={(e) =>
+            setOrderStatusFilter(e.target.value ? Number(e.target.value) : '')
+          }
           size="small"
           sx={{ minWidth: { sm: 200 } }}
         >
-          <MenuItem value="">Все BS-статусы</MenuItem>
-          {bsStatuses.map((status) => (
+          <MenuItem value="">Все статусы заказа</MenuItem>
+          {orderStatuses.map((status) => (
             <MenuItem key={status.id} value={String(status.id)}>
               {status.name}
             </MenuItem>
@@ -590,9 +596,9 @@ export default function OrdersPage() {
                           >
                             <Chip
                               size="small"
-                              label={order.bsStatus ?? '—'}
-                              color={order.bsStatus ? 'info' : 'default'}
-                              variant={order.bsStatus ? 'filled' : 'outlined'}
+                              label={order.orderStatus ?? '—'}
+                              color={order.orderStatus ? 'info' : 'default'}
+                              variant={order.orderStatus ? 'filled' : 'outlined'}
                             />
                             <Tooltip
                               title={

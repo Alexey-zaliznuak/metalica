@@ -28,15 +28,15 @@ export class OrdersService {
   } as const;
 
   async findAll(
-    bsStatusId?: number,
+    orderStatusId?: number,
     crmStatusIdsRaw?: string,
     q?: string,
     page = 1,
     limit = 30,
   ) {
     const where: Prisma.OrderWhereInput = {};
-    if (bsStatusId !== undefined && Number.isFinite(bsStatusId)) {
-      where.bluesalesInfo = { is: { orderStatusId: bsStatusId } };
+    if (orderStatusId !== undefined && Number.isFinite(orderStatusId)) {
+      where.bluesalesInfo = { is: { orderStatusId } };
     }
     const crmStatusIds = this.parseStatusIds(crmStatusIdsRaw);
     if (crmStatusIds.length > 0) {
@@ -262,7 +262,7 @@ export class OrdersService {
     };
   }
 
-  async getBluesalesStatuses() {
+  async getOrderStatuses() {
     const grouped = await this.prisma.bluesalesOrderInfo.groupBy({
       by: ['orderStatusId', 'orderStatus'],
       where: {
@@ -298,7 +298,7 @@ export class OrdersService {
       }));
   }
 
-  async updateBluesalesStatus(id: number, statusId: number) {
+  async updateOrderStatus(id: number, statusId: number) {
     const order = await this.prisma.order.findUnique({
       where: { id },
       select: {
@@ -315,7 +315,7 @@ export class OrdersService {
       throw new NotFoundException('Заказ не найден');
     }
     if (!order.bluesalesInfo || order.source !== OrderSource.BLUESALES) {
-      throw new BadRequestException('Для этого заказа недоступно изменение BS-статуса');
+      throw new BadRequestException('Для этого заказа недоступно изменение статуса заказа');
     }
 
     try {
@@ -459,8 +459,8 @@ export class OrdersService {
       onboardingManager: order.onboardingManager ?? null,
       sketchDesigner: order.sketchDesigner ?? null,
       revisionDesigner: order.revisionDesigner ?? null,
-      bsStatusId: order.bluesalesInfo?.orderStatusId ?? null,
-      bsStatus: order.bluesalesInfo?.orderStatus ?? null,
+      orderStatusId: order.bluesalesInfo?.orderStatusId ?? null,
+      orderStatus: order.bluesalesInfo?.orderStatus ?? null,
       crmStatusId: order.bluesalesInfo?.crmStatusId ?? null,
       crmStatus: order.bluesalesInfo?.crmStatus ?? null,
       revisionCount: stats.revisionCount,

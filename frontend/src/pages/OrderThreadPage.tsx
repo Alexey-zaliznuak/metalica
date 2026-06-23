@@ -75,6 +75,11 @@ interface AssigneesResponse {
   designers: OrderAssignee[]
 }
 
+const EMPTY_ASSIGNEES: AssigneesResponse = {
+  managers: [],
+  designers: [],
+}
+
 function plural(n: number, one: string, few: string, many: string): string {
   const mod10 = n % 10
   const mod100 = n % 100
@@ -377,7 +382,17 @@ function SectionTitle({
   )
 }
 
-function OrderInfoPanel({ order }: { order: Order }) {
+function OrderInfoPanel({
+  order,
+  orderStatusOptions,
+  updatingOrderStatus,
+  onOrderStatusChange,
+}: {
+  order: Order
+  orderStatusOptions: BluesalesStatusOption[]
+  updatingOrderStatus: boolean
+  onOrderStatusChange: (statusId: number) => void
+}) {
   const bs = order.bluesalesInfo
   const lead = order.lead
   const dash = '—'
@@ -399,7 +414,6 @@ function OrderInfoPanel({ order }: { order: Order }) {
       </SectionTitle>
       <Stack divider={<Divider flexItem />}>
         <InfoRow label="Номер" value={order.orderNumber} />
-        <InfoRow label="BS-статус" value={order.bsStatus ?? dash} />
         <InfoRow
           label="Источник"
           value={
@@ -437,7 +451,39 @@ function OrderInfoPanel({ order }: { order: Order }) {
           </SectionTitle>
           <Stack divider={<Divider flexItem />}>
             <InfoRow label="№ в BS" value={bs.bsNumber ?? bs.bsOrderId} />
-            <InfoRow label="Статус заказа" value={bs.orderStatus ?? dash} />
+            <Box sx={{ py: 0.6 }}>
+              <TextField
+                select
+                label="Статус заказа"
+                size="small"
+                value={order.orderStatusId != null ? String(order.orderStatusId) : ''}
+                onChange={(e) => {
+                  if (!e.target.value) return
+                  onOrderStatusChange(Number(e.target.value))
+                }}
+                fullWidth
+                disabled={
+                  updatingOrderStatus ||
+                  order.source !== 'BLUESALES' ||
+                  orderStatusOptions.length === 0
+                }
+              >
+                {order.source !== 'BLUESALES' && (
+                  <MenuItem value="">Недоступно для ручного заказа</MenuItem>
+                )}
+                {order.source === 'BLUESALES' && <MenuItem value="">Не выбран</MenuItem>}
+                {order.orderStatusId != null && orderStatusOptions.length === 0 && (
+                  <MenuItem value={String(order.orderStatusId)}>
+                    {order.orderStatus ?? `Статус #${order.orderStatusId}`}
+                  </MenuItem>
+                )}
+                {orderStatusOptions.map((status) => (
+                  <MenuItem key={status.id} value={String(status.id)}>
+                    {status.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Box>
             <InfoRow label="CRM-статус" value={bs.crmStatus ?? dash} />
             <InfoRow
               label="Сумма"
@@ -515,7 +561,7 @@ export default function OrderThreadPage() {
   const { user } = useAuth()
 
   const [order, setOrder] = useState<Order | null>(null)
-  const [bsStatuses, setBsStatuses] = useState<BluesalesStatusOption[]>([])
+  const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [managerAssignees, setManagerAssignees] = useState<OrderAssignee[]>([])
   const [designerAssignees, setDesignerAssignees] = useState<OrderAssignee[]>([])
   const [metrics, setMetrics] = useState<OrderMetrics | null>(null)
@@ -540,7 +586,7 @@ export default function OrderThreadPage() {
   const [editRevisionDesignerId, setEditRevisionDesignerId] = useState<number | ''>('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
-  const [updatingBsStatus, setUpdatingBsStatus] = useState(false)
+  const [updatingOrderStatus, setUpdatingOrderStatus] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -556,13 +602,15 @@ export default function OrderThreadPage() {
         client.get<Order>(`/orders/${orderId}`),
         client.get<OrderMetrics>(`/orders/${orderId}/metrics`),
         client.get<Message[]>(`/orders/${orderId}/messages`),
-        client.get<BluesalesStatusOption[]>('/orders/bs-statuses'),
-        client.get<AssigneesResponse>('/orders/assignees'),
+        client.get<BluesalesStatusOption[]>('/orders/order-statuses'),
+        canReassignResponsible
+          ? client.get<AssigneesResponse>('/orders/assignees')
+          : Promise.resolve({ data: EMPTY_ASSIGNEES }),
       ])
       setOrder(orderRes.data)
       setMetrics(metricsRes.data)
       setMessages(messagesRes.data)
-      setBsStatuses(statusesRes.data)
+      setOrderStatuses(statusesRes.data)
       setManagerAssignees(assigneesRes.data.managers)
       setDesignerAssignees(assigneesRes.data.designers)
     } catch {
@@ -570,7 +618,7 @@ export default function OrderThreadPage() {
     } finally {
       setLoading(false)
     }
-  }, [orderId])
+  }, [canReassignResponsible, orderId])
 
   useEffect(() => {
     if (Number.isFinite(orderId)) {
@@ -596,35 +644,40 @@ export default function OrderThreadPage() {
     }
   }, [orderId])
 
-  const bsStatusOptions = useMemo(() => {
+  const orderStatusOptions = useMemo(() => {
     const map = new Map<number, string>()
-    for (const s of bsStatuses) {
+    for (const s of orderStatuses) {
       map.set(s.id, s.name)
     }
-    if (order?.bsStatusId != null && order.bsStatus) {
-      map.set(order.bsStatusId, order.bsStatus)
+    if (order?.orderStatusId != null && order.orderStatus) {
+      map.set(order.orderStatusId, order.orderStatus)
     }
     return Array.from(map.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-  }, [bsStatuses, order?.bsStatusId, order?.bsStatus])
+  }, [orderStatuses, order?.orderStatusId, order?.orderStatus])
 
-  const handleBsStatusChange = async (statusId: number) => {
+  const handleOrderStatusChange = async (statusId: number) => {
     if (!order) return
-    const nextName = bsStatusOptions.find((s) => s.id === statusId)?.name ?? order.bsStatus
+    const nextName =
+      orderStatusOptions.find((s) => s.id === statusId)?.name ?? order.orderStatus
     const prev = order
-    setUpdatingBsStatus(true)
-    setOrder({ ...order, bsStatusId: statusId, bsStatus: nextName ?? null })
+    setUpdatingOrderStatus(true)
+    setOrder({
+      ...order,
+      orderStatusId: statusId,
+      orderStatus: nextName ?? null,
+    })
     try {
-      const { data } = await client.patch<Order>(`/orders/${orderId}/bs-status`, {
+      const { data } = await client.patch<Order>(`/orders/${orderId}/order-status`, {
         statusId,
       })
       setOrder(data)
     } catch {
       setOrder(prev)
-      setSendError('Не удалось изменить BS-статус')
+      setSendError('Не удалось изменить статус заказа')
     } finally {
-      setUpdatingBsStatus(false)
+      setUpdatingOrderStatus(false)
     }
   }
 
@@ -899,36 +952,6 @@ export default function OrderThreadPage() {
                 </Typography>
               </Box>
             </Stack>
-
-            <TextField
-              select
-              label="BS-статус"
-              size="small"
-              value={order.bsStatusId != null ? String(order.bsStatusId) : ''}
-              onChange={(e) => {
-                if (!e.target.value) return
-                void handleBsStatusChange(Number(e.target.value))
-              }}
-              sx={{ minWidth: 160 }}
-              disabled={
-                updatingBsStatus ||
-                order.source !== 'BLUESALES' ||
-                bsStatusOptions.length === 0
-              }
-            >
-              {order.source !== 'BLUESALES' && <MenuItem value="">Недоступно</MenuItem>}
-              {order.source === 'BLUESALES' && <MenuItem value="">Не выбран</MenuItem>}
-              {order.bsStatusId != null && bsStatusOptions.length === 0 && (
-                <MenuItem value={String(order.bsStatusId)}>
-                  {order.bsStatus ?? `Статус #${order.bsStatusId}`}
-                </MenuItem>
-              )}
-              {bsStatusOptions.map((s) => (
-                <MenuItem key={s.id} value={String(s.id)}>
-                  {s.name}
-                </MenuItem>
-              ))}
-            </TextField>
           </Stack>
         </Stack>
       </Paper>
@@ -1121,7 +1144,14 @@ export default function OrderThreadPage() {
       </Box>
 
       {/* Right info panel */}
-      <OrderInfoPanel order={order} />
+      <OrderInfoPanel
+        order={order}
+        orderStatusOptions={orderStatusOptions}
+        updatingOrderStatus={updatingOrderStatus}
+        onOrderStatusChange={(statusId) => {
+          void handleOrderStatusChange(statusId)
+        }}
+      />
 
       {/* Edit order dialog */}
       <Dialog
@@ -1148,79 +1178,75 @@ export default function OrderThreadPage() {
               onChange={(e) => setEditTitle(e.target.value)}
               fullWidth
             />
-            <TextField
-              select
-              label="Менеджер ведения"
-              value={editDeliveryManagerId === '' ? '' : String(editDeliveryManagerId)}
-              onChange={(e) =>
-                setEditDeliveryManagerId(e.target.value ? Number(e.target.value) : '')
-              }
-              fullWidth
-              disabled={!canReassignResponsible}
-            >
-              <MenuItem value="">Не назначен</MenuItem>
-              {managerAssignees.map((assignee) => (
-                <MenuItem key={assignee.id} value={String(assignee.id)}>
-                  {assignee.name}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              select
-              label="Менеджер оформления"
-              value={editOnboardingManagerId === '' ? '' : String(editOnboardingManagerId)}
-              onChange={(e) =>
-                setEditOnboardingManagerId(e.target.value ? Number(e.target.value) : '')
-              }
-              fullWidth
-              disabled={!canReassignResponsible}
-            >
-              <MenuItem value="">Не назначен</MenuItem>
-              {managerAssignees.map((assignee) => (
-                <MenuItem key={assignee.id} value={String(assignee.id)}>
-                  {assignee.name}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              select
-              label="Художник эскиза"
-              value={editSketchDesignerId === '' ? '' : String(editSketchDesignerId)}
-              onChange={(e) =>
-                setEditSketchDesignerId(e.target.value ? Number(e.target.value) : '')
-              }
-              fullWidth
-              disabled={!canReassignResponsible}
-            >
-              <MenuItem value="">Не назначен</MenuItem>
-              {designerAssignees.map((assignee) => (
-                <MenuItem key={assignee.id} value={String(assignee.id)}>
-                  {assignee.name}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              select
-              label="Художник правок"
-              value={editRevisionDesignerId === '' ? '' : String(editRevisionDesignerId)}
-              onChange={(e) =>
-                setEditRevisionDesignerId(e.target.value ? Number(e.target.value) : '')
-              }
-              fullWidth
-              disabled={!canReassignResponsible}
-              helperText={
-                canReassignResponsible
-                  ? 'Назначайте ответственных по ролям'
-                  : 'Недостаточно прав: нужен скоуп на изменение ответственных'
-              }
-            >
-              <MenuItem value="">Не назначен</MenuItem>
-              {designerAssignees.map((assignee) => (
-                <MenuItem key={assignee.id} value={String(assignee.id)}>
-                  {assignee.name}
-                </MenuItem>
-              ))}
-            </TextField>
+            {canReassignResponsible && (
+              <>
+                <TextField
+                  select
+                  label="Менеджер ведения"
+                  value={editDeliveryManagerId === '' ? '' : String(editDeliveryManagerId)}
+                  onChange={(e) =>
+                    setEditDeliveryManagerId(e.target.value ? Number(e.target.value) : '')
+                  }
+                  fullWidth
+                >
+                  <MenuItem value="">Не назначен</MenuItem>
+                  {managerAssignees.map((assignee) => (
+                    <MenuItem key={assignee.id} value={String(assignee.id)}>
+                      {assignee.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  select
+                  label="Менеджер оформления"
+                  value={editOnboardingManagerId === '' ? '' : String(editOnboardingManagerId)}
+                  onChange={(e) =>
+                    setEditOnboardingManagerId(e.target.value ? Number(e.target.value) : '')
+                  }
+                  fullWidth
+                >
+                  <MenuItem value="">Не назначен</MenuItem>
+                  {managerAssignees.map((assignee) => (
+                    <MenuItem key={assignee.id} value={String(assignee.id)}>
+                      {assignee.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  select
+                  label="Художник эскиза"
+                  value={editSketchDesignerId === '' ? '' : String(editSketchDesignerId)}
+                  onChange={(e) =>
+                    setEditSketchDesignerId(e.target.value ? Number(e.target.value) : '')
+                  }
+                  fullWidth
+                >
+                  <MenuItem value="">Не назначен</MenuItem>
+                  {designerAssignees.map((assignee) => (
+                    <MenuItem key={assignee.id} value={String(assignee.id)}>
+                      {assignee.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  select
+                  label="Художник правок"
+                  value={editRevisionDesignerId === '' ? '' : String(editRevisionDesignerId)}
+                  onChange={(e) =>
+                    setEditRevisionDesignerId(e.target.value ? Number(e.target.value) : '')
+                  }
+                  fullWidth
+                  helperText="Назначайте ответственных по ролям"
+                >
+                  <MenuItem value="">Не назначен</MenuItem>
+                  {designerAssignees.map((assignee) => (
+                    <MenuItem key={assignee.id} value={String(assignee.id)}>
+                      {assignee.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

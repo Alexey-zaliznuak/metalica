@@ -86,8 +86,8 @@ export interface Order {
   orderNumber: string
   title: string | null
   source: OrderSource
-  bsStatusId: number | null
-  bsStatus: string | null
+  orderStatusId: number | null
+  orderStatus: string | null
   crmStatusId?: number | null
   crmStatus?: string | null
   revisionCount: number
@@ -105,7 +105,7 @@ export interface Order {
 export interface OrdersBoardSettings {
   selectedCrmStatusIds: number[]
   columnOrder: number[]
-  bsStatusFilter: number | null
+  orderStatusFilter: number | null
   searchQuery: string
   showNoCrmColumn: boolean
 }
