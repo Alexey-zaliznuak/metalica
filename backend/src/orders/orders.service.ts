@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { OrderSource, Prisma, Role, UserScope } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { AuthUser } from '../auth/current-user.decorator';
@@ -159,19 +158,6 @@ export class OrdersService {
       lead: order.lead,
       bluesalesInfo: order.bluesalesInfo,
     };
-  }
-
-  async create(dto: CreateOrderDto) {
-    const existing = await this.prisma.order.findUnique({
-      where: { orderNumber: dto.orderNumber },
-    });
-    if (existing) {
-      throw new ConflictException('Заказ с таким номером уже существует');
-    }
-    const order = await this.prisma.order.create({
-      data: { orderNumber: dto.orderNumber, title: dto.title },
-    });
-    return this.withStats(order);
   }
 
   async update(id: number, dto: UpdateOrderDto, actor: AuthUser) {

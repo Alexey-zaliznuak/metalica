@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type DragEvent,
-  type FormEvent,
 } from 'react'
 import {
   Alert,
@@ -14,7 +13,6 @@ import {
   Button,
   Checkbox,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -32,7 +30,6 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
-import AddIcon from '@mui/icons-material/Add'
 import SearchIcon from '@mui/icons-material/Search'
 import EditNoteIcon from '@mui/icons-material/EditNote'
 import ViewWeekIcon from '@mui/icons-material/ViewWeek'
@@ -141,12 +138,6 @@ export default function OrdersPage() {
     Record<string, unknown>
   >({})
 
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [newOrderNumber, setNewOrderNumber] = useState('')
-  const [newTitle, setNewTitle] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
-
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const fetchOrders = useCallback(async (q: string, statusIds: number[]) => {
@@ -251,27 +242,6 @@ export default function OrdersPage() {
     columnOrder,
     frontendSettingsBase,
   ])
-
-  const handleCreate = async (e: FormEvent) => {
-    e.preventDefault()
-    setCreating(true)
-    setCreateError(null)
-    try {
-      const { data } = await client.post<Order>('/orders', {
-        orderNumber: newOrderNumber.trim(),
-        title: newTitle.trim() || undefined,
-      })
-      setDialogOpen(false)
-      setNewOrderNumber('')
-      setNewTitle('')
-      void fetchOrders(search, selectedOrderStatusIds)
-      navigate(`/orders/${data.id}`)
-    } catch {
-      setCreateError('Не удалось создать заказ. Возможно, номер уже занят.')
-    } finally {
-      setCreating(false)
-    }
-  }
 
   const boardColumns = useMemo<BoardColumn[]>(() => {
     const byId = new Map(orderStatuses.map((status) => [status.id, status]))
@@ -415,13 +385,6 @@ export default function OrdersPage() {
             onClick={() => setColumnsDialogOpen(true)}
           >
             Колонки статусов
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setDialogOpen(true)}
-          >
-            Создать заказ
           </Button>
         </Stack>
       </Stack>
@@ -628,49 +591,6 @@ export default function OrdersPage() {
           {isEmpty ? ' (ничего не найдено по текущим фильтрам)' : ''}
         </Typography>
       )}
-
-      <Dialog
-        open={dialogOpen}
-        onClose={() => !creating && setDialogOpen(false)}
-        fullWidth
-        maxWidth="sm"
-      >
-        <form onSubmit={handleCreate}>
-          <DialogTitle>Новый заказ</DialogTitle>
-          <DialogContent>
-            <Stack spacing={2} sx={{ mt: 1 }}>
-              {createError && <Alert severity="error">{createError}</Alert>}
-              <TextField
-                label="Номер заказа"
-                value={newOrderNumber}
-                onChange={(e) => setNewOrderNumber(e.target.value)}
-                required
-                fullWidth
-                autoFocus
-              />
-              <TextField
-                label="Название (необязательно)"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                fullWidth
-              />
-            </Stack>
-          </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2 }}>
-            <Button onClick={() => setDialogOpen(false)} disabled={creating}>
-              Отмена
-            </Button>
-            <Button
-              type="submit"
-              variant="contained"
-              disabled={creating || !newOrderNumber.trim()}
-              startIcon={creating ? <CircularProgress size={18} color="inherit" /> : null}
-            >
-              Создать
-            </Button>
-          </DialogActions>
-        </form>
-      </Dialog>
 
       <Dialog
         open={columnsDialogOpen}
