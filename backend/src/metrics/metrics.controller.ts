@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { MetricsService } from './metrics.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -18,7 +18,7 @@ export class MetricsController {
   }
 
   @Get('workload')
-  workload() {
-    return this.metrics.workload();
+  workload(@Query('orderStatusIds') orderStatusIdsRaw?: string) {
+    return this.metrics.workload(orderStatusIdsRaw);
   }
 }

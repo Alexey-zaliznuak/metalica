@@ -1,14 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { MessageKind, Role } from '@prisma/client';
+import { MessageKind, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class MetricsService {
   constructor(private prisma: PrismaService) {}
-  private workloadCache: {
-    expiresAt: number;
-    data: WorkloadEntry[];
-  } | null = null;
+  private workloadCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      data: WorkloadEntry[];
+    }
+  >();
   private readonly workloadCacheTtlMs = 10_000;
 
   private get stuckHours(): number {
@@ -71,11 +74,20 @@ export class MetricsService {
     });
   }
 
-  async workload() {
+  async workload(orderStatusIdsRaw?: string) {
+    const orderStatusIds = this.parseStatusIds(orderStatusIdsRaw);
+    const cacheKey = orderStatusIds.join(',');
     const now = Date.now();
-    if (this.workloadCache && this.workloadCache.expiresAt > now) {
-      return this.workloadCache.data;
+    const cached = this.workloadCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
     }
+
+    const statusWhere = this.buildOrderStatusWhere(orderStatusIds);
+    const deliveryWhere = { deliveryManagerId: { not: null }, ...statusWhere };
+    const onboardingWhere = { onboardingManagerId: { not: null }, ...statusWhere };
+    const sketchWhere = { sketchDesignerId: { not: null }, ...statusWhere };
+    const revisionWhere = { revisionDesignerId: { not: null }, ...statusWhere };
 
     const [users, deliveryCounts, onboardingCounts, sketchCounts, revisionCounts] =
       await Promise.all([
@@ -86,22 +98,22 @@ export class MetricsService {
         }),
         this.prisma.order.groupBy({
           by: ['deliveryManagerId'],
-          where: { deliveryManagerId: { not: null } },
+          where: deliveryWhere,
           _count: { _all: true },
         }),
         this.prisma.order.groupBy({
           by: ['onboardingManagerId'],
-          where: { onboardingManagerId: { not: null } },
+          where: onboardingWhere,
           _count: { _all: true },
         }),
         this.prisma.order.groupBy({
           by: ['sketchDesignerId'],
-          where: { sketchDesignerId: { not: null } },
+          where: sketchWhere,
           _count: { _all: true },
         }),
         this.prisma.order.groupBy({
           by: ['revisionDesignerId'],
-          where: { revisionDesignerId: { not: null } },
+          where: revisionWhere,
           _count: { _all: true },
         }),
       ]);
@@ -110,7 +122,7 @@ export class MetricsService {
     const onboardingByUser = this.toCountMap(onboardingCounts, 'onboardingManagerId');
     const sketchByUser = this.toCountMap(sketchCounts, 'sketchDesignerId');
     const revisionByUser = this.toCountMap(revisionCounts, 'revisionDesignerId');
-    const openRevisionByUser = await this.fetchOpenRevisionByUser();
+    const openRevisionByUser = await this.fetchOpenRevisionByUser(orderStatusIds);
 
     const data = users.map((user) => ({
       userId: user.id,
@@ -124,10 +136,10 @@ export class MetricsService {
       revisionOrdersWithOpenRequest: openRevisionByUser.get(user.id) ?? 0,
     }));
 
-    this.workloadCache = {
+    this.workloadCache.set(cacheKey, {
       data,
       expiresAt: now + this.workloadCacheTtlMs,
-    };
+    });
     return data;
   }
 
@@ -163,7 +175,41 @@ export class MetricsService {
     return map;
   }
 
-  private async fetchOpenRevisionByUser() {
+  private buildOrderStatusWhere(orderStatusIds: number[]) {
+    if (orderStatusIds.length === 0) {
+      return {};
+    }
+    return {
+      bluesalesInfo: {
+        is: {
+          orderStatusId: { in: orderStatusIds },
+        },
+      },
+    };
+  }
+
+  private parseStatusIds(raw?: string): number[] {
+    if (!raw) return [];
+    const ids = raw
+      .split(',')
+      .map((part) => Number(part.trim()))
+      .filter((value) => Number.isInteger(value) && value >= 0);
+    return Array.from(new Set(ids));
+  }
+
+  private async fetchOpenRevisionByUser(orderStatusIds: number[]) {
+    const statusFilterSql =
+      orderStatusIds.length > 0
+        ? Prisma.sql`
+          AND EXISTS (
+            SELECT 1
+            FROM "BluesalesOrderInfo" b
+            WHERE b."orderId" = o."id"
+              AND b."orderStatusId" IN (${Prisma.join(orderStatusIds)})
+          )
+        `
+        : Prisma.empty;
+
     const rows = await this.prisma.$queryRaw<
       Array<{ userId: number; openRevisionOrders: bigint }>
     >`
@@ -180,6 +226,7 @@ export class MetricsService {
       ) lm ON TRUE
       WHERE o."revisionDesignerId" IS NOT NULL
         AND lm."kind" = 'REVISION_REQUEST'::"MessageKind"
+        ${statusFilterSql}
       GROUP BY o."revisionDesignerId"
     `;
     const map = new Map<number, number>();
