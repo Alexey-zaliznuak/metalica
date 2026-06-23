@@ -213,7 +213,9 @@ export default function WorkloadPage() {
     setSortDirection('desc')
   }
 
-  if (loading || statusesLoading) {
+  const showInitialLoader = statusesLoading || (loading && !initialized)
+
+  if (showInitialLoader) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
         <CircularProgress />
@@ -286,6 +288,14 @@ export default function WorkloadPage() {
             {FILTER_LABELS.DESIGNER} ({designersCount})
           </ToggleButton>
         </ToggleButtonGroup>
+        {loading && initialized && (
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <CircularProgress size={16} />
+            <Typography variant="caption" color="text.secondary">
+              Обновляем данные...
+            </Typography>
+          </Stack>
+        )}
       </Stack>
 
       <Paper variant="outlined" sx={{ borderRadius: 1.5, overflow: 'hidden' }}>
