@@ -445,17 +445,9 @@ function OrderInfoPanel({
       <Stack divider={<Divider flexItem />}>
         <InfoRow label="Номер" value={order.orderNumber} />
         <InfoRow
-          label="Источник"
-          value={
-            <Chip
-              size="small"
-              label={order.source === 'BLUESALES' ? 'BlueSales' : 'Вручную'}
-              color={order.source === 'BLUESALES' ? 'info' : 'default'}
-              sx={{ fontWeight: 700, height: 22 }}
-            />
-          }
+          label="Создан"
+          value={formatDateTime(order.createdAt)}
         />
-        <InfoRow label="Создан" value={formatDateTime(order.createdAt)} />
         <Box sx={{ py: 0.6 }}>
           <TextField
             select
@@ -658,8 +650,8 @@ function OrderInfoPanel({
               value={formatDateTime(bs.bsCreatedAt)}
             />
             <InfoRow
-              label="Синхронизирован"
-              value={formatDateTime(bs.lastSyncedAt)}
+              label="CRM-статус"
+              value={bs.crmStatus ?? dash}
             />
           </Stack>
         </Box>
@@ -699,33 +691,6 @@ function OrderInfoPanel({
               }
             />
             <InfoRow label="CRM-статус" value={lead.crmStatus ?? dash} />
-            <InfoRow
-              label="Диалог в ВК"
-              value={
-                lead.vkDialogUrl ? (
-                  <Link
-                    href={lead.vkDialogUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 0.5,
-                      fontWeight: 700,
-                    }}
-                  >
-                    Открыть
-                    <OpenInNewIcon sx={{ fontSize: 15 }} />
-                  </Link>
-                ) : (
-                  dash
-                )
-              }
-            />
-            <InfoRow
-              label="Обновлён"
-              value={formatDateTime(lead.lastSyncedAt)}
-            />
           </Stack>
         ) : (
           <Typography variant="body2" color="text.secondary">
