@@ -193,7 +193,12 @@ export default function ChatThreadPage() {
         body: body.trim() || undefined,
         attachmentKeys: attachmentKeys.length ? attachmentKeys : undefined,
       })
-      setMessages((prev) => [...prev, createdMessage])
+      setMessages((prev) => {
+        if (prev.some((message) => message.id === createdMessage.id)) {
+          return prev
+        }
+        return [...prev, createdMessage]
+      })
       pendingImages.forEach((pending) => URL.revokeObjectURL(pending.previewUrl))
       setPendingImages([])
       setBody('')
