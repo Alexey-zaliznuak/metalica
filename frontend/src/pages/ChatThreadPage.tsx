@@ -6,7 +6,15 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -19,9 +27,15 @@ import ImageIcon from '@mui/icons-material/Image'
 import CloseIcon from '@mui/icons-material/Close'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import GroupIcon from '@mui/icons-material/Group'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
-import type { ChatListItem, ChatMessage, UploadResponse } from '../api/types'
+import type {
+  ChatListItem,
+  ChatMemberUser,
+  ChatMessage,
+  UploadResponse,
+} from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useChatSocket } from '../hooks/useChatSocket'
 import { formatTime, roleLabel } from '../utils'
@@ -60,6 +74,12 @@ export default function ChatThreadPage() {
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [editing, setEditing] = useState(false)
+  const [membersOpen, setMembersOpen] = useState(false)
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [membersError, setMembersError] = useState<string | null>(null)
+  const [availableUsers, setAvailableUsers] = useState<ChatMemberUser[]>([])
+  const [selectedUserId, setSelectedUserId] = useState<number | ''>('')
+  const [membersSaving, setMembersSaving] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -235,6 +255,52 @@ export default function ChatThreadPage() {
     }
   }
 
+  const openMembersDialog = async () => {
+    setMembersOpen(true)
+    setMembersError(null)
+    setMembersLoading(true)
+    try {
+      const { data } = await client.get<ChatMemberUser[]>('/chats/users')
+      setAvailableUsers(data)
+    } catch {
+      setMembersError('Не удалось загрузить список пользователей')
+    } finally {
+      setMembersLoading(false)
+    }
+  }
+
+  const addMember = async () => {
+    if (!selectedUserId) return
+    setMembersSaving(true)
+    setMembersError(null)
+    try {
+      const { data } = await client.post<ChatListItem>(`/chats/${chatId}/members`, {
+        userId: selectedUserId,
+      })
+      setChat(data)
+      setSelectedUserId('')
+    } catch {
+      setMembersError('Не удалось добавить участника')
+    } finally {
+      setMembersSaving(false)
+    }
+  }
+
+  const removeMember = async (memberUserId: number) => {
+    setMembersSaving(true)
+    setMembersError(null)
+    try {
+      const { data } = await client.delete<ChatListItem>(
+        `/chats/${chatId}/members/${memberUserId}`,
+      )
+      setChat(data)
+    } catch {
+      setMembersError('Не удалось удалить участника')
+    } finally {
+      setMembersSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
@@ -274,6 +340,16 @@ export default function ChatThreadPage() {
               участников: {chat.members.length}
             </Typography>
           </Box>
+          {user?.role === 'ADMIN' && (
+            <Button
+              size="small"
+              startIcon={<GroupIcon />}
+              onClick={() => void openMembersDialog()}
+              sx={{ ml: 'auto' }}
+            >
+              Участники
+            </Button>
+          )}
         </Stack>
       </Paper>
 
@@ -505,6 +581,84 @@ export default function ChatThreadPage() {
           <Box component="img" src={lightbox} alt="attachment" sx={{ maxWidth: '95%', maxHeight: '95%', objectFit: 'contain', borderRadius: 1 }} />
         </Box>
       )}
+
+      <Dialog
+        open={membersOpen}
+        onClose={() => !membersSaving && setMembersOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Участники чата</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            {membersError && <Alert severity="error">{membersError}</Alert>}
+            {membersLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : (
+              <>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <TextField
+                    select
+                    size="small"
+                    label="Добавить пользователя"
+                    value={selectedUserId === '' ? '' : String(selectedUserId)}
+                    onChange={(event) =>
+                      setSelectedUserId(
+                        event.target.value ? Number(event.target.value) : '',
+                      )
+                    }
+                    sx={{ flexGrow: 1 }}
+                  >
+                    {availableUsers.map((candidate) => (
+                      <MenuItem key={candidate.id} value={String(candidate.id)}>
+                        {candidate.name} ({candidate.username})
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <Button
+                    variant="contained"
+                    onClick={() => void addMember()}
+                    disabled={!selectedUserId || membersSaving}
+                  >
+                    Добавить
+                  </Button>
+                </Stack>
+                <List dense>
+                  {chat.members.map((member) => (
+                    <ListItem
+                      key={member.userId}
+                      secondaryAction={
+                        chat.createdById !== member.userId ? (
+                          <Button
+                            size="small"
+                            color="error"
+                            onClick={() => void removeMember(member.userId)}
+                            disabled={membersSaving}
+                          >
+                            Удалить
+                          </Button>
+                        ) : undefined
+                      }
+                    >
+                      <ListItemText
+                        primary={member.user.name}
+                        secondary={`${member.user.username} • ${roleLabel(member.user.role)}`}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMembersOpen(false)} disabled={membersSaving}>
+            Закрыть
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
