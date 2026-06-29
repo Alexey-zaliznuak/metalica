@@ -28,6 +28,16 @@ enum MessageKind {
   REVISION_ANSWER
 }
 
+enum ChatType {
+  PUBLIC
+  PRIVATE
+}
+
+enum ChatMemberRole {
+  MEMBER
+  MODERATOR
+}
+
 model User {
   id                          Int       @id @default(autoincrement())
   username                    String    @unique
@@ -37,6 +47,9 @@ model User {
   passwordHash                String
   frontendSettings            Json?
   messages                    Message[]
+  chatMemberships             ChatMember[]
+  chatMessages                ChatMessage[]
+  createdChats                Chat[]    @relation("ChatCreatedBy")
   ordersAsDeliveryManager     Order[]   @relation("OrderDeliveryManager")
   ordersAsOnboardingManager   Order[]   @relation("OrderOnboardingManager")
   ordersAsSketchDesigner      Order[]   @relation("OrderSketchDesigner")
@@ -139,6 +152,51 @@ model SyncState {
   updatedAt     DateTime  @updatedAt
 }
 
+model Chat {
+  id          Int           @id @default(autoincrement())
+  name        String
+  type        ChatType      @default(PUBLIC)
+  createdBy   User?         @relation("ChatCreatedBy", fields: [createdById], references: [id])
+  createdById Int?
+  members     ChatMember[]
+  messages    ChatMessage[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([type])
+  @@index([createdById])
+}
+
+model ChatMember {
+  id        Int            @id @default(autoincrement())
+  chat      Chat           @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId    Int
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  role      ChatMemberRole @default(MEMBER)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([chatId, userId])
+  @@index([userId])
+  @@index([chatId, createdAt])
+}
+
+model ChatMessage {
+  id          Int          @id @default(autoincrement())
+  chat        Chat         @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId      Int
+  author      User         @relation(fields: [authorId], references: [id])
+  authorId    Int
+  body        String?
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([chatId, createdAt])
+  @@index([authorId, createdAt])
+}
+
 model Message {
   id          Int          @id @default(autoincrement())
   order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -160,14 +218,17 @@ model Message {
 }
 
 model Attachment {
-  id        Int      @id @default(autoincrement())
-  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  messageId Int
-  objectKey String
-  filename  String
-  mimeType  String?
-  kind      String   @default("attachment")
-  createdAt DateTime @default(now())
+  id            Int          @id @default(autoincrement())
+  message       Message?     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId     Int?
+  chatMessage   ChatMessage? @relation(fields: [chatMessageId], references: [id], onDelete: Cascade)
+  chatMessageId Int?
+  objectKey     String
+  filename      String
+  mimeType      String?
+  kind          String       @default("attachment")
+  createdAt     DateTime     @default(now())
 
   @@index([messageId])
+  @@index([chatMessageId])
 }
