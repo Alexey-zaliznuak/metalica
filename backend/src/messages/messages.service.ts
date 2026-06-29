@@ -1,8 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { MessageKind, Prisma } from '@prisma/client';
+import { AuthUser } from '../auth/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { UpdateMessageTextDto } from './dto/update-message-text.dto';
 
 const messageInclude = {
   author: { select: { id: true, name: true, role: true } },
@@ -79,6 +86,55 @@ export class MessagesService {
     });
 
     return this.serialize(message);
+  }
+
+  async updateText(
+    orderId: number,
+    messageId: number,
+    currentUser: AuthUser,
+    dto: UpdateMessageTextDto,
+  ) {
+    await this.ensureOrder(orderId);
+    const existing = await this.prisma.message.findFirst({
+      where: { id: messageId, orderId },
+      select: { id: true, authorId: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Сообщение не найдено');
+    }
+    if (currentUser.role !== 'ADMIN' && existing.authorId !== currentUser.id) {
+      throw new ForbiddenException('Можно редактировать только свои сообщения');
+    }
+    const body = dto.body.trim();
+    if (!body) {
+      throw new BadRequestException('Текст сообщения не может быть пустым');
+    }
+    const updated = await this.prisma.message.update({
+      where: { id: messageId },
+      data: { body },
+      include: messageInclude,
+    });
+    return this.serialize(updated);
+  }
+
+  async deleteText(orderId: number, messageId: number, currentUser: AuthUser) {
+    await this.ensureOrder(orderId);
+    const existing = await this.prisma.message.findFirst({
+      where: { id: messageId, orderId },
+      select: { id: true, authorId: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Сообщение не найдено');
+    }
+    if (currentUser.role !== 'ADMIN' && existing.authorId !== currentUser.id) {
+      throw new ForbiddenException('Можно удалять текст только своих сообщений');
+    }
+    const updated = await this.prisma.message.update({
+      where: { id: messageId },
+      data: { body: null },
+      include: messageInclude,
+    });
+    return this.serialize(updated);
   }
 
   private async serialize(m: MessageWithRelations) {

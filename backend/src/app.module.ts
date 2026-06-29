@@ -9,6 +9,8 @@ import { OrdersModule } from './orders/orders.module';
 import { MessagesModule } from './messages/messages.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { BluesalesModule } from './bluesales/bluesales.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { ChatsModule } from './chats/chats.module';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { BluesalesModule } from './bluesales/bluesales.module';
     MessagesModule,
     MetricsModule,
     BluesalesModule,
+    RealtimeModule,
+    ChatsModule,
   ],
 })
 export class AppModule {}

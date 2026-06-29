@@ -1,14 +1,17 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Patch,
   ParseIntPipe,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { MessagesService } from './messages.service';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { UpdateMessageTextDto } from './dto/update-message-text.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../auth/current-user.decorator';
 
@@ -29,5 +32,24 @@ export class MessagesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.messages.create(orderId, user.id, dto);
+  }
+
+  @Patch(':messageId/text')
+  updateText(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Body() dto: UpdateMessageTextDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.messages.updateText(orderId, messageId, user, dto);
+  }
+
+  @Delete(':messageId/text')
+  deleteText(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.messages.deleteText(orderId, messageId, user);
   }
 }

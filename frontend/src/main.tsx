@@ -12,6 +12,8 @@ import OrderThreadPage from './pages/OrderThreadPage'
 import MetricsPage from './pages/MetricsPage'
 import UsersPage from './pages/UsersPage'
 import WorkloadPage from './pages/WorkloadPage'
+import ChatsPage from './pages/ChatsPage'
+import ChatThreadPage from './pages/ChatThreadPage'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -57,6 +59,26 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <ProtectedRoute>
                   <AppLayout>
                     <WorkloadPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chats"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <ChatsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chats/:id"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <ChatThreadPage />
                   </AppLayout>
                 </ProtectedRoute>
               }

@@ -153,6 +153,61 @@ export interface Message {
   attachments: Attachment[]
 }
 
+export type ChatType = 'PUBLIC' | 'PRIVATE'
+export type ChatMemberRole = 'MEMBER' | 'MODERATOR'
+
+export interface ChatMemberUser {
+  id: number
+  username: string
+  name: string
+  role: UserRole
+}
+
+export interface ChatMember {
+  userId: number
+  role: ChatMemberRole
+  joinedAt: string
+  user: ChatMemberUser
+}
+
+export interface ChatListItem {
+  id: number
+  name: string
+  type: ChatType
+  createdById: number | null
+  createdAt: string
+  updatedAt: string
+  members: ChatMember[]
+  lastMessageAt: string | null
+  lastMessage: {
+    id: number
+    body: string | null
+    createdAt: string
+    author: MessageAuthor
+  } | null
+}
+
+export interface ChatMessage {
+  id: number
+  chatId: number
+  body: string | null
+  createdAt: string
+  updatedAt: string
+  author: MessageAuthor
+  attachments: Attachment[]
+}
+
+export interface CreateChatPayload {
+  name: string
+  type?: ChatType
+  memberIds?: number[]
+}
+
+export interface CreateChatMessagePayload {
+  body?: string
+  attachmentKeys?: string[]
+}
+
 export interface OrderMetrics {
   revisionCount: number
   avgRevisionSeconds: number

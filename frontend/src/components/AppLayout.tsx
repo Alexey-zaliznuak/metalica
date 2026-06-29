@@ -16,6 +16,7 @@ import InsightsIcon from '@mui/icons-material/Insights'
 import GroupIcon from '@mui/icons-material/Group'
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn'
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
+import ForumIcon from '@mui/icons-material/Forum'
 import type { ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
@@ -116,6 +117,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
           <Stack direction="row" spacing={1} sx={{ flexGrow: 1 }}>
             <NavButton to="/orders" icon={<ListAltIcon />} label="Заказы" />
+            <NavButton to="/chats" icon={<ForumIcon />} label="Чаты" />
             <NavButton to="/metrics" icon={<InsightsIcon />} label="Метрики" />
             <NavButton to="/workload" icon={<AssignmentTurnedInIcon />} label="Нагрузка" />
             {user?.role === 'ADMIN' && (
