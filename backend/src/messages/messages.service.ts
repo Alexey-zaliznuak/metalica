@@ -26,14 +26,24 @@ export class MessagesService {
     private storage: StorageService,
   ) {}
 
-  async list(orderId: number) {
+  async list(orderId: number, options: { limit?: number; before?: number } = {}) {
     await this.ensureOrder(orderId);
-    const messages = await this.prisma.message.findMany({
-      where: { orderId },
-      orderBy: { createdAt: 'asc' },
+    const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
+    const rows = await this.prisma.message.findMany({
+      where: {
+        orderId,
+        ...(options.before ? { id: { lt: options.before } } : {}),
+      },
+      orderBy: { id: 'desc' },
+      take: limit + 1,
       include: messageInclude,
     });
-    return Promise.all(messages.map((m) => this.serialize(m)));
+    const hasMore = rows.length > limit;
+    const slice = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? slice[slice.length - 1].id : null;
+    const ordered = [...slice].reverse();
+    const items = await Promise.all(ordered.map((m) => this.serialize(m)));
+    return { items, nextCursor, hasMore };
   }
 
   async create(orderId: number, authorId: number, dto: CreateMessageDto) {

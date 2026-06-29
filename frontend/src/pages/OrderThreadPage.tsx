@@ -51,12 +51,15 @@ import type {
   BluesalesStatusOption,
   Message,
   MessageKind,
+  MessagesPage,
   OrderAssignee,
   Order,
   OrderMetrics,
   UpdateOrderPayload,
   UploadResponse,
 } from '../api/types'
+
+const MESSAGES_PAGE_SIZE = 30
 import { useAuth } from '../auth/AuthContext'
 import { BRAND, ACCENT } from '../theme'
 import {
@@ -291,6 +294,8 @@ function MessageBubble({
                     component="img"
                     src={att.url}
                     alt={att.filename}
+                    loading="lazy"
+                    decoding="async"
                     onClick={() => onOpenImage(att.url)}
                     sx={{
                       width: 120,
@@ -817,6 +822,9 @@ export default function OrderThreadPage() {
   const [metrics, setMetrics] = useState<OrderMetrics | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const [nextCursor, setNextCursor] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const [body, setBody] = useState('')
@@ -844,6 +852,9 @@ export default function OrderThreadPage() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const loadingOlderRef = useRef(false)
+  const pendingScrollBottomRef = useRef(true)
   const canReassignResponsible = canEditOrderResponsibles(user?.role, user?.scopes)
 
   const loadAll = useCallback(async () => {
@@ -853,7 +864,9 @@ export default function OrderThreadPage() {
       const [orderRes, metricsRes, messagesRes, statusesRes, assigneesRes] = await Promise.all([
         client.get<Order>(`/orders/${orderId}`),
         client.get<OrderMetrics>(`/orders/${orderId}/metrics`),
-        client.get<Message[]>(`/orders/${orderId}/messages`),
+        client.get<MessagesPage<Message>>(`/orders/${orderId}/messages`, {
+          params: { limit: MESSAGES_PAGE_SIZE },
+        }),
         client.get<BluesalesStatusOption[]>('/orders/order-statuses'),
         canReassignResponsible
           ? client.get<AssigneesResponse>('/orders/assignees')
@@ -861,7 +874,10 @@ export default function OrderThreadPage() {
       ])
       setOrder(orderRes.data)
       setMetrics(metricsRes.data)
-      setMessages(messagesRes.data)
+      setMessages(messagesRes.data.items)
+      setNextCursor(messagesRes.data.nextCursor)
+      setHasMore(messagesRes.data.hasMore)
+      pendingScrollBottomRef.current = true
       setOrderStatuses(statusesRes.data)
       setManagerAssignees(assigneesRes.data.managers)
       setDesignerAssignees(assigneesRes.data.designers)
@@ -872,15 +888,59 @@ export default function OrderThreadPage() {
     }
   }, [canReassignResponsible, orderId])
 
+  const loadOlder = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMore || nextCursor == null) return
+    loadingOlderRef.current = true
+    setLoadingOlder(true)
+    const container = scrollRef.current
+    const prevHeight = container?.scrollHeight ?? 0
+    const prevTop = container?.scrollTop ?? 0
+    try {
+      const { data } = await client.get<MessagesPage<Message>>(
+        `/orders/${orderId}/messages`,
+        { params: { limit: MESSAGES_PAGE_SIZE, before: nextCursor } },
+      )
+      setMessages((prev) => {
+        const existing = new Set(prev.map((m) => m.id))
+        const older = data.items.filter((m) => !existing.has(m.id))
+        return [...older, ...prev]
+      })
+      setNextCursor(data.nextCursor)
+      setHasMore(data.hasMore)
+      requestAnimationFrame(() => {
+        const c = scrollRef.current
+        if (c) {
+          c.scrollTop = c.scrollHeight - prevHeight + prevTop
+        }
+      })
+    } catch {
+      /* подгрузка истории не критична */
+    } finally {
+      setLoadingOlder(false)
+      loadingOlderRef.current = false
+    }
+  }, [orderId, hasMore, nextCursor])
+
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current
+    if (!container) return
+    if (container.scrollTop <= 80 && hasMore && !loadingOlderRef.current) {
+      void loadOlder()
+    }
+  }, [hasMore, loadOlder])
+
   useEffect(() => {
     if (Number.isFinite(orderId)) {
       loadAll()
     }
   }, [orderId, loadAll])
 
-  // Auto-scroll to bottom when messages change.
+  // Auto-scroll to bottom only on initial load or when a new message is appended.
   useEffect(() => {
-    listEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (pendingScrollBottomRef.current) {
+      listEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      pendingScrollBottomRef.current = false
+    }
   }, [messages])
 
   const refreshOrderMeta = useCallback(async () => {
@@ -1120,6 +1180,7 @@ export default function OrderThreadPage() {
         },
       )
 
+      pendingScrollBottomRef.current = true
       setMessages((prev) => [...prev, created])
       // Reset composer.
       pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
@@ -1269,6 +1330,8 @@ export default function OrderThreadPage() {
 
       {/* Message list */}
       <Paper
+        ref={scrollRef}
+        onScroll={handleScroll}
         variant="outlined"
         sx={{
           flexGrow: 1,
@@ -1278,6 +1341,17 @@ export default function OrderThreadPage() {
           background: `linear-gradient(180deg, ${BRAND.pale}40, ${BRAND.pale}1a)`,
         }}
       >
+        {hasMore && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+            {loadingOlder ? (
+              <CircularProgress size={20} />
+            ) : (
+              <Button size="small" onClick={() => void loadOlder()}>
+                Загрузить ещё
+              </Button>
+            )}
+          </Box>
+        )}
         {messages.length === 0 ? (
           <Box
             sx={{

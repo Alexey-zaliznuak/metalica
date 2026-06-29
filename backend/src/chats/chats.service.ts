@@ -191,14 +191,30 @@ export class ChatsService {
     return serialized;
   }
 
-  async listMessages(chatId: number, currentUserId: number) {
+  async listMessages(
+    chatId: number,
+    currentUserId: number,
+    options: { limit?: number; before?: number } = {},
+  ) {
     await this.ensureCanAccess(chatId, currentUserId);
-    const messages = await this.prisma.chatMessage.findMany({
-      where: { chatId },
-      orderBy: { createdAt: 'asc' },
+    const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
+    const rows = await this.prisma.chatMessage.findMany({
+      where: {
+        chatId,
+        ...(options.before ? { id: { lt: options.before } } : {}),
+      },
+      orderBy: { id: 'desc' },
+      take: limit + 1,
       include: chatMessageInclude,
     });
-    return Promise.all(messages.map((message) => this.serializeMessage(message)));
+    const hasMore = rows.length > limit;
+    const slice = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? slice[slice.length - 1].id : null;
+    const ordered = [...slice].reverse();
+    const items = await Promise.all(
+      ordered.map((message) => this.serializeMessage(message)),
+    );
+    return { items, nextCursor, hasMore };
   }
 
   async createMessage(chatId: number, authorId: number, dto: CreateChatMessageDto) {

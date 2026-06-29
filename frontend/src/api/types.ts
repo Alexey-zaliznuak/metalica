@@ -119,6 +119,12 @@ export interface PaginatedResponse<T> {
   totalPages: number
 }
 
+export interface MessagesPage<T> {
+  items: T[]
+  nextCursor: number | null
+  hasMore: boolean
+}
+
 export type MessageKind = 'NORMAL' | 'REVISION_REQUEST' | 'REVISION_ANSWER'
 
 export interface Attachment {

@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser, AuthUser } from '../auth/current-user.decorator';
@@ -76,8 +77,13 @@ export class ChatsController {
   }
 
   @Get(':chatId/messages')
-  listMessages(@Param('chatId', ParseIntPipe) chatId: number, @CurrentUser() user: AuthUser) {
-    return this.chats.listMessages(chatId, user.id);
+  listMessages(
+    @Param('chatId', ParseIntPipe) chatId: number,
+    @CurrentUser() user: AuthUser,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('before', new ParseIntPipe({ optional: true })) before?: number,
+  ) {
+    return this.chats.listMessages(chatId, user.id, { limit, before });
   }
 
   @Post(':chatId/messages')

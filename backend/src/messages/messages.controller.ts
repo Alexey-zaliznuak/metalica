@@ -7,6 +7,7 @@ import {
   Patch,
   ParseIntPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { MessagesService } from './messages.service';
@@ -21,8 +22,12 @@ export class MessagesController {
   constructor(private messages: MessagesService) {}
 
   @Get()
-  list(@Param('orderId', ParseIntPipe) orderId: number) {
-    return this.messages.list(orderId);
+  list(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('before', new ParseIntPipe({ optional: true })) before?: number,
+  ) {
+    return this.messages.list(orderId, { limit, before });
   }
 
   @Post()

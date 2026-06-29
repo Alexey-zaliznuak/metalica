@@ -34,8 +34,11 @@ import type {
   ChatListItem,
   ChatMemberUser,
   ChatMessage,
+  MessagesPage,
   UploadResponse,
 } from '../api/types'
+
+const PAGE_SIZE = 30
 import { useAuth } from '../auth/AuthContext'
 import { useChatSocket } from '../hooks/useChatSocket'
 import { formatTime, roleLabel } from '../utils'
@@ -64,6 +67,9 @@ export default function ChatThreadPage() {
   const [chat, setChat] = useState<ChatListItem | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const [nextCursor, setNextCursor] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -83,6 +89,15 @@ export default function ChatThreadPage() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const loadingOlderRef = useRef(false)
+  const pendingScrollBottomRef = useRef(true)
+
+  const isNearBottom = useCallback(() => {
+    const container = scrollRef.current
+    if (!container) return true
+    return container.scrollHeight - container.scrollTop - container.clientHeight < 120
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -90,16 +105,62 @@ export default function ChatThreadPage() {
     try {
       const [chatRes, messagesRes] = await Promise.all([
         client.get<ChatListItem>(`/chats/${chatId}`),
-        client.get<ChatMessage[]>(`/chats/${chatId}/messages`),
+        client.get<MessagesPage<ChatMessage>>(`/chats/${chatId}/messages`, {
+          params: { limit: PAGE_SIZE },
+        }),
       ])
       setChat(chatRes.data)
-      setMessages(messagesRes.data)
+      setMessages(messagesRes.data.items)
+      setNextCursor(messagesRes.data.nextCursor)
+      setHasMore(messagesRes.data.hasMore)
+      pendingScrollBottomRef.current = true
     } catch {
       setError('Не удалось загрузить чат')
     } finally {
       setLoading(false)
     }
   }, [chatId])
+
+  const loadOlder = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMore || nextCursor == null) return
+    loadingOlderRef.current = true
+    setLoadingOlder(true)
+    const container = scrollRef.current
+    const prevHeight = container?.scrollHeight ?? 0
+    const prevTop = container?.scrollTop ?? 0
+    try {
+      const { data } = await client.get<MessagesPage<ChatMessage>>(
+        `/chats/${chatId}/messages`,
+        { params: { limit: PAGE_SIZE, before: nextCursor } },
+      )
+      setMessages((prev) => {
+        const existing = new Set(prev.map((m) => m.id))
+        const older = data.items.filter((m) => !existing.has(m.id))
+        return [...older, ...prev]
+      })
+      setNextCursor(data.nextCursor)
+      setHasMore(data.hasMore)
+      requestAnimationFrame(() => {
+        const c = scrollRef.current
+        if (c) {
+          c.scrollTop = c.scrollHeight - prevHeight + prevTop
+        }
+      })
+    } catch {
+      /* подгрузка истории не критична */
+    } finally {
+      setLoadingOlder(false)
+      loadingOlderRef.current = false
+    }
+  }, [chatId, hasMore, nextCursor])
+
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current
+    if (!container) return
+    if (container.scrollTop <= 80 && hasMore && !loadingOlderRef.current) {
+      void loadOlder()
+    }
+  }, [hasMore, loadOlder])
 
   useEffect(() => {
     if (Number.isFinite(chatId)) {
@@ -108,7 +169,10 @@ export default function ChatThreadPage() {
   }, [chatId, load])
 
   useEffect(() => {
-    listEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (pendingScrollBottomRef.current) {
+      listEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      pendingScrollBottomRef.current = false
+    }
   }, [messages])
 
   useChatSocket({
@@ -119,6 +183,9 @@ export default function ChatThreadPage() {
       setMessages((prev) => {
         if (prev.some((entry) => entry.id === message.id)) {
           return prev
+        }
+        if (isNearBottom() || message.author.id === user?.id) {
+          pendingScrollBottomRef.current = true
         }
         return [...prev, message]
       })
@@ -197,6 +264,7 @@ export default function ChatThreadPage() {
         if (prev.some((message) => message.id === createdMessage.id)) {
           return prev
         }
+        pendingScrollBottomRef.current = true
         return [...prev, createdMessage]
       })
       pendingImages.forEach((pending) => URL.revokeObjectURL(pending.previewUrl))
@@ -368,7 +436,23 @@ export default function ChatThreadPage() {
         </Stack>
       </Paper>
 
-      <Paper variant="outlined" sx={{ flexGrow: 1, overflowY: 'auto', p: 2, borderRadius: 1.5 }}>
+      <Paper
+        ref={scrollRef}
+        onScroll={handleScroll}
+        variant="outlined"
+        sx={{ flexGrow: 1, overflowY: 'auto', p: 2, borderRadius: 1.5 }}
+      >
+        {hasMore && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+            {loadingOlder ? (
+              <CircularProgress size={20} />
+            ) : (
+              <Button size="small" onClick={() => void loadOlder()}>
+                Загрузить ещё
+              </Button>
+            )}
+          </Box>
+        )}
         {messages.length === 0 ? (
           <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Typography color="text.secondary">Сообщений пока нет. Начните переписку.</Typography>
@@ -433,6 +517,8 @@ export default function ChatThreadPage() {
                             component="img"
                             src={attachment.url}
                             alt={attachment.filename}
+                            loading="lazy"
+                            decoding="async"
                             onClick={() => setLightbox(attachment.url)}
                             sx={{
                               width: 120,
