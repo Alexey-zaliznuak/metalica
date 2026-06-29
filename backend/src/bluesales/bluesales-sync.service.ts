@@ -11,8 +11,8 @@ const SYNC_KEY_REFRESH = 'bluesales:refresh-loop';
 /** Перекрытие окна инкрементального синка — берём с запасом, чтобы не пропустить заказы на границе. */
 const FAST_SYNC_OVERLAP_MINUTES = 70;
 
-const REFRESH_BATCH_SIZE = 30;
-const REFRESH_PAUSE_MS = 1200;
+const REFRESH_BATCH_SIZE = 50;
+const REFRESH_PAUSE_MS = 4000;
 /** Заказы не старше 2 месяцев попадают в фоновый обход. */
 const REFRESH_LOOKBACK_DAYS = 60;
 
