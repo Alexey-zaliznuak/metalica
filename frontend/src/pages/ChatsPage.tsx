@@ -125,7 +125,12 @@ export default function ChatsPage() {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        justifyContent="space-between"
+        alignItems={{ xs: 'stretch', sm: 'center' }}
+      >
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 800 }}>
             Чаты
@@ -138,6 +143,7 @@ export default function ChatsPage() {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => setCreateOpen(true)}
+          sx={{ flexShrink: 0, alignSelf: { xs: 'flex-start', sm: 'auto' } }}
         >
           Создать чат
         </Button>

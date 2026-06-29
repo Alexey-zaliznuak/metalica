@@ -205,12 +205,12 @@ export default function UsersPage() {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell>ID</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>ID</TableCell>
                 <TableCell>Логин</TableCell>
                 <TableCell>Имя</TableCell>
                 <TableCell>Роль</TableCell>
-                <TableCell>Скоупы</TableCell>
-                <TableCell>Создан</TableCell>
+                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Скоупы</TableCell>
+                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Создан</TableCell>
                 <TableCell align="right">Действия</TableCell>
               </TableRow>
             </TableHead>
@@ -234,7 +234,7 @@ export default function UsersPage() {
               {!loading &&
                 users.map((u) => (
                   <TableRow key={u.id} hover>
-                    <TableCell>{u.id}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{u.id}</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
                     <TableCell>{u.name}</TableCell>
                     <TableCell>
@@ -245,7 +245,7 @@ export default function UsersPage() {
                         variant="filled"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                       <Stack direction="row" spacing={0.5} flexWrap="wrap">
                         {(u.scopes ?? []).length === 0 ? (
                           <Typography variant="body2" color="text.secondary">
@@ -263,7 +263,7 @@ export default function UsersPage() {
                         )}
                       </Stack>
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                       <Typography variant="body2" color="text.secondary">
                         {formatDateTime(u.createdAt)}
                       </Typography>

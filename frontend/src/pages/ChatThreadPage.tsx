@@ -328,7 +328,17 @@ export default function ChatThreadPage() {
   }
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, height: 'calc(100vh - 64px - 48px)' }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        height: {
+          xs: 'calc(100dvh - 56px - 32px)',
+          sm: 'calc(100vh - 64px - 48px)',
+        },
+      }}
+    >
       <Paper variant="outlined" sx={{ p: 2, borderRadius: 1.5 }}>
         <Stack direction="row" spacing={1.5} alignItems="center">
           <IconButton onClick={() => navigate('/chats')} size="small">
@@ -560,8 +570,16 @@ export default function ChatThreadPage() {
             onClick={() => void handleSend()}
             disabled={!canSend}
             endIcon={sending ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+            sx={{
+              flexShrink: 0,
+              minWidth: { xs: 0, sm: 'auto' },
+              px: { xs: 1.5, sm: 2.25 },
+              '& .MuiButton-endIcon': { ml: { xs: 0, sm: 1 } },
+            }}
           >
-            Отправить
+            <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
+              Отправить
+            </Box>
           </Button>
         </Stack>
       </Paper>

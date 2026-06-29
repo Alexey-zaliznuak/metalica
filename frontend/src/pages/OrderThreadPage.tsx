@@ -20,6 +20,7 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  Drawer,
   IconButton,
   Link,
   MenuItem,
@@ -42,6 +43,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import PersonIcon from '@mui/icons-material/Person'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
@@ -403,6 +405,7 @@ function OrderInfoPanel({
   onOrderStatusChange,
   onResponsibleChange,
   onDialogLinkChange,
+  inDrawer = false,
 }: {
   order: Order
   orderStatusOptions: BluesalesStatusOption[]
@@ -422,6 +425,7 @@ function OrderInfoPanel({
     userId: number | '',
   ) => void
   onDialogLinkChange: (dialogLink: string) => void
+  inDrawer?: boolean
 }) {
   const bs = order.bluesalesInfo
   const lead = order.lead
@@ -441,15 +445,25 @@ function OrderInfoPanel({
 
   return (
     <Paper
-      variant="outlined"
-      sx={{
-        width: 320,
-        flexShrink: 0,
-        p: 2,
-        borderRadius: 1.5,
-        overflowY: 'auto',
-        display: { xs: 'none', md: 'block' },
-      }}
+      variant={inDrawer ? 'elevation' : 'outlined'}
+      elevation={0}
+      sx={
+        inDrawer
+          ? {
+              width: '100%',
+              p: 2,
+              borderRadius: 0,
+              overflowY: 'auto',
+            }
+          : {
+              width: 320,
+              flexShrink: 0,
+              p: 2,
+              borderRadius: 1.5,
+              overflowY: 'auto',
+              display: { xs: 'none', md: 'block' },
+            }
+      }
     >
       <SectionTitle icon={<ReceiptLongIcon fontSize="small" />}>
         Информация о заказе
@@ -812,6 +826,7 @@ export default function OrderThreadPage() {
   const [sendError, setSendError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
+  const [infoOpen, setInfoOpen] = useState(false)
 
   const [editOpen, setEditOpen] = useState(false)
   const [editNumber, setEditNumber] = useState('')
@@ -1149,7 +1164,11 @@ export default function OrderThreadPage() {
         flexGrow: 1,
         alignItems: 'stretch',
         // Fill the viewport height under the AppBar so the messenger feels native.
-        height: 'calc(100vh - 64px - 48px)',
+        // AppBar is 56px on mobile / 64px from sm up; container padding differs too.
+        height: {
+          xs: 'calc(100dvh - 56px - 32px)',
+          sm: 'calc(100vh - 64px - 48px)',
+        },
       }}
     >
       {/* Chat column */}
@@ -1198,9 +1217,11 @@ export default function OrderThreadPage() {
           </Stack>
 
           <Stack
-            direction={{ xs: 'column', sm: 'row' }}
+            direction={{ xs: 'row', sm: 'row' }}
             spacing={2}
-            alignItems={{ xs: 'flex-start', sm: 'center' }}
+            alignItems="center"
+            sx={{ width: { xs: '100%', md: 'auto' } }}
+            justifyContent={{ xs: 'space-between', md: 'flex-end' }}
           >
             <Stack
               direction="row"
@@ -1229,6 +1250,19 @@ export default function OrderThreadPage() {
                 </Typography>
               </Box>
             </Stack>
+
+            <Tooltip title="Информация о заказе">
+              <IconButton
+                onClick={() => setInfoOpen(true)}
+                sx={{
+                  display: { xs: 'inline-flex', md: 'none' },
+                  bgcolor: `${BRAND.pale}66`,
+                  '&:hover': { bgcolor: `${BRAND.pale}` },
+                }}
+              >
+                <InfoOutlinedIcon />
+              </IconButton>
+            </Tooltip>
           </Stack>
         </Stack>
       </Paper>
@@ -1410,17 +1444,25 @@ export default function OrderThreadPage() {
             onClick={handleSend}
             sx={{
               color: '#fff',
-              '& .MuiButton-endIcon': { color: '#fff' },
+              flexShrink: 0,
+              minWidth: { xs: 0, sm: 'auto' },
+              px: { xs: 1.5, sm: 2.25 },
+              '& .MuiButton-endIcon': {
+                color: '#fff',
+                ml: { xs: 0, sm: 1 },
+              },
               '&.Mui-disabled': { color: 'rgba(255,255,255,0.6)' },
             }}
           >
-            Отправить
+            <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
+              Отправить
+            </Box>
           </Button>
         </Stack>
       </Paper>
       </Box>
 
-      {/* Right info panel */}
+      {/* Right info panel (desktop) */}
       <OrderInfoPanel
         order={order}
         orderStatusOptions={orderStatusOptions}
@@ -1440,6 +1482,36 @@ export default function OrderThreadPage() {
           void handleDialogLinkChange(dialogLink)
         }}
       />
+
+      {/* Info panel as a drawer (mobile / tablet) */}
+      <Drawer
+        anchor="right"
+        open={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        sx={{ display: { xs: 'block', md: 'none' } }}
+        PaperProps={{ sx: { width: { xs: '88%', sm: 360 }, maxWidth: 420 } }}
+      >
+        <OrderInfoPanel
+          inDrawer
+          order={order}
+          orderStatusOptions={orderStatusOptions}
+          managerAssignees={managerAssignees}
+          designerAssignees={designerAssignees}
+          canReassignResponsible={canReassignResponsible}
+          updatingOrderStatus={updatingOrderStatus}
+          updatingResponsible={updatingResponsible}
+          updatingDialogLink={updatingDialogLink}
+          onOrderStatusChange={(statusId) => {
+            void handleOrderStatusChange(statusId)
+          }}
+          onResponsibleChange={(field, userId) => {
+            void handleResponsibleChange(field, userId)
+          }}
+          onDialogLinkChange={(dialogLink) => {
+            void handleDialogLinkChange(dialogLink)
+          }}
+        />
+      </Drawer>
 
       {/* Edit order dialog */}
       <Dialog
