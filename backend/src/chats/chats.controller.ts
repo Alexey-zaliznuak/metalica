@@ -18,6 +18,7 @@ import { CreateChatDto } from './dto/create-chat.dto';
 import { CreateChatMessageDto } from './dto/create-chat-message.dto';
 import { UpdateChatDto } from './dto/update-chat.dto';
 import { UpdateChatMessageTextDto } from './dto/update-chat-message-text.dto';
+import { parseOptionalInt } from '../common/parse-optional-int';
 
 @UseGuards(JwtAuthGuard)
 @Controller('chats')
@@ -80,10 +81,13 @@ export class ChatsController {
   listMessages(
     @Param('chatId', ParseIntPipe) chatId: number,
     @CurrentUser() user: AuthUser,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
-    @Query('before', new ParseIntPipe({ optional: true })) before?: number,
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
   ) {
-    return this.chats.listMessages(chatId, user.id, { limit, before });
+    return this.chats.listMessages(chatId, user.id, {
+      limit: parseOptionalInt(limit),
+      before: parseOptionalInt(before),
+    });
   }
 
   @Post(':chatId/messages')

@@ -15,6 +15,7 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { UpdateMessageTextDto } from './dto/update-message-text.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../auth/current-user.decorator';
+import { parseOptionalInt } from '../common/parse-optional-int';
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders/:orderId/messages')
@@ -24,10 +25,13 @@ export class MessagesController {
   @Get()
   list(
     @Param('orderId', ParseIntPipe) orderId: number,
-    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
-    @Query('before', new ParseIntPipe({ optional: true })) before?: number,
+    @Query('limit') limit?: string,
+    @Query('before') before?: string,
   ) {
-    return this.messages.list(orderId, { limit, before });
+    return this.messages.list(orderId, {
+      limit: parseOptionalInt(limit),
+      before: parseOptionalInt(before),
+    });
   }
 
   @Post()
