@@ -564,23 +564,12 @@ function OrderInfoPanel({
           </SectionTitle>
           <Stack divider={<Divider flexItem />}>
             <InfoRow label="№ в BS" value={bs.bsNumber ?? bs.bsOrderId} />
-            <InfoRow
-              label={
-                order.dialogLink ? (
-                  <Link
-                    href={order.dialogLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ fontWeight: 700 }}
-                  >
-                    Даилог BS
-                  </Link>
-                ) : (
-                  'Даилог BS'
-                )
-              }
-              value={
-                editingDialogLink ? (
+            <Box sx={{ py: 0.4 }}>
+              <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
+                <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                  Диалог BS
+                </Typography>
+                {editingDialogLink ? (
                   <Stack direction="row" spacing={0.25} alignItems="center">
                     <TextField
                       size="small"
@@ -616,34 +605,65 @@ function OrderInfoPanel({
                   </Stack>
                 ) : (
                   <Stack
-                    component="button"
                     direction="row"
-                    spacing={0.5}
+                    spacing={0.25}
                     alignItems="center"
-                    onClick={() => setEditingDialogLink(true)}
-                    sx={{
-                      p: 0,
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      color: 'text.primary',
-                      textDecoration: 'underline dashed',
-                      textUnderlineOffset: 3,
-                      fontWeight: 700,
-                      opacity: order.dialogLink ? 0.88 : 0.72,
-                      '&:hover': {
-                        opacity: 1,
-                      },
-                    }}
+                    justifyContent="flex-end"
+                    sx={{ minWidth: 0, flex: 1 }}
                   >
-                    <Typography variant="body2" component="span" sx={{ fontWeight: 700 }}>
-                      {order.dialogLink || 'Нажмите, чтобы добавить'}
-                    </Typography>
-                    <EditIcon sx={{ fontSize: 14, opacity: 0.7 }} />
+                    {order.dialogLink ? (
+                      <Link
+                        href={order.dialogLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        underline="hover"
+                        title={order.dialogLink}
+                        sx={{
+                          minWidth: 0,
+                          maxWidth: '100%',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          display: 'block',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {order.dialogLink}
+                      </Link>
+                    ) : (
+                      <Typography
+                        variant="body2"
+                        component="span"
+                        color="text.secondary"
+                        sx={{
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Ссылка не добавлена
+                      </Typography>
+                    )}
+                    <Tooltip title="Редактировать ссылку">
+                      <IconButton
+                        size="small"
+                        onClick={() => setEditingDialogLink(true)}
+                        sx={{
+                          ml: 0.25,
+                          p: 0.5,
+                          color: 'text.secondary',
+                          '&:hover': { color: 'text.primary' },
+                        }}
+                      >
+                        <EditIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                    </Tooltip>
                   </Stack>
-                )
-              }
-            />
+                )}
+              </Stack>
+            </Box>
             <Box sx={{ py: 1.2 }}>
               <TextField
                 select
