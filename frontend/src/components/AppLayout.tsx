@@ -147,7 +147,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </Box>
             <Box sx={{ display: { xs: 'none', sm: 'block' }, lineHeight: 1.05 }}>
               <Typography sx={{ fontWeight: 800, fontSize: 17 }}>
-                Металлика
+                Металлити
               </Typography>
               <Typography sx={{ fontSize: 11, opacity: 0.8 }}>
                 заказы и правки
@@ -248,7 +248,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               <PrecisionManufacturingIcon sx={{ fontSize: 22 }} />
             </Box>
             <Box>
-              <Typography sx={{ fontWeight: 800 }}>Металлика</Typography>
+              <Typography sx={{ fontWeight: 800 }}>Металлити</Typography>
               <Typography variant="caption" color="text.secondary">
                 заказы и правки
               </Typography>
