@@ -367,7 +367,7 @@ function InfoRow({
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ flexShrink: 0 }}
+        sx={{ flexShrink: 0, fontSize: '0.84rem' }}
       >
         {label}
       </Typography>
@@ -469,10 +469,6 @@ function OrderInfoPanel({
       </SectionTitle>
       <Stack divider={<Divider flexItem />}>
         <InfoRow label="Номер" value={order.orderNumber} />
-        <InfoRow
-          label="Создан"
-          value={formatDateTime(order.createdAt)}
-        />
         <InfoRow
           label="Менеджер ведения"
           value={order.deliveryManagerName?.trim() ? order.deliveryManagerName : dash}
