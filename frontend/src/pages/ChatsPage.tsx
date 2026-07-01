@@ -136,7 +136,7 @@ export default function ChatsPage() {
             Чаты
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Общение команды в комнатах с фото и realtime-обновлениями
+            Общение внутри сервиса
           </Typography>
         </Box>
         <Button

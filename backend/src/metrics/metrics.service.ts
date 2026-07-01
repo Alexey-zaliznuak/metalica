@@ -84,27 +84,18 @@ export class MetricsService {
     }
 
     const statusWhere = this.buildOrderStatusWhere(orderStatusIds);
-    const deliveryWhere = { deliveryManagerId: { not: null }, ...statusWhere };
-    const onboardingWhere = { onboardingManagerId: { not: null }, ...statusWhere };
     const sketchWhere = { sketchDesignerId: { not: null }, ...statusWhere };
     const revisionWhere = { revisionDesignerId: { not: null }, ...statusWhere };
+    // Менеджеры теперь приходят из BlueSales как имена — группируем по ним.
+    const deliveryWhere = { deliveryManagerName: { not: null }, ...statusWhere };
+    const onboardingWhere = { onboardingManagerName: { not: null }, ...statusWhere };
 
-    const [users, deliveryCounts, onboardingCounts, sketchCounts, revisionCounts] =
+    const [designers, sketchCounts, revisionCounts, deliveryCounts, onboardingCounts] =
       await Promise.all([
         this.prisma.user.findMany({
-          where: { role: { in: [Role.MANAGER, Role.DESIGNER] } },
+          where: { role: Role.DESIGNER },
           select: { id: true, name: true, username: true, role: true },
-          orderBy: [{ role: 'asc' }, { name: 'asc' }],
-        }),
-        this.prisma.order.groupBy({
-          by: ['deliveryManagerId'],
-          where: deliveryWhere,
-          _count: { _all: true },
-        }),
-        this.prisma.order.groupBy({
-          by: ['onboardingManagerId'],
-          where: onboardingWhere,
-          _count: { _all: true },
+          orderBy: [{ name: 'asc' }],
         }),
         this.prisma.order.groupBy({
           by: ['sketchDesignerId'],
@@ -116,25 +107,54 @@ export class MetricsService {
           where: revisionWhere,
           _count: { _all: true },
         }),
+        this.prisma.order.groupBy({
+          by: ['deliveryManagerName'],
+          where: deliveryWhere,
+          _count: { _all: true },
+        }),
+        this.prisma.order.groupBy({
+          by: ['onboardingManagerName'],
+          where: onboardingWhere,
+          _count: { _all: true },
+        }),
       ]);
 
-    const deliveryByUser = this.toCountMap(deliveryCounts, 'deliveryManagerId');
-    const onboardingByUser = this.toCountMap(onboardingCounts, 'onboardingManagerId');
     const sketchByUser = this.toCountMap(sketchCounts, 'sketchDesignerId');
     const revisionByUser = this.toCountMap(revisionCounts, 'revisionDesignerId');
     const openRevisionByUser = await this.fetchOpenRevisionByUser(orderStatusIds);
 
-    const data = users.map((user) => ({
+    // Дизайнеры — локальные пользователи (по FK-назначениям).
+    const designerData: WorkloadEntry[] = designers.map((user) => ({
       userId: user.id,
       name: user.name,
       username: user.username,
       role: user.role,
-      deliveryOrders: deliveryByUser.get(user.id) ?? 0,
-      onboardingOrders: onboardingByUser.get(user.id) ?? 0,
+      deliveryOrders: 0,
+      onboardingOrders: 0,
       sketchOrders: sketchByUser.get(user.id) ?? 0,
       revisionOrders: revisionByUser.get(user.id) ?? 0,
       revisionOrdersWithOpenRequest: openRevisionByUser.get(user.id) ?? 0,
     }));
+
+    // Менеджеры — из имён BlueSales (нет локального userId/username).
+    const deliveryByName = this.toNameCountMap(deliveryCounts, 'deliveryManagerName');
+    const onboardingByName = this.toNameCountMap(onboardingCounts, 'onboardingManagerName');
+    const managerNames = Array.from(
+      new Set([...deliveryByName.keys(), ...onboardingByName.keys()]),
+    ).sort((a, b) => a.localeCompare(b, 'ru'));
+    const managerData: WorkloadEntry[] = managerNames.map((name) => ({
+      userId: 0,
+      name,
+      username: '',
+      role: Role.MANAGER,
+      deliveryOrders: deliveryByName.get(name) ?? 0,
+      onboardingOrders: onboardingByName.get(name) ?? 0,
+      sketchOrders: 0,
+      revisionOrders: 0,
+      revisionOrdersWithOpenRequest: 0,
+    }));
+
+    const data: WorkloadEntry[] = [...managerData, ...designerData];
 
     this.workloadCache.set(cacheKey, {
       data,
@@ -171,6 +191,27 @@ export class MetricsService {
         continue;
       }
       map.set(rawId, row._count._all);
+    }
+    return map;
+  }
+
+  private toNameCountMap<
+    T extends {
+      _count: { _all: number };
+    },
+    K extends keyof T,
+  >(rows: T[], key: K) {
+    const map = new Map<string, number>();
+    for (const row of rows) {
+      const rawName = row[key];
+      if (typeof rawName !== 'string') {
+        continue;
+      }
+      const name = rawName.trim();
+      if (name.length === 0) {
+        continue;
+      }
+      map.set(name, (map.get(name) ?? 0) + row._count._all);
     }
     return map;
   }

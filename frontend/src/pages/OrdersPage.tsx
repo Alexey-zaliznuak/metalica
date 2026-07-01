@@ -8,6 +8,7 @@ import {
 } from 'react'
 import {
   Alert,
+  Autocomplete,
   Badge,
   Box,
   Button,
@@ -125,6 +126,8 @@ export default function OrdersPage() {
   const [bootError, setBootError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
+  const [selectedDeliveryManagers, setSelectedDeliveryManagers] = useState<string[]>([])
+  const [selectedOnboardingManagers, setSelectedOnboardingManagers] = useState<string[]>([])
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
   const [showNoOrderStatusColumn, setShowNoOrderStatusColumn] = useState(true)
@@ -260,19 +263,58 @@ export default function OrdersPage() {
     return allColumns
   }, [orderStatuses, columnOrder, selectedOrderStatusIds])
 
+  const deliveryManagerOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const order of orders) {
+      const name = order.deliveryManagerName?.trim()
+      if (name) set.add(name)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
+  }, [orders])
+
+  const onboardingManagerOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const order of orders) {
+      const name = order.onboardingManagerName?.trim()
+      if (name) set.add(name)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
+  }, [orders])
+
+  const filteredOrders = useMemo(() => {
+    if (selectedDeliveryManagers.length === 0 && selectedOnboardingManagers.length === 0) {
+      return orders
+    }
+    const deliverySet = new Set(selectedDeliveryManagers)
+    const onboardingSet = new Set(selectedOnboardingManagers)
+    return orders.filter((order) => {
+      const deliveryOk =
+        deliverySet.size === 0 ||
+        (order.deliveryManagerName != null && deliverySet.has(order.deliveryManagerName))
+      const onboardingOk =
+        onboardingSet.size === 0 ||
+        (order.onboardingManagerName != null &&
+          onboardingSet.has(order.onboardingManagerName))
+      return deliveryOk && onboardingOk
+    })
+  }, [orders, selectedDeliveryManagers, selectedOnboardingManagers])
+
   const ordersByColumn = useMemo(() => {
     const map = new Map<number, Order[]>()
     boardColumns.forEach((column) => map.set(column.id, []))
-    for (const order of orders) {
+    for (const order of filteredOrders) {
       const columnId = order.orderStatusId ?? NO_ORDER_STATUS_COLUMN_ID
       if (map.has(columnId)) {
         map.get(columnId)!.push(order)
       }
     }
     return map
-  }, [orders, boardColumns])
+  }, [filteredOrders, boardColumns])
 
-  const isEmpty = useMemo(() => !loading && orders.length === 0, [loading, orders.length])
+  const isEmpty = useMemo(
+    () => !loading && filteredOrders.length === 0,
+    [loading, filteredOrders.length],
+  )
 
   const orderStatusNameById = useMemo(() => {
     const map = new Map<number, string>()
@@ -404,6 +446,34 @@ export default function OrdersPage() {
               </InputAdornment>
             ),
           }}
+        />
+        <Autocomplete
+          multiple
+          disableCloseOnSelect
+          size="small"
+          options={deliveryManagerOptions}
+          value={selectedDeliveryManagers}
+          onChange={(_, values) => setSelectedDeliveryManagers(values)}
+          sx={{ minWidth: { xs: '100%', sm: 260 } }}
+          limitTags={1}
+          noOptionsText="Нет менеджеров"
+          renderInput={(params) => (
+            <TextField {...params} placeholder="Менеджер ведения" />
+          )}
+        />
+        <Autocomplete
+          multiple
+          disableCloseOnSelect
+          size="small"
+          options={onboardingManagerOptions}
+          value={selectedOnboardingManagers}
+          onChange={(_, values) => setSelectedOnboardingManagers(values)}
+          sx={{ minWidth: { xs: '100%', sm: 260 } }}
+          limitTags={1}
+          noOptionsText="Нет менеджеров"
+          renderInput={(params) => (
+            <TextField {...params} placeholder="Менеджер оформления" />
+          )}
         />
       </Stack>
 
@@ -588,7 +658,7 @@ export default function OrdersPage() {
 
       {!loading && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-          Показано заказов: {orders.length}
+          Показано заказов: {filteredOrders.length}
           {isEmpty ? ' (ничего не найдено по текущим фильтрам)' : ''}
         </Typography>
       )}

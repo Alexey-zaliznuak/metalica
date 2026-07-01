@@ -401,7 +401,6 @@ function SectionTitle({
 function OrderInfoPanel({
   order,
   orderStatusOptions,
-  managerAssignees,
   designerAssignees,
   canReassignResponsible,
   updatingOrderStatus,
@@ -414,7 +413,6 @@ function OrderInfoPanel({
 }: {
   order: Order
   orderStatusOptions: BluesalesStatusOption[]
-  managerAssignees: OrderAssignee[]
   designerAssignees: OrderAssignee[]
   canReassignResponsible: boolean
   updatingOrderStatus: boolean
@@ -422,11 +420,7 @@ function OrderInfoPanel({
   updatingDialogLink: boolean
   onOrderStatusChange: (statusId: number) => void
   onResponsibleChange: (
-    field:
-      | 'deliveryManagerId'
-      | 'onboardingManagerId'
-      | 'sketchDesignerId'
-      | 'revisionDesignerId',
+    field: 'sketchDesignerId' | 'revisionDesignerId',
     userId: number | '',
   ) => void
   onDialogLinkChange: (dialogLink: string) => void
@@ -479,78 +473,14 @@ function OrderInfoPanel({
           label="Создан"
           value={formatDateTime(order.createdAt)}
         />
-        <Box sx={{ py: 0.6 }}>
-          <TextField
-            select
-            label="Менеджер ведения"
-            size="small"
-            value={order.deliveryManager?.id != null ? String(order.deliveryManager.id) : ''}
-            onChange={(e) =>
-              onResponsibleChange(
-                'deliveryManagerId',
-                e.target.value ? Number(e.target.value) : '',
-              )
-            }
-            fullWidth
-            disabled={!canReassignResponsible || updatingResponsible}
-            helperText={
-              managerAssignees.length === 0
-                ? 'Нет пользователей с ролью менеджера'
-                : !canReassignResponsible
-                  ? 'Только просмотр: нужен скоуп на изменение ответственных'
-                  : undefined
-            }
-          >
-            <MenuItem value="">Не назначен</MenuItem>
-            {order.deliveryManager &&
-              !managerAssignees.some((assignee) => assignee.id === order.deliveryManager!.id) && (
-                <MenuItem value={String(order.deliveryManager.id)}>
-                  {order.deliveryManager.name}
-                </MenuItem>
-              )}
-            {managerAssignees.map((assignee) => (
-              <MenuItem key={assignee.id} value={String(assignee.id)}>
-                {assignee.name}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
-        <Box sx={{ py: 0.6 }}>
-          <TextField
-            select
-            label="Менеджер оформления"
-            size="small"
-            value={order.onboardingManager?.id != null ? String(order.onboardingManager.id) : ''}
-            onChange={(e) =>
-              onResponsibleChange(
-                'onboardingManagerId',
-                e.target.value ? Number(e.target.value) : '',
-              )
-            }
-            fullWidth
-            disabled={!canReassignResponsible || updatingResponsible}
-            helperText={
-              managerAssignees.length === 0
-                ? 'Нет пользователей с ролью менеджера'
-                : !canReassignResponsible
-                  ? 'Только просмотр: нужен скоуп на изменение ответственных'
-                  : undefined
-            }
-          >
-            <MenuItem value="">Не назначен</MenuItem>
-            {order.onboardingManager &&
-              !managerAssignees.some((assignee) => assignee.id === order.onboardingManager!.id) && (
-                <MenuItem value={String(order.onboardingManager.id)}>
-                  {order.onboardingManager.name}
-                </MenuItem>
-              )}
-            {managerAssignees.map((assignee) => (
-              <MenuItem key={assignee.id} value={String(assignee.id)}>
-                {assignee.name}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
+        <InfoRow
+          label="Менеджер ведения"
+          value={order.deliveryManagerName?.trim() ? order.deliveryManagerName : dash}
+        />
+        <InfoRow
+          label="Менеджер оформления"
+          value={order.onboardingManagerName?.trim() ? order.onboardingManagerName : dash}
+        />
         <Box sx={{ py: 0.6 }}>
           <TextField
             select
@@ -817,7 +747,6 @@ export default function OrderThreadPage() {
 
   const [order, setOrder] = useState<Order | null>(null)
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
-  const [managerAssignees, setManagerAssignees] = useState<OrderAssignee[]>([])
   const [designerAssignees, setDesignerAssignees] = useState<OrderAssignee[]>([])
   const [metrics, setMetrics] = useState<OrderMetrics | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -840,8 +769,6 @@ export default function OrderThreadPage() {
   const [editNumber, setEditNumber] = useState('')
   const [editTitle, setEditTitle] = useState('')
   const [editDialogLink, setEditDialogLink] = useState('')
-  const [editDeliveryManagerId, setEditDeliveryManagerId] = useState<number | ''>('')
-  const [editOnboardingManagerId, setEditOnboardingManagerId] = useState<number | ''>('')
   const [editSketchDesignerId, setEditSketchDesignerId] = useState<number | ''>('')
   const [editRevisionDesignerId, setEditRevisionDesignerId] = useState<number | ''>('')
   const [savingEdit, setSavingEdit] = useState(false)
@@ -879,7 +806,6 @@ export default function OrderThreadPage() {
       setHasMore(messagesRes.data.hasMore)
       pendingScrollBottomRef.current = true
       setOrderStatuses(statusesRes.data)
-      setManagerAssignees(assigneesRes.data.managers)
       setDesignerAssignees(assigneesRes.data.designers)
     } catch {
       setError('Не удалось загрузить заказ')
@@ -994,11 +920,7 @@ export default function OrderThreadPage() {
   }
 
   const handleResponsibleChange = async (
-    field:
-      | 'deliveryManagerId'
-      | 'onboardingManagerId'
-      | 'sketchDesignerId'
-      | 'revisionDesignerId',
+    field: 'sketchDesignerId' | 'revisionDesignerId',
     userId: number | '',
   ) => {
     if (!order || !canReassignResponsible) return
@@ -1036,8 +958,6 @@ export default function OrderThreadPage() {
     setEditNumber(order.orderNumber)
     setEditTitle(order.title || '')
     setEditDialogLink(order.dialogLink ?? '')
-    setEditDeliveryManagerId(order.deliveryManager?.id ?? '')
-    setEditOnboardingManagerId(order.onboardingManager?.id ?? '')
     setEditSketchDesignerId(order.sketchDesigner?.id ?? '')
     setEditRevisionDesignerId(order.revisionDesigner?.id ?? '')
     setEditError(null)
@@ -1055,9 +975,6 @@ export default function OrderThreadPage() {
         dialogLink: editDialogLink.trim() ? editDialogLink.trim() : null,
         ...(canReassignResponsible
           ? {
-              deliveryManagerId: editDeliveryManagerId === '' ? null : editDeliveryManagerId,
-              onboardingManagerId:
-                editOnboardingManagerId === '' ? null : editOnboardingManagerId,
               sketchDesignerId: editSketchDesignerId === '' ? null : editSketchDesignerId,
               revisionDesignerId:
                 editRevisionDesignerId === '' ? null : editRevisionDesignerId,
@@ -1540,7 +1457,6 @@ export default function OrderThreadPage() {
       <OrderInfoPanel
         order={order}
         orderStatusOptions={orderStatusOptions}
-        managerAssignees={managerAssignees}
         designerAssignees={designerAssignees}
         canReassignResponsible={canReassignResponsible}
         updatingOrderStatus={updatingOrderStatus}
@@ -1569,7 +1485,6 @@ export default function OrderThreadPage() {
           inDrawer
           order={order}
           orderStatusOptions={orderStatusOptions}
-          managerAssignees={managerAssignees}
           designerAssignees={designerAssignees}
           canReassignResponsible={canReassignResponsible}
           updatingOrderStatus={updatingOrderStatus}
@@ -1618,52 +1533,6 @@ export default function OrderThreadPage() {
               onChange={(e) => setEditDialogLink(e.target.value)}
               fullWidth
             />
-            <TextField
-              select
-              label="Менеджер ведения"
-              value={editDeliveryManagerId === '' ? '' : String(editDeliveryManagerId)}
-              onChange={(e) =>
-                setEditDeliveryManagerId(e.target.value ? Number(e.target.value) : '')
-              }
-              fullWidth
-              disabled={!canReassignResponsible}
-            >
-              <MenuItem value="">Не назначен</MenuItem>
-              {editDeliveryManagerId !== '' &&
-                !managerAssignees.some((assignee) => assignee.id === editDeliveryManagerId) && (
-                  <MenuItem value={String(editDeliveryManagerId)}>
-                    {order.deliveryManager?.name ?? `Пользователь #${editDeliveryManagerId}`}
-                  </MenuItem>
-                )}
-              {managerAssignees.map((assignee) => (
-                <MenuItem key={assignee.id} value={String(assignee.id)}>
-                  {assignee.name}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              select
-              label="Менеджер оформления"
-              value={editOnboardingManagerId === '' ? '' : String(editOnboardingManagerId)}
-              onChange={(e) =>
-                setEditOnboardingManagerId(e.target.value ? Number(e.target.value) : '')
-              }
-              fullWidth
-              disabled={!canReassignResponsible}
-            >
-              <MenuItem value="">Не назначен</MenuItem>
-              {editOnboardingManagerId !== '' &&
-                !managerAssignees.some((assignee) => assignee.id === editOnboardingManagerId) && (
-                  <MenuItem value={String(editOnboardingManagerId)}>
-                    {order.onboardingManager?.name ?? `Пользователь #${editOnboardingManagerId}`}
-                  </MenuItem>
-                )}
-              {managerAssignees.map((assignee) => (
-                <MenuItem key={assignee.id} value={String(assignee.id)}>
-                  {assignee.name}
-                </MenuItem>
-              ))}
-            </TextField>
             <TextField
               select
               label="Художник эскиза"

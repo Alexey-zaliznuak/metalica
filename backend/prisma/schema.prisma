@@ -50,8 +50,6 @@ model User {
   chatMemberships             ChatMember[]
   chatMessages                ChatMessage[]
   createdChats                Chat[]    @relation("ChatCreatedBy")
-  ordersAsDeliveryManager     Order[]   @relation("OrderDeliveryManager")
-  ordersAsOnboardingManager   Order[]   @relation("OrderOnboardingManager")
   ordersAsSketchDesigner      Order[]   @relation("OrderSketchDesigner")
   ordersAsRevisionDesigner    Order[]   @relation("OrderRevisionDesigner")
   createdAt                   DateTime  @default(now())
@@ -66,10 +64,11 @@ model Order {
   title               String?
   source              OrderSource         @default(MANUAL)
   messages            Message[]
-  deliveryManager     User?               @relation("OrderDeliveryManager", fields: [deliveryManagerId], references: [id])
-  deliveryManagerId   Int?
-  onboardingManager   User?               @relation("OrderOnboardingManager", fields: [onboardingManagerId], references: [id])
-  onboardingManagerId Int?
+  // Имена менеджеров подтягиваются из BlueSales (не FK):
+  //  - deliveryManagerName  — менеджер ведения (customer.manager из BS)
+  //  - onboardingManagerName — менеджер оформления (custom-поле «Оформление» из BS)
+  deliveryManagerName   String?
+  onboardingManagerName String?
   sketchDesigner      User?               @relation("OrderSketchDesigner", fields: [sketchDesignerId], references: [id])
   sketchDesignerId    Int?
   revisionDesigner    User?               @relation("OrderRevisionDesigner", fields: [revisionDesignerId], references: [id])
@@ -85,8 +84,8 @@ model Order {
 
   @@index([source])
   @@index([leadId])
-  @@index([deliveryManagerId])
-  @@index([onboardingManagerId])
+  @@index([deliveryManagerName])
+  @@index([onboardingManagerName])
   @@index([sketchDesignerId])
   @@index([revisionDesignerId])
 }

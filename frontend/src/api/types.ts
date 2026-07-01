@@ -39,8 +39,6 @@ export interface UpdateOrderPayload {
   orderNumber?: string
   title?: string
   dialogLink?: string | null
-  deliveryManagerId?: number | null
-  onboardingManagerId?: number | null
   sketchDesignerId?: number | null
   revisionDesignerId?: number | null
 }
@@ -96,8 +94,8 @@ export interface Order {
   openRevisions: number
   lastMessageAt: string | null
   createdAt: string
-  deliveryManager?: OrderAssignee | null
-  onboardingManager?: OrderAssignee | null
+  deliveryManagerName?: string | null
+  onboardingManagerName?: string | null
   sketchDesigner?: OrderAssignee | null
   revisionDesigner?: OrderAssignee | null
   lead?: OrderLead | null

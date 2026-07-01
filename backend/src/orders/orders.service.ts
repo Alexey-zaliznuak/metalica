@@ -82,8 +82,6 @@ export class OrdersService {
             }
           : {}),
         include: {
-          deliveryManager: { select: this.userSelect },
-          onboardingManager: { select: this.userSelect },
           sketchDesigner: { select: this.userSelect },
           revisionDesigner: { select: this.userSelect },
           bluesalesInfo: {
@@ -113,8 +111,6 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
-        deliveryManager: { select: this.userSelect },
-        onboardingManager: { select: this.userSelect },
         sketchDesigner: { select: this.userSelect },
         revisionDesigner: { select: this.userSelect },
         lead: {
@@ -152,8 +148,8 @@ export class OrdersService {
       ...base,
       source: order.source,
       dialogLink: order.dialogLink,
-      deliveryManager: order.deliveryManager,
-      onboardingManager: order.onboardingManager,
+      deliveryManagerName: order.deliveryManagerName,
+      onboardingManagerName: order.onboardingManagerName,
       sketchDesigner: order.sketchDesigner,
       revisionDesigner: order.revisionDesigner,
       lead: order.lead,
@@ -195,26 +191,6 @@ export class OrdersService {
     if (dto.dialogLink !== undefined) {
       const dialogLink = (dto.dialogLink ?? '').trim();
       data.dialogLink = dialogLink.length > 0 ? dialogLink : null;
-    }
-
-    if (dto.deliveryManagerId !== undefined) {
-      const userId = await this.validateAssigneeRole(
-        dto.deliveryManagerId,
-        Role.MANAGER,
-        'Менеджер ведения',
-      );
-      data.deliveryManager =
-        userId === null ? { disconnect: true } : { connect: { id: userId } };
-    }
-
-    if (dto.onboardingManagerId !== undefined) {
-      const userId = await this.validateAssigneeRole(
-        dto.onboardingManagerId,
-        Role.MANAGER,
-        'Менеджер оформления',
-      );
-      data.onboardingManager =
-        userId === null ? { disconnect: true } : { connect: { id: userId } };
     }
 
     if (dto.sketchDesignerId !== undefined) {
@@ -408,18 +384,8 @@ export class OrdersService {
     source: OrderSource;
     createdAt: Date;
     dialogLink?: string | null;
-    deliveryManager?: {
-      id: number;
-      name: string;
-      username: string;
-      role: Role;
-    } | null;
-    onboardingManager?: {
-      id: number;
-      name: string;
-      username: string;
-      role: Role;
-    } | null;
+    deliveryManagerName?: string | null;
+    onboardingManagerName?: string | null;
     sketchDesigner?: {
       id: number;
       name: string;
@@ -451,8 +417,8 @@ export class OrdersService {
       title: order.title,
       source: order.source,
       dialogLink: order.dialogLink ?? null,
-      deliveryManager: order.deliveryManager ?? null,
-      onboardingManager: order.onboardingManager ?? null,
+      deliveryManagerName: order.deliveryManagerName ?? null,
+      onboardingManagerName: order.onboardingManagerName ?? null,
       sketchDesigner: order.sketchDesigner ?? null,
       revisionDesigner: order.revisionDesigner ?? null,
       orderStatusId: order.bluesalesInfo?.orderStatusId ?? null,
@@ -476,8 +442,6 @@ export class OrdersService {
 
   private touchesResponsibleFields(dto: UpdateOrderDto) {
     return (
-      dto.deliveryManagerId !== undefined ||
-      dto.onboardingManagerId !== undefined ||
       dto.sketchDesignerId !== undefined ||
       dto.revisionDesignerId !== undefined
     );

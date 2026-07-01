@@ -343,12 +343,14 @@ export default function WorkloadPage() {
                 </TableRow>
               )}
               {sortedVisibleItems.map((item) => (
-                <TableRow key={item.userId} hover>
+                <TableRow key={`${item.role}-${item.username || item.name}`} hover>
                   <TableCell>
                     <Typography sx={{ fontWeight: 700 }}>{item.name}</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      @{item.username}
-                    </Typography>
+                    {item.username && (
+                      <Typography variant="caption" color="text.secondary">
+                        @{item.username}
+                      </Typography>
+                    )}
                   </TableCell>
                   <TableCell>{item.role === 'MANAGER' ? item.deliveryOrders : item.sketchOrders}</TableCell>
                   <TableCell>

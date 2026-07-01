@@ -27,16 +27,6 @@ export class UpdateOrderDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  deliveryManagerId?: number | null;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  onboardingManagerId?: number | null;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
   sketchDesignerId?: number | null;
 
   @IsOptional()

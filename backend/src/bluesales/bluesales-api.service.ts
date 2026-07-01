@@ -35,12 +35,28 @@ export interface BsVkInfo {
   messagesGroupId?: string;
 }
 
+export interface BsManager {
+  id?: number;
+  fullName?: string;
+  email?: string;
+  login?: string;
+}
+
+export interface BsCustomField {
+  fieldId?: number;
+  fieldName?: string;
+  value?: unknown;
+  valueAsText?: string;
+}
+
 export interface BsCustomer {
   id?: number;
   fullName?: string;
   vk?: BsVkInfo | null;
   crmStatus?: BsCrmStatus | null;
   salesChannel?: { id?: number; code?: number; name?: string } | null;
+  // Менеджер клиента в BlueSales — источник «менеджера ведения».
+  manager?: BsManager | null;
   [key: string]: unknown;
 }
 
@@ -53,6 +69,9 @@ export interface BsOrder {
   orderStatus?: BsOrderStatus | null;
   totalSumMinusDiscount?: number | null;
   customer?: BsCustomer | null;
+  manager?: BsManager | null;
+  // Кастомные поля заказа BlueSales; среди них «Оформление» — менеджер оформления.
+  customFields?: BsCustomField[] | null;
   [key: string]: unknown;
 }
 

@@ -252,6 +252,11 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const bsCreatedAt = this.parseDate(bsOrder.date);
     const crm = bsOrder.customer?.crmStatus ?? null;
 
+    // Менеджер ведения — менеджер клиента в BlueSales.
+    const deliveryManagerName = this.resolveDeliveryManagerName(bsOrder);
+    // Менеджер оформления — кастомное поле заказа «Оформление».
+    const onboardingManagerName = this.resolveOnboardingManagerName(bsOrder);
+
     const infoData = {
       bsNumber: orderNumber,
       orderStatusId: bsOrder.orderStatus?.id ?? null,
@@ -263,6 +268,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       rawPayload: bsOrder as unknown as Prisma.InputJsonValue,
       lastSyncedAt: new Date(),
     };
+
+    const managerData = { deliveryManagerName, onboardingManagerName };
 
     const existing = await this.prisma.bluesalesOrderInfo.findUnique({
       where: { bsOrderId: bsOrder.id },
@@ -276,7 +283,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         }),
         this.prisma.order.update({
           where: { id: existing.orderId },
-          data: leadId ? { leadId } : {},
+          data: { ...managerData, ...(leadId ? { leadId } : {}) },
         }),
       ]);
       return;
@@ -287,9 +294,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.bluesalesOrderInfo.create({
         data: { ...infoData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
       });
-      if (leadId && sameNumber.leadId !== leadId) {
-        await this.prisma.order.update({ where: { id: sameNumber.id }, data: { leadId } });
-      }
+      await this.prisma.order.update({
+        where: { id: sameNumber.id },
+        data: {
+          ...managerData,
+          ...(leadId && sameNumber.leadId !== leadId ? { leadId } : {}),
+        },
+      });
       return;
     }
 
@@ -299,12 +310,29 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         title,
         source: OrderSource.BLUESALES,
         leadId: leadId ?? undefined,
+        ...managerData,
         bluesalesInfo: { create: { ...infoData, bsOrderId: bsOrder.id } },
       },
     });
   }
 
   // ─── Вспомогательные методы ───────────────────────────────────────────────
+
+  /** Менеджер ведения = менеджер клиента в BlueSales (customer.manager). */
+  private resolveDeliveryManagerName(bsOrder: BsOrder): string | null {
+    const name = bsOrder.customer?.manager?.fullName ?? bsOrder.manager?.fullName;
+    const trimmed = (name ?? '').trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  /** Менеджер оформления = кастомное поле заказа «Оформление». */
+  private resolveOnboardingManagerName(bsOrder: BsOrder): string | null {
+    const field = (bsOrder.customFields ?? []).find(
+      (f) => (f.fieldName ?? '').trim().toLowerCase() === 'оформление',
+    );
+    const trimmed = (field?.valueAsText ?? '').trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
 
   private resolveOrderNumber(bsOrder: BsOrder): string {
     const candidate =
