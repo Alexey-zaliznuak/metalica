@@ -110,8 +110,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   // ─── Быстрый инкрементальный синк (каждые 5 минут) ────────────────────────
 
   /**
-   * По cron тянет заказы за последние ~N минут (перекрытие) и досоздаёт новые.
-   * Перекрытие исключает пропуск заказов на границе интервалов.
+   * По cron тянет заказы за последние ~N минут (перекрытие) и досоздаёт новые,
+   * а также инкрементально подтягивает новых/активных лидов по дате последнего
+   * контакта (в т.ч. тех, у кого ещё нет заказа).
+   * Перекрытие исключает пропуск записей на границе интервалов.
    */
   @Cron(FAST_SYNC_CRON)
   async handleFastSync(): Promise<void> {
@@ -152,8 +154,26 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    this.logger.log(`Быстрый синк BS: заказов ${synced}/${bsOrders.length}, лидов ${leadIds.size}`);
-    return { orders: synced, leads: leadIds.size };
+    // Инкрементальный синк новых/активных лидов по дате последнего контакта.
+    // Ловит тех, кто написал, но заказ ещё не оформил (синк заказов их не видит).
+    // BS фильтрует даты с точностью до дня, поэтому окно перекрытия фактически
+    // охватывает текущий (и при переходе через полночь — вчерашний) день.
+    const newLeads = await this.syncRecentLeads(dateFrom, now);
+
+    this.logger.log(
+      `Быстрый синк BS: заказов ${synced}/${bsOrders.length}, ` +
+        `лидов из заказов ${leadIds.size}, новых/активных лидов ${newLeads}`,
+    );
+    return { orders: synced, leads: leadIds.size + newLeads };
+  }
+
+  /** Инкрементальный синк лидов по дате последнего контакта за окно [from, to]. */
+  private async syncRecentLeads(from: Date, to: Date): Promise<number> {
+    const customers = await this.api.getCustomers({
+      lastContactFrom: from,
+      lastContactTo: to,
+    });
+    return this.upsertLeads(customers);
   }
 
   // ─── Фоновый refresh-loop ──────────────────────────────────────────────────
