@@ -12,7 +12,7 @@ const SYNC_KEY_REFRESH = 'bluesales:refresh-loop';
 const FAST_SYNC_OVERLAP_MINUTES = 70;
 
 const REFRESH_BATCH_SIZE = 50;
-const REFRESH_PAUSE_MS = 4000;
+const REFRESH_PAUSE_MS = 3000;
 /** Заказы не старше 2 месяцев попадают в фоновый обход. */
 const REFRESH_LOOKBACK_DAYS = 60;
 
