@@ -237,11 +237,35 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const vkUserId = customer.vk?.id ? String(customer.vk.id) : null;
     const vkDialogUrl = this.buildVkDialogUrl(customer);
     const crmStatus = customer.crmStatus?.name ?? null;
+    const firstContactAt = this.extractCustomerFirstContactAt(customer);
+    const source = this.extractCustomerSource(customer);
+    const marks = this.extractCustomerMarks(customer);
 
     const lead = await this.prisma.lead.upsert({
       where: { bsCustomerId: customer.id },
-      create: { bsCustomerId: customer.id, name, fullName, vkUserId, vkDialogUrl, crmStatus, lastSyncedAt: new Date() },
-      update: { name, fullName, vkUserId, vkDialogUrl, crmStatus, lastSyncedAt: new Date() },
+      create: {
+        bsCustomerId: customer.id,
+        name,
+        fullName,
+        vkUserId,
+        vkDialogUrl,
+        firstContactAt,
+        source,
+        marks,
+        crmStatus,
+        lastSyncedAt: new Date(),
+      },
+      update: {
+        name,
+        fullName,
+        vkUserId,
+        vkDialogUrl,
+        firstContactAt,
+        source,
+        marks,
+        crmStatus,
+        lastSyncedAt: new Date(),
+      },
     });
     return lead.id;
   }
@@ -258,12 +282,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const onboardingManagerName = this.resolveOnboardingManagerName(bsOrder);
 
     const infoData = {
+      bsCustomerId: bsOrder.customer?.id ?? null,
       bsNumber: orderNumber,
       orderStatusId: bsOrder.orderStatus?.id ?? null,
       orderStatus: bsOrder.orderStatus?.name ?? null,
       crmStatusId: crm?.id ?? null,
       crmStatus: crm?.name ?? null,
       totalSum: bsOrder.totalSumMinusDiscount ?? null,
+      prepaymentSum: this.extractPrepaymentSum(bsOrder),
       bsCreatedAt,
       rawPayload: bsOrder as unknown as Prisma.InputJsonValue,
       lastSyncedAt: new Date(),
@@ -345,6 +371,82 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   ): number | string | null {
     for (const v of values) {
       if (v !== null && v !== undefined && String(v).trim() !== '') return v;
+    }
+    return null;
+  }
+
+  private extractCustomerFirstContactAt(customer: BsCustomer): Date | null {
+    const value = this.pickString(
+      customer['firstContactDate'],
+      customer['dateFirstContact'],
+      customer['firstContactAt'],
+      customer['createdAt'],
+      customer['creationDate'],
+    );
+    return this.parseDate(value);
+  }
+
+  private extractCustomerSource(customer: BsCustomer): string | null {
+    const salesChannel = customer.salesChannel?.name;
+    const direct = this.pickString(
+      customer['source'],
+      customer['sourceName'],
+      customer['leadSource'],
+      customer['channel'],
+    );
+    return this.pickString(salesChannel, direct);
+  }
+
+  private extractCustomerMarks(customer: BsCustomer): string | null {
+    const direct = customer['marks'] ?? customer['mark'] ?? customer['notes'] ?? customer['note'];
+    if (typeof direct === 'string') {
+      const trimmed = direct.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+    if (Array.isArray(direct)) {
+      const rendered = direct
+        .map((item) => (typeof item === 'string' ? item.trim() : String(item ?? '').trim()))
+        .filter((item) => item.length > 0)
+        .join(', ');
+      return rendered.length > 0 ? rendered : null;
+    }
+    return null;
+  }
+
+  private extractPrepaymentSum(bsOrder: BsOrder): number | null {
+    const candidate = this.pickNumber(
+      bsOrder['prepaymentSum'],
+      bsOrder['prepaidSum'],
+      bsOrder['advanceSum'],
+      bsOrder['downPaymentSum'],
+      bsOrder['totalPrepayment'],
+    );
+    if (candidate !== null) return candidate;
+
+    const fromCustomFields = (bsOrder.customFields ?? []).find((field) =>
+      (field.fieldName ?? '').toLowerCase().includes('предоплат'),
+    );
+    return this.pickNumber(fromCustomFields?.value, fromCustomFields?.valueAsText);
+  }
+
+  private pickString(...values: unknown[]): string | null {
+    for (const value of values) {
+      if (typeof value !== 'string') continue;
+      const trimmed = value.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+    return null;
+  }
+
+  private pickNumber(...values: unknown[]): number | null {
+    for (const value of values) {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string') {
+        const normalized = value.trim().replace(',', '.');
+        if (!normalized) continue;
+        const parsed = Number(normalized);
+        if (Number.isFinite(parsed)) return parsed;
+      }
     }
     return null;
   }

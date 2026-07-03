@@ -97,6 +97,8 @@ model BluesalesOrderInfo {
   orderId       Int       @unique
   // id заказа в BlueSales — ключ идемпотентности импорта
   bsOrderId     Int       @unique
+  // id клиента (customer.id) в BlueSales на момент синка заказа
+  bsCustomerId  Int?
   bsNumber      String?
   // Статус заказа в BS (order.orderStatus)
   orderStatusId Int?
@@ -105,6 +107,7 @@ model BluesalesOrderInfo {
   crmStatusId   Int?
   crmStatus     String?
   totalSum      Float?
+  prepaymentSum Float?
   // Когда заказ создан в BlueSales (order.date)
   bsCreatedAt   DateTime?
   // Полный ответ BS на случай будущих полей / отладки
@@ -115,6 +118,7 @@ model BluesalesOrderInfo {
 
   @@index([orderStatusId])
   @@index([crmStatusId])
+  @@index([bsCustomerId])
   @@index([bsCreatedAt])
 }
 
@@ -128,6 +132,12 @@ model Lead {
   // Ссылка на диалог в ВК-группе (переписка сообщество <-> лид)
   vkDialogUrl  String?
   vkUserId     String?
+  // Дата первого контакта клиента в BlueSales
+  firstContactAt DateTime?
+  // Источник клиента в BlueSales (напр. канал продаж)
+  source       String?
+  // Отметки/пометки клиента в BlueSales
+  marks        String?
   crmStatus    String?
   orders       Order[]
   lastSyncedAt DateTime @default(now())
