@@ -59,6 +59,8 @@ export interface BsCustomer {
   fullName?: string;
   vk?: BsVkInfo | null;
   crmStatus?: BsCrmStatus | null;
+  // «Источник» клиента в BlueSales (напр. "avito").
+  source?: { id?: number; name?: string } | null;
   salesChannel?: { id?: number; code?: number; name?: string } | null;
   // Менеджер клиента в BlueSales — источник «менеджера ведения».
   manager?: BsManager | null;
@@ -308,6 +310,87 @@ export class BluesalesApiService {
       startRowNumber: 0,
     });
     return result.orders ?? [];
+  }
+
+  /**
+   * Постранично получить клиентов (лидов) BlueSales.
+   *
+   * Фильтрация по датам — только на уровне дня (BS оперирует датами без времени):
+   *  - firstContactFrom/firstContactTo — по дате первого контакта (когда лид создан);
+   *  - lastContactFrom/lastContactTo   — по дате последнего контакта (активность).
+   * Правая граница трактуется BS как «до начала дня», поэтому +1 день включительно.
+   */
+  async getCustomers(params: {
+    firstContactFrom?: Date | null;
+    firstContactTo?: Date | null;
+    lastContactFrom?: Date | null;
+    lastContactTo?: Date | null;
+    ids?: number[] | null;
+  } = {}): Promise<BsCustomer[]> {
+    const dayAfter = (date: Date) => this.formatDate(new Date(date.getTime() + 24 * 60 * 60 * 1000));
+
+    const baseData = {
+      firstContactDateFrom: params.firstContactFrom ? this.formatDate(params.firstContactFrom) : null,
+      firstContactDateTill: params.firstContactTo ? dayAfter(params.firstContactTo) : null,
+      nextContactDateFrom: null,
+      nextContactDateTill: null,
+      lastContactDateFrom: params.lastContactFrom ? this.formatDate(params.lastContactFrom) : null,
+      lastContactDateTill: params.lastContactTo ? dayAfter(params.lastContactTo) : null,
+      ids: params.ids ?? null,
+      vkIds: null,
+      tags: [] as unknown[],
+      managers: [] as unknown[],
+      sources: null,
+      phone: null,
+    };
+
+    const first = await this.send<GetCustomersResponse>('customers.get', {
+      ...baseData,
+      pageSize: 1,
+      startRowNumber: 0,
+    });
+    const total = (first.notReturnedCount ?? 0) + (first.count ?? 0);
+    if (total === 0) {
+      return [];
+    }
+
+    const items: BsCustomer[] = [];
+    let offset = 0;
+    while (items.length < total) {
+      const page = await this.send<GetCustomersResponse>('customers.get', {
+        ...baseData,
+        pageSize: MAX_PAGE_SIZE,
+        startRowNumber: offset,
+      });
+      items.push(...(page.customers ?? []));
+      offset += MAX_PAGE_SIZE;
+      if (!page.customers || page.customers.length === 0) {
+        break;
+      }
+    }
+    return items;
+  }
+
+  /** Получить конкретных клиентов по списку BS-идентификаторов (до 500 штук). */
+  async getCustomersByIds(ids: number[]): Promise<BsCustomer[]> {
+    if (ids.length === 0) return [];
+    const result = await this.send<GetCustomersResponse>('customers.get', {
+      firstContactDateFrom: null,
+      firstContactDateTill: null,
+      nextContactDateFrom: null,
+      nextContactDateTill: null,
+      lastContactDateFrom: null,
+      lastContactDateTill: null,
+      ids,
+      vkIds: null,
+      tags: [],
+      managers: [],
+      sources: null,
+      phone: null,
+      pageSize: ids.length,
+      startRowNumber: 0,
+    });
+    return result.customers ?? [];
   }
 
   /** Постранично получить все заказы за период [dateFrom, dateTo]. */
