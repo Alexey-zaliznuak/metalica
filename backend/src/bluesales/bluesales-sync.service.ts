@@ -240,6 +240,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const firstContactAt = this.extractCustomerFirstContactAt(customer);
     const source = this.extractCustomerSource(customer);
     const marks = this.extractCustomerMarks(customer);
+    const tags = this.extractCustomerTagIds(customer);
+    const tagPairs = this.extractCustomerTagPairs(customer);
 
     const lead = await this.prisma.lead.upsert({
       where: { bsCustomerId: customer.id },
@@ -252,6 +254,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         firstContactAt,
         source,
         marks,
+        tags,
         crmStatus,
         lastSyncedAt: new Date(),
       },
@@ -263,11 +266,27 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         firstContactAt,
         source,
         marks,
+        tags,
         crmStatus,
         lastSyncedAt: new Date(),
       },
     });
+
+    // Актуализируем справочник имён тегов (id -> name) при каждом обновлении лида.
+    await this.upsertTagNames(tagPairs);
+
     return lead.id;
+  }
+
+  /** Актуализирует справочник имён тегов BlueSales (bsTagId -> name). */
+  private async upsertTagNames(pairs: Array<{ bsTagId: string; name: string }>): Promise<void> {
+    for (const { bsTagId, name } of pairs) {
+      await this.prisma.bluesalesTag.upsert({
+        where: { bsTagId },
+        create: { bsTagId, name },
+        update: { name },
+      });
+    }
   }
 
   async upsertOrder(bsOrder: BsOrder, leadId: number | null): Promise<void> {
@@ -397,8 +416,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     return this.pickString(salesChannel, direct);
   }
 
+  /** «Отметки» клиента в BlueSales — простая строка в поле shortNotes. */
   private extractCustomerMarks(customer: BsCustomer): string | null {
-    const direct = customer['marks'] ?? customer['mark'] ?? customer['notes'] ?? customer['note'];
+    const direct =
+      customer['shortNotes'] ??
+      customer['marks'] ??
+      customer['mark'] ??
+      customer['notes'] ??
+      customer['note'];
     if (typeof direct === 'string') {
       const trimmed = direct.trim();
       return trimmed.length > 0 ? trimmed : null;
@@ -411,6 +436,32 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       return rendered.length > 0 ? rendered : null;
     }
     return null;
+  }
+
+  /** «Теги» клиента в BlueSales — список ID (tags[].id). */
+  private extractCustomerTagIds(customer: BsCustomer): string[] {
+    const tags = customer.tags;
+    if (!Array.isArray(tags)) return [];
+    const ids = tags
+      .map((tag) => (tag && typeof tag === 'object' && tag.id != null ? String(tag.id) : ''))
+      .filter((id) => id.length > 0);
+    return [...new Set(ids)];
+  }
+
+  /** Пары {bsTagId, name} для справочника BluesalesTag. */
+  private extractCustomerTagPairs(
+    customer: BsCustomer,
+  ): Array<{ bsTagId: string; name: string }> {
+    const tags = customer.tags;
+    if (!Array.isArray(tags)) return [];
+    const pairs: Array<{ bsTagId: string; name: string }> = [];
+    for (const tag of tags) {
+      if (!tag || typeof tag !== 'object' || tag.id == null) continue;
+      const name = (tag.name ?? '').trim();
+      if (!name) continue;
+      pairs.push({ bsTagId: String(tag.id), name });
+    }
+    return pairs;
   }
 
   private extractPrepaymentSum(bsOrder: BsOrder): number | null {

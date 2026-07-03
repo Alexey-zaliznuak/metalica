@@ -49,6 +49,11 @@ export interface BsCustomField {
   valueAsText?: string;
 }
 
+export interface BsTag {
+  id?: number;
+  name?: string;
+}
+
 export interface BsCustomer {
   id?: number;
   fullName?: string;
@@ -57,6 +62,10 @@ export interface BsCustomer {
   salesChannel?: { id?: number; code?: number; name?: string } | null;
   // Менеджер клиента в BlueSales — источник «менеджера ведения».
   manager?: BsManager | null;
+  // «Отметки» клиента в BlueSales — простая строка.
+  shortNotes?: string | null;
+  // «Теги» клиента в BlueSales — список объектов { id, name }.
+  tags?: BsTag[] | null;
   [key: string]: unknown;
 }
 
