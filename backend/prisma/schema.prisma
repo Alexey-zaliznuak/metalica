@@ -129,6 +129,10 @@ model Lead {
   bsCustomerId Int?     @unique
   name         String?
   fullName     String?
+  // Менеджер клиента в BlueSales (customer.manager): имя и BS-id.
+  // Денормализовано (не FK), т.к. это менеджер BlueSales, а не User системы.
+  managerName  String?
+  managerId    Int?
   // Ссылка на диалог в ВК-группе (переписка сообщество <-> лид)
   vkDialogUrl  String?
   vkUserId     String?
@@ -153,6 +157,7 @@ model Lead {
 
   @@index([crmStatus])
   @@index([lastContactAt])
+  @@index([managerId])
 }
 
 // Справочник тегов BlueSales: сопоставление ID тега -> имя.

@@ -1,0 +1,22 @@
+---
+description: Правила работы с Prisma-схемой и миграциями
+globs: backend/prisma/schema.prisma
+alwaysApply: false
+---
+
+# Prisma: схема и миграции
+
+При изменении `schema.prisma` агент:
+
+- **МОЖЕТ** запускать `npx prisma generate` для обновления Prisma Client.
+- **НЕ ДОЛЖЕН** создавать или редактировать SQL-файлы миграций вручную
+  (в `backend/prisma/migrations/**`).
+- **НЕ ДОЛЖЕН** запускать `npx prisma migrate dev` (и другие команды
+  `prisma migrate`, генерирующие миграции).
+
+Миграции создаёт пользователь сам. После правки схемы:
+
+1. Обнови схему в `schema.prisma`.
+2. Запусти `npx prisma generate`.
+3. Сообщи пользователю, что нужно создать миграцию вручную
+   (например, `npx prisma migrate dev`), и не делай этого за него.

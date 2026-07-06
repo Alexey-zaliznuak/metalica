@@ -458,6 +458,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     const fullName = (customer.fullName ?? '').trim() || null;
     const name = fullName ? fullName.split(/\s+/)[0] : null;
+    // Менеджер клиента в BlueSales (customer.manager): имя + BS-id.
+    const managerName = (customer.manager?.fullName ?? '').trim() || null;
+    const managerId =
+      typeof customer.manager?.id === 'number' ? customer.manager.id : null;
     const vkUserId = customer.vk?.id ? String(customer.vk.id) : null;
     const vkDialogUrl = this.buildVkDialogUrl(customer);
     const crmStatus = customer.crmStatus?.name ?? null;
@@ -478,6 +482,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         bsCustomerId: customer.id,
         name,
         fullName,
+        managerName,
+        managerId,
         vkUserId,
         vkDialogUrl,
         firstContactAt,
@@ -492,6 +498,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       update: {
         name,
         fullName,
+        managerName,
+        managerId,
         vkUserId,
         vkDialogUrl,
         firstContactAt,
