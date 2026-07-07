@@ -299,7 +299,10 @@ export class OrdersService {
     let nextStatusId: number | null = statusId;
     let nextStatusName: string | null = null;
     try {
-      const [actual] = await this.bluesalesApi.getOrdersByIds([order.bluesalesInfo.bsOrderId]);
+      const [actual] = await this.bluesalesApi.getOrdersByIds(
+        [order.bluesalesInfo.bsOrderId],
+        'interactive',
+      );
       if (actual) {
         nextStatusId = actual.orderStatus?.id ?? statusId;
         nextStatusName = actual.orderStatus?.name ?? null;

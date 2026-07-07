@@ -18,6 +18,20 @@ export class BluesalesError extends Error {}
 export class BluesalesHttpError extends BluesalesError {}
 export class BluesalesAuthError extends BluesalesError {}
 
+/**
+ * Приоритет запроса в очереди к BlueSales.
+ *  - interactive — действия пользователя (смена статуса и т.п.), обгоняют синк;
+ *  - background  — фоновый синк (refresh-loop'ы, полный синк).
+ */
+export type BsRequestPriority = 'interactive' | 'background';
+
+interface BsQueueItem {
+  run: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+  priority: BsRequestPriority;
+}
+
 export interface BsOrderStatus {
   id?: number;
   name?: string;
@@ -113,13 +127,37 @@ export class BluesalesApiService {
   private readonly passwordHash: string;
   private pausedUntilTs: number | null = null;
 
-  // Очередь сериализации запросов (single-session на логин)
-  private chain: Promise<unknown> = Promise.resolve();
+  // Приоритетная очередь сериализации запросов (single-session на логин).
+  // Интерактивные запросы (действия пользователя) обгоняют фоновый синк,
+  // чтобы залипший фоновый запрос не блокировал пользовательский API на часы.
+  private readonly queue: BsQueueItem[] = [];
+  private processing = false;
+
+  // ─── Настройки таймаутов/ретраев (из env) ─────────────────────────────────
+  /** Таймаут одного HTTP-запроса к BlueSales (мс). */
+  private readonly requestTimeoutMs: number;
+  /** Максимальное суммарное окно ретраев одного запроса (мс) — потолок ожидания. */
+  private readonly maxRetryWindowMs: number;
+  /** Лимит ретраев на ошибку «уже выполняется другое обращение в организации». */
+  private readonly maxBusyRetries: number;
+  /** Лимит ретраев на ошибку «другой пользователь онлайн под логином». */
+  private readonly maxSessionRetries: number;
 
   constructor(private readonly config: ConfigService) {
     this.login = this.config.get<string>('BLUESALES_LOGIN', '');
     const password = this.config.get<string>('BLUESALES_PASSWORD', '');
     this.passwordHash = password ? this.hashPassword(password) : '';
+
+    this.requestTimeoutMs = this.envInt('BLUESALES_REQUEST_TIMEOUT_MS', 30_000);
+    this.maxRetryWindowMs = this.envInt('BLUESALES_MAX_RETRY_MS', 300_000);
+    this.maxBusyRetries = this.envInt('BLUESALES_BUSY_MAX_RETRIES', 20);
+    this.maxSessionRetries = this.envInt('BLUESALES_SESSION_MAX_RETRIES', 10);
+  }
+
+  private envInt(key: string, def: number): number {
+    const raw = this.config.get<string>(key);
+    const n = raw != null && raw !== '' ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : def;
   }
 
   get isConfigured(): boolean {
@@ -130,15 +168,45 @@ export class BluesalesApiService {
     return createHash('md5').update(password, 'utf-8').digest('hex').toUpperCase();
   }
 
-  /** Сериализует вызовы: каждый запрос ждёт завершения предыдущего. */
-  private enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.chain.then(task, task);
-    // не даём отклонению одного запроса сломать всю цепочку
-    this.chain = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+  /**
+   * Ставит задачу в очередь. Интерактивные запросы встают перед фоновыми,
+   * но выполняется по-прежнему строго по одному запросу за раз (single-session).
+   */
+  private schedule<T>(task: () => Promise<T>, priority: BsRequestPriority): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push({
+        run: task as () => Promise<unknown>,
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        priority,
+      });
+      void this.processQueue();
+    });
+  }
+
+  /** Достаёт следующий элемент: сначала интерактивные (FIFO внутри приоритета). */
+  private takeNext(): BsQueueItem | undefined {
+    const idx = this.queue.findIndex((item) => item.priority === 'interactive');
+    const target = idx === -1 ? 0 : idx;
+    return this.queue.splice(target, 1)[0];
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.processing) return;
+    this.processing = true;
+    try {
+      while (this.queue.length > 0) {
+        const item = this.takeNext();
+        if (!item) break;
+        try {
+          item.resolve(await item.run());
+        } catch (err) {
+          item.reject(err);
+        }
+      }
+    } finally {
+      this.processing = false;
+    }
   }
 
   private async sleep(ms: number): Promise<void> {
@@ -180,9 +248,20 @@ export class BluesalesApiService {
     return Number.isFinite(seconds) ? seconds : null;
   }
 
-  private async sendRaw<T>(method: string, data?: unknown, attempt = 1): Promise<T> {
+  private async sendRaw<T>(
+    method: string,
+    data?: unknown,
+    attempt = 1,
+    deadline = 0,
+  ): Promise<T> {
     if (!this.isConfigured) {
       throw new BluesalesAuthError('BlueSales credentials are not configured');
+    }
+
+    // Общий потолок ожидания на один логический запрос (со всеми ретраями).
+    // Фиксируется на первой попытке и защищает от многочасового залипания.
+    if (deadline === 0) {
+      deadline = Date.now() + this.maxRetryWindowMs;
     }
 
     const url = new URL(BASE_URL);
@@ -190,24 +269,35 @@ export class BluesalesApiService {
     url.searchParams.set('password', this.passwordHash);
     url.searchParams.set('command', method);
 
-    let response: Response;
+    // Таймаут на HTTP-запрос: без него зависший fetch держал бы очередь вечно.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    let text: string;
     try {
-      response = await fetch(url, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data ?? null),
+        signal: controller.signal,
       });
+      if (response.status === 404) {
+        throw new BluesalesHttpError(`Method ${method} not found!`);
+      }
+      text = await response.text();
     } catch (err) {
+      if (err instanceof BluesalesError) {
+        throw err;
+      }
+      const aborted = controller.signal.aborted;
       throw new BluesalesHttpError(
-        `Error connecting to bluesales.ru API: ${(err as Error).message}`,
+        aborted
+          ? `BlueSales API timeout после ${this.requestTimeoutMs} мс (метод ${method})`
+          : `Error connecting to bluesales.ru API: ${(err as Error).message}`,
       );
+    } finally {
+      clearTimeout(timer);
     }
 
-    if (response.status === 404) {
-      throw new BluesalesHttpError(`Method ${method} not found!`);
-    }
-
-    const text = await response.text();
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
@@ -228,29 +318,45 @@ export class BluesalesApiService {
         throw new BluesalesAuthError(errorText);
       }
 
+      // Другая сессия онлайн под логином — ждём countdown и повторяем,
+      // но с лимитом попыток и общим потолком ожидания (иначе бесконечный цикл).
       if (errorText.includes('Другой пользователь находится онлайн под логином')) {
         const delay = this.parseCountdown(errorText);
         if (delay !== null) {
-          this.logger.warn(
-            `BlueSales: другая сессия онлайн, ждём ${delay + 1}s и повторяем`,
+          const waitMs = (delay + 1) * 1000;
+          if (attempt < this.maxSessionRetries && Date.now() + waitMs <= deadline) {
+            this.logger.warn(
+              `BlueSales: другая сессия онлайн, ждём ${delay + 1}s и повторяем ` +
+                `(попытка ${attempt}/${this.maxSessionRetries})`,
+            );
+            await this.sleep(waitMs);
+            return this.sendRaw<T>(method, data, attempt + 1, deadline);
+          }
+          this.logger.error(
+            `BlueSales: другая сессия онлайн — исчерпан лимит ожидания ` +
+              `(попытка ${attempt}/${this.maxSessionRetries}), прекращаем повторы`,
           );
-          await this.sleep((delay + 1) * 1000);
-          return this.sendRaw<T>(method, data, attempt);
         }
       }
 
-      // Другой пользователь организации уже выполняет запрос — ждём и повторяем.
+      // Другой пользователь организации уже выполняет запрос — ждём и повторяем,
+      // с лимитом попыток и общим потолком ожидания.
       if (errorText.includes('Уже выполняется одно или несколько других обращений к API')) {
-        const MAX_ATTEMPTS = 20;
-        if (attempt <= MAX_ATTEMPTS) {
-          // Первые 5 попыток — быстро (до 30с), потом фиксированные 30с паузы.
-          const delaySec = Math.min(attempt * 3, 30);
+        // Первые попытки — быстро (до 30с), затем фиксированные 30с паузы.
+        const delaySec = Math.min(attempt * 3, 30);
+        const waitMs = delaySec * 1000;
+        if (attempt <= this.maxBusyRetries && Date.now() + waitMs <= deadline) {
           this.logger.warn(
-            `BlueSales: параллельный запрос в организации, ждём ${delaySec}s (попытка ${attempt}/${MAX_ATTEMPTS})`,
+            `BlueSales: параллельный запрос в организации, ждём ${delaySec}s ` +
+              `(попытка ${attempt}/${this.maxBusyRetries})`,
           );
-          await this.sleep(delaySec * 1000);
-          return this.sendRaw<T>(method, data, attempt + 1);
+          await this.sleep(waitMs);
+          return this.sendRaw<T>(method, data, attempt + 1, deadline);
         }
+        this.logger.error(
+          `BlueSales: параллельный запрос — исчерпан лимит ожидания ` +
+            `(попытка ${attempt}/${this.maxBusyRetries}), прекращаем повторы`,
+        );
       }
 
       throw new BluesalesError(`${this.login} | ${JSON.stringify(parsed)}`);
@@ -259,12 +365,16 @@ export class BluesalesApiService {
     return parsed as T;
   }
 
-  /** Публичный отправитель — все вызовы проходят через очередь. */
-  send<T>(method: string, data?: unknown): Promise<T> {
-    return this.enqueue(async () => {
+  /** Публичный отправитель — все вызовы проходят через приоритетную очередь. */
+  send<T>(
+    method: string,
+    data?: unknown,
+    priority: BsRequestPriority = 'background',
+  ): Promise<T> {
+    return this.schedule(async () => {
       await this.waitIfPaused();
       return this.sendRaw<T>(method, data);
-    });
+    }, priority);
   }
 
   pauseForMinutes(minutes: number): Date {
@@ -297,18 +407,25 @@ export class BluesalesApiService {
   }
 
   /** Получить конкретные заказы по списку BS-идентификаторов (до 500 штук). */
-  async getOrdersByIds(ids: number[]): Promise<BsOrder[]> {
+  async getOrdersByIds(
+    ids: number[],
+    priority: BsRequestPriority = 'background',
+  ): Promise<BsOrder[]> {
     if (ids.length === 0) return [];
-    const result = await this.send<GetOrdersResponse>('orders.get', {
-      dateFrom: null,
-      dateTill: null,
-      orderStatuses: [],
-      customerId: null,
-      ids,
-      internalNumbers: null,
-      pageSize: ids.length,
-      startRowNumber: 0,
-    });
+    const result = await this.send<GetOrdersResponse>(
+      'orders.get',
+      {
+        dateFrom: null,
+        dateTill: null,
+        orderStatuses: [],
+        customerId: null,
+        ids,
+        internalNumbers: null,
+        pageSize: ids.length,
+        startRowNumber: 0,
+      },
+      priority,
+    );
     return result.orders ?? [];
   }
 
@@ -320,13 +437,16 @@ export class BluesalesApiService {
    *  - lastContactFrom/lastContactTo   — по дате последнего контакта (активность).
    * Правая граница трактуется BS как «до начала дня», поэтому +1 день включительно.
    */
-  async getCustomers(params: {
-    firstContactFrom?: Date | null;
-    firstContactTo?: Date | null;
-    lastContactFrom?: Date | null;
-    lastContactTo?: Date | null;
-    ids?: number[] | null;
-  } = {}): Promise<BsCustomer[]> {
+  async getCustomers(
+    params: {
+      firstContactFrom?: Date | null;
+      firstContactTo?: Date | null;
+      lastContactFrom?: Date | null;
+      lastContactTo?: Date | null;
+      ids?: number[] | null;
+    } = {},
+    priority: BsRequestPriority = 'background',
+  ): Promise<BsCustomer[]> {
     const dayAfter = (date: Date) => this.formatDate(new Date(date.getTime() + 24 * 60 * 60 * 1000));
 
     const baseData = {
@@ -344,11 +464,11 @@ export class BluesalesApiService {
       phone: null,
     };
 
-    const first = await this.send<GetCustomersResponse>('customers.get', {
-      ...baseData,
-      pageSize: 1,
-      startRowNumber: 0,
-    });
+    const first = await this.send<GetCustomersResponse>(
+      'customers.get',
+      { ...baseData, pageSize: 1, startRowNumber: 0 },
+      priority,
+    );
     const total = (first.notReturnedCount ?? 0) + (first.count ?? 0);
     if (total === 0) {
       return [];
@@ -357,11 +477,11 @@ export class BluesalesApiService {
     const items: BsCustomer[] = [];
     let offset = 0;
     while (items.length < total) {
-      const page = await this.send<GetCustomersResponse>('customers.get', {
-        ...baseData,
-        pageSize: MAX_PAGE_SIZE,
-        startRowNumber: offset,
-      });
+      const page = await this.send<GetCustomersResponse>(
+        'customers.get',
+        { ...baseData, pageSize: MAX_PAGE_SIZE, startRowNumber: offset },
+        priority,
+      );
       items.push(...(page.customers ?? []));
       offset += MAX_PAGE_SIZE;
       if (!page.customers || page.customers.length === 0) {
@@ -372,29 +492,40 @@ export class BluesalesApiService {
   }
 
   /** Получить конкретных клиентов по списку BS-идентификаторов (до 500 штук). */
-  async getCustomersByIds(ids: number[]): Promise<BsCustomer[]> {
+  async getCustomersByIds(
+    ids: number[],
+    priority: BsRequestPriority = 'background',
+  ): Promise<BsCustomer[]> {
     if (ids.length === 0) return [];
-    const result = await this.send<GetCustomersResponse>('customers.get', {
-      firstContactDateFrom: null,
-      firstContactDateTill: null,
-      nextContactDateFrom: null,
-      nextContactDateTill: null,
-      lastContactDateFrom: null,
-      lastContactDateTill: null,
-      ids,
-      vkIds: null,
-      tags: [],
-      managers: [],
-      sources: null,
-      phone: null,
-      pageSize: ids.length,
-      startRowNumber: 0,
-    });
+    const result = await this.send<GetCustomersResponse>(
+      'customers.get',
+      {
+        firstContactDateFrom: null,
+        firstContactDateTill: null,
+        nextContactDateFrom: null,
+        nextContactDateTill: null,
+        lastContactDateFrom: null,
+        lastContactDateTill: null,
+        ids,
+        vkIds: null,
+        tags: [],
+        managers: [],
+        sources: null,
+        phone: null,
+        pageSize: ids.length,
+        startRowNumber: 0,
+      },
+      priority,
+    );
     return result.customers ?? [];
   }
 
   /** Постранично получить все заказы за период [dateFrom, dateTo]. */
-  async getOrders(dateFrom?: Date, dateTo?: Date): Promise<BsOrder[]> {
+  async getOrders(
+    dateFrom?: Date,
+    dateTo?: Date,
+    priority: BsRequestPriority = 'background',
+  ): Promise<BsOrder[]> {
     const baseData = {
       dateFrom: dateFrom ? this.formatDate(dateFrom) : null,
       // BS трактует dateTill как «до начала дня», поэтому +1 день включительно
@@ -407,11 +538,11 @@ export class BluesalesApiService {
       internalNumbers: null,
     };
 
-    const first = await this.send<GetOrdersResponse>('orders.get', {
-      ...baseData,
-      pageSize: 1,
-      startRowNumber: 0,
-    });
+    const first = await this.send<GetOrdersResponse>(
+      'orders.get',
+      { ...baseData, pageSize: 1, startRowNumber: 0 },
+      priority,
+    );
     const total = (first.notReturnedCount ?? 0) + (first.count ?? 0);
     if (total === 0) {
       return [];
@@ -420,11 +551,11 @@ export class BluesalesApiService {
     const items: BsOrder[] = [];
     let offset = 0;
     while (items.length < total) {
-      const page = await this.send<GetOrdersResponse>('orders.get', {
-        ...baseData,
-        pageSize: MAX_PAGE_SIZE,
-        startRowNumber: offset,
-      });
+      const page = await this.send<GetOrdersResponse>(
+        'orders.get',
+        { ...baseData, pageSize: MAX_PAGE_SIZE, startRowNumber: offset },
+        priority,
+      );
       items.push(...(page.orders ?? []));
       offset += MAX_PAGE_SIZE;
       if (!page.orders || page.orders.length === 0) {
@@ -437,8 +568,13 @@ export class BluesalesApiService {
   /**
    * Изменяет статус заказа в BlueSales.
    * В API встречаются разные имена ключа id, поэтому пробуем оба варианта.
+   * Приоритет по умолчанию — interactive: это действие пользователя.
    */
-  async setOrderStatus(orderId: number, statusId: number): Promise<void> {
+  async setOrderStatus(
+    orderId: number,
+    statusId: number,
+    priority: BsRequestPriority = 'interactive',
+  ): Promise<void> {
     const payloads: SetOrderStatusPayload[] = [
       { orderId, status: statusId },
       { id: orderId, status: statusId },
@@ -447,7 +583,7 @@ export class BluesalesApiService {
     const errors: string[] = [];
     for (const payload of payloads) {
       try {
-        await this.send<unknown>('orders.setStatus', payload);
+        await this.send<unknown>('orders.setStatus', payload, priority);
         return;
       } catch (err) {
         errors.push((err as Error).message);
