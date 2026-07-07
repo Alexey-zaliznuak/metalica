@@ -141,11 +141,19 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const leadIds = new Set<number>();
     let synced = 0;
 
+    const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
+      where: { bsOrderId: { in: bsOrders.map((o) => o.id) } },
+      select: { bsOrderId: true, orderId: true },
+    });
+    const existingByBsId = new Map(existingInfos.map((info) => [info.bsOrderId, info]));
+
+    await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
+
     for (const bsOrder of bsOrders) {
       try {
-        const leadId = await this.upsertLead(bsOrder.customer ?? null);
+        const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
         if (leadId) leadIds.add(leadId);
-        await this.upsertOrder(bsOrder, leadId);
+        await this.upsertOrder(bsOrder, leadId, existingByBsId.get(bsOrder.id) ?? null);
         synced++;
       } catch (err) {
         this.logger.error(
@@ -245,12 +253,23 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const returnedIds = new Set(bsOrders.map((o) => o.id));
     let synced = 0;
 
+    // Одним запросом подтягиваем orderId для всех заказов батча (вместо findUnique
+    // на каждый заказ внутри upsertOrder).
+    const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
+      where: { bsOrderId: { in: bsOrders.map((o) => o.id) } },
+      select: { bsOrderId: true, orderId: true },
+    });
+    const existingByBsId = new Map(existingInfos.map((info) => [info.bsOrderId, info]));
+
+    // Справочники имён (source/salesChannel/tags) обновляем один раз на весь батч.
+    await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
+
     for (const bsOrder of bsOrders) {
       try {
         // В ответе заказа лежит customer, поэтому обновляем лида и сам заказ вместе.
         // upsertOrder также обновит BluesalesOrderInfo.lastSyncedAt.
-        const leadId = await this.upsertLead(bsOrder.customer ?? null);
-        await this.upsertOrder(bsOrder, leadId);
+        const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
+        await this.upsertOrder(bsOrder, leadId, existingByBsId.get(bsOrder.id) ?? null);
         synced++;
       } catch (err) {
         this.logger.error(
@@ -320,10 +339,19 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private async syncOrdersWindow(from: Date, to: Date): Promise<number> {
     const bsOrders = await this.api.getOrders(from, to);
     let synced = 0;
+
+    const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
+      where: { bsOrderId: { in: bsOrders.map((o) => o.id) } },
+      select: { bsOrderId: true, orderId: true },
+    });
+    const existingByBsId = new Map(existingInfos.map((info) => [info.bsOrderId, info]));
+
+    await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
+
     for (const bsOrder of bsOrders) {
       try {
-        const leadId = await this.upsertLead(bsOrder.customer ?? null);
-        await this.upsertOrder(bsOrder, leadId);
+        const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
+        await this.upsertOrder(bsOrder, leadId, existingByBsId.get(bsOrder.id) ?? null);
         synced++;
       } catch (err) {
         this.logger.error(
@@ -431,9 +459,11 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   /** Upsert пачки клиентов в лиды; возвращает число успешно обработанных. */
   private async upsertLeads(customers: BsCustomer[]): Promise<number> {
     let synced = 0;
+    // Справочники имён обновляем один раз на весь батч (а не на каждого лида).
+    await this.syncReferenceDictionaries(customers);
     for (const customer of customers) {
       try {
-        const leadId = await this.upsertLead(customer);
+        const leadId = await this.upsertLead(customer, false);
         if (leadId) synced++;
       } catch (err) {
         this.logger.error(
@@ -453,7 +483,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
   // ─── Upsert-логика (общая для обоих процессов) ────────────────────────────
 
-  async upsertLead(customer: BsCustomer | null): Promise<number | null> {
+  /**
+   * @param syncReferences обновлять ли справочники имён (source/salesChannel/tags)
+   *   сразу для этого лида. В батч-обработке передаём `false`, а справочники
+   *   обновляем один раз на весь батч через {@link syncReferenceDictionaries},
+   *   чтобы не делать одинаковые upsert'ы по кругу на каждой записи.
+   */
+  async upsertLead(customer: BsCustomer | null, syncReferences = true): Promise<number | null> {
     if (!customer?.id) return null;
 
     const fullName = (customer.fullName ?? '').trim() || null;
@@ -513,12 +549,50 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    // Актуализируем справочники имён (id -> name) при каждом обновлении лида.
-    await this.upsertTagNames(tagPairs);
-    await this.upsertSourceName(sourcePair);
-    await this.upsertSalesChannelName(salesChannelPair);
+    // Актуализируем справочники имён (id -> name). В батч-обработке это делается
+    // один раз на весь батч (syncReferences=false), см. syncReferenceDictionaries.
+    if (syncReferences) {
+      await this.upsertTagNames(tagPairs);
+      await this.upsertSourceName(sourcePair);
+      await this.upsertSalesChannelName(salesChannelPair);
+    }
 
     return lead.id;
+  }
+
+  /**
+   * Батч-обновление справочников имён BlueSales (источники, каналы продаж, теги)
+   * для набора клиентов. Пары {id -> name} дедуплицируются по всему батчу, поэтому
+   * вместо N×(1 источник + 1 канал + M тегов) upsert'ов на каждого лида делаем лишь
+   * по одному upsert на каждый уникальный id. Это резко снижает число обращений к БД.
+   */
+  private async syncReferenceDictionaries(
+    customers: Array<BsCustomer | null | undefined>,
+  ): Promise<void> {
+    const sources = new Map<string, string>();
+    const salesChannels = new Map<string, string>();
+    const tags = new Map<string, string>();
+
+    for (const customer of customers) {
+      if (!customer) continue;
+      const sourcePair = this.extractCustomerSourcePair(customer);
+      if (sourcePair) sources.set(sourcePair.bsSourceId, sourcePair.name);
+      const salesChannelPair = this.extractCustomerSalesChannelPair(customer);
+      if (salesChannelPair) salesChannels.set(salesChannelPair.bsSalesChannelId, salesChannelPair.name);
+      for (const { bsTagId, name } of this.extractCustomerTagPairs(customer)) {
+        tags.set(bsTagId, name);
+      }
+    }
+
+    for (const [bsSourceId, name] of sources) {
+      await this.upsertSourceName({ bsSourceId, name });
+    }
+    for (const [bsSalesChannelId, name] of salesChannels) {
+      await this.upsertSalesChannelName({ bsSalesChannelId, name });
+    }
+    await this.upsertTagNames(
+      [...tags.entries()].map(([bsTagId, name]) => ({ bsTagId, name })),
+    );
   }
 
   /** Актуализирует справочник имён источников BlueSales (bsSourceId -> name). */
@@ -556,7 +630,16 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async upsertOrder(bsOrder: BsOrder, leadId: number | null): Promise<void> {
+  /**
+   * @param existing предвыбранная запись BluesalesOrderInfo (orderId по bsOrderId).
+   *   Если передана (в т.ч. `null` = «точно нет»), пропускаем findUnique по bsOrderId.
+   *   Если `undefined` — запись подгружается здесь (для одиночных вызовов).
+   */
+  async upsertOrder(
+    bsOrder: BsOrder,
+    leadId: number | null,
+    existing?: { orderId: number } | null,
+  ): Promise<void> {
     const orderNumber = this.resolveOrderNumber(bsOrder);
     const title = `Заказ номер ${orderNumber}`;
     const bsCreatedAt = this.parseDate(bsOrder.date);
@@ -583,18 +666,23 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     const managerData = { deliveryManagerName, onboardingManagerName };
 
-    const existing = await this.prisma.bluesalesOrderInfo.findUnique({
-      where: { bsOrderId: bsOrder.id },
-    });
+    // В батч-режиме existing уже предвыбран (см. refreshBatch), иначе грузим здесь.
+    const existingInfo =
+      existing !== undefined
+        ? existing
+        : await this.prisma.bluesalesOrderInfo.findUnique({
+            where: { bsOrderId: bsOrder.id },
+            select: { orderId: true },
+          });
 
-    if (existing) {
+    if (existingInfo) {
       await this.prisma.$transaction([
         this.prisma.bluesalesOrderInfo.update({
           where: { bsOrderId: bsOrder.id },
           data: infoData,
         }),
         this.prisma.order.update({
-          where: { id: existing.orderId },
+          where: { id: existingInfo.orderId },
           data: { ...managerData, ...(leadId ? { leadId } : {}) },
         }),
       ]);
