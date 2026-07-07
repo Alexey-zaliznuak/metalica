@@ -17,6 +17,12 @@ const BASE_URL = 'https://bluesales.ru/app/Customers/WebServer.aspx';
 export class BluesalesError extends Error {}
 export class BluesalesHttpError extends BluesalesError {}
 export class BluesalesAuthError extends BluesalesError {}
+/** Сетевая ошибка соединения с BlueSales — транзиентная (можно повторить). */
+export class BluesalesConnectionError extends BluesalesHttpError {}
+/** Таймаут HTTP-запроса к BlueSales — транзиентная (можно повторить). */
+export class BluesalesTimeoutError extends BluesalesHttpError {}
+/** Исчерпан лимит ожидания org-lock/сессии BlueSales — транзиентная. */
+export class BluesalesBusyError extends BluesalesError {}
 
 /**
  * Приоритет запроса в очереди к BlueSales.
@@ -142,6 +148,10 @@ export class BluesalesApiService {
   private readonly maxBusyRetries: number;
   /** Лимит ретраев на ошибку «другой пользователь онлайн под логином». */
   private readonly maxSessionRetries: number;
+  /** Сколько раз повторно ставить интерактивный запрос в очередь при транзиентной ошибке. */
+  private readonly interactiveMaxRequeues: number;
+  /** Пауза перед повторной постановкой интерактивного запроса в очередь (мс). */
+  private readonly interactiveRequeueDelayMs: number;
 
   constructor(private readonly config: ConfigService) {
     this.login = this.config.get<string>('BLUESALES_LOGIN', '');
@@ -152,6 +162,8 @@ export class BluesalesApiService {
     this.maxRetryWindowMs = this.envInt('BLUESALES_MAX_RETRY_MS', 300_000);
     this.maxBusyRetries = this.envInt('BLUESALES_BUSY_MAX_RETRIES', 20);
     this.maxSessionRetries = this.envInt('BLUESALES_SESSION_MAX_RETRIES', 10);
+    this.interactiveMaxRequeues = this.envInt('BLUESALES_INTERACTIVE_MAX_REQUEUES', 3);
+    this.interactiveRequeueDelayMs = this.envInt('BLUESALES_INTERACTIVE_REQUEUE_DELAY_MS', 1000);
   }
 
   private envInt(key: string, def: number): number {
@@ -288,11 +300,13 @@ export class BluesalesApiService {
       if (err instanceof BluesalesError) {
         throw err;
       }
-      const aborted = controller.signal.aborted;
-      throw new BluesalesHttpError(
-        aborted
-          ? `BlueSales API timeout после ${this.requestTimeoutMs} мс (метод ${method})`
-          : `Error connecting to bluesales.ru API: ${(err as Error).message}`,
+      if (controller.signal.aborted) {
+        throw new BluesalesTimeoutError(
+          `BlueSales API timeout после ${this.requestTimeoutMs} мс (метод ${method})`,
+        );
+      }
+      throw new BluesalesConnectionError(
+        `Error connecting to bluesales.ru API: ${(err as Error).message}`,
       );
     } finally {
       clearTimeout(timer);
@@ -313,6 +327,10 @@ export class BluesalesApiService {
     ) {
       const errorObj = parsed as { error?: string };
       const errorText = errorObj.error ?? '';
+
+      // Транзиентная ошибка = временная конкуренция за org-lock/сессию BlueSales,
+      // которую имеет смысл повторить (в т.ч. вернув запрос в очередь).
+      let transient = false;
 
       if (errorText === 'Неправильный логин или пароль.') {
         throw new BluesalesAuthError(errorText);
@@ -337,6 +355,7 @@ export class BluesalesApiService {
               `(попытка ${attempt}/${this.maxSessionRetries}), прекращаем повторы`,
           );
         }
+        transient = true;
       }
 
       // Другой пользователь организации уже выполняет запрос — ждём и повторяем,
@@ -357,9 +376,12 @@ export class BluesalesApiService {
           `BlueSales: параллельный запрос — исчерпан лимит ожидания ` +
             `(попытка ${attempt}/${this.maxBusyRetries}), прекращаем повторы`,
         );
+        transient = true;
       }
 
-      throw new BluesalesError(`${this.login} | ${JSON.stringify(parsed)}`);
+      throw transient
+        ? new BluesalesBusyError(`${this.login} | ${JSON.stringify(parsed)}`)
+        : new BluesalesError(`${this.login} | ${JSON.stringify(parsed)}`);
     }
 
     return parsed as T;
@@ -371,10 +393,54 @@ export class BluesalesApiService {
     data?: unknown,
     priority: BsRequestPriority = 'background',
   ): Promise<T> {
-    return this.schedule(async () => {
-      await this.waitIfPaused();
-      return this.sendRaw<T>(method, data);
-    }, priority);
+    const dispatch = () =>
+      this.schedule(async () => {
+        await this.waitIfPaused();
+        return this.sendRaw<T>(method, data);
+      }, priority);
+
+    // Интерактивные запросы не теряем: при транзиентной ошибке возвращаем их
+    // обратно в очередь (с приоритетом) до исчерпания лимита повторов.
+    if (priority !== 'interactive') {
+      return dispatch();
+    }
+    return this.dispatchWithRequeue(dispatch, method);
+  }
+
+  /**
+   * Повторно ставит интерактивный запрос в очередь при транзиентной ошибке.
+   * Каждая попытка — новый элемент очереди, поэтому он снова обгоняет фоновый синк.
+   */
+  private async dispatchWithRequeue<T>(
+    dispatch: () => Promise<T>,
+    method: string,
+  ): Promise<T> {
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await dispatch();
+      } catch (err) {
+        attempt++;
+        if (!this.isTransientError(err) || attempt > this.interactiveMaxRequeues) {
+          throw err;
+        }
+        this.logger.warn(
+          `BlueSales: интерактивный запрос ${method} вернулся в очередь после ` +
+            `транзиентной ошибки (повтор ${attempt}/${this.interactiveMaxRequeues}): ` +
+            `${(err as Error).message}`,
+        );
+        await this.sleep(this.interactiveRequeueDelayMs);
+      }
+    }
+  }
+
+  /** Транзиентные ошибки — временные, их имеет смысл повторить. */
+  private isTransientError(err: unknown): boolean {
+    return (
+      err instanceof BluesalesBusyError ||
+      err instanceof BluesalesTimeoutError ||
+      err instanceof BluesalesConnectionError
+    );
   }
 
   pauseForMinutes(minutes: number): Date {
