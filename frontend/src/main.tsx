@@ -47,7 +47,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route
               path="/metrics"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
                   <AppLayout>
                     <MetricsPage />
                   </AppLayout>
@@ -57,7 +57,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route
               path="/metrics/revisions"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
                   <AppLayout>
                     <RevisionAnalyticsPage />
                   </AppLayout>
@@ -67,7 +67,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route
               path="/workload"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute requiredScopes={['WORKLOAD_VIEW']}>
                   <AppLayout>
                     <WorkloadPage />
                   </AppLayout>

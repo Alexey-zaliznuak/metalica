@@ -28,20 +28,33 @@ import ForumIcon from '@mui/icons-material/Forum'
 import { useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { roleLabel } from '../utils'
+import { hasScope, roleLabel } from '../utils'
+import type { UserScope } from '../api/types'
 
 interface NavItem {
   to: string
   icon: ReactNode
   label: string
   adminOnly?: boolean
+  // Пункт показывается, если у пользователя есть любой из скоупов (или он ADMIN).
+  requiredScopes?: UserScope[]
 }
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/orders', icon: <ListAltIcon />, label: 'Заказы' },
   { to: '/chats', icon: <ForumIcon />, label: 'Чаты' },
-  { to: '/metrics', icon: <InsightsIcon />, label: 'Метрики' },
-  { to: '/workload', icon: <AssignmentTurnedInIcon />, label: 'Нагрузка' },
+  {
+    to: '/metrics',
+    icon: <InsightsIcon />,
+    label: 'Метрики',
+    requiredScopes: ['METRICS_VIEW'],
+  },
+  {
+    to: '/workload',
+    icon: <AssignmentTurnedInIcon />,
+    label: 'Нагрузка',
+    requiredScopes: ['WORKLOAD_VIEW'],
+  },
   { to: '/users', icon: <GroupIcon />, label: 'Пользователи', adminOnly: true },
 ]
 
@@ -101,9 +114,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     navigate('/login', { replace: true })
   }
 
-  const visibleNavItems = NAV_ITEMS.filter(
-    (item) => !item.adminOnly || user?.role === 'ADMIN',
-  )
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (item.adminOnly && user?.role !== 'ADMIN') return false
+    if (
+      item.requiredScopes &&
+      item.requiredScopes.length > 0 &&
+      !item.requiredScopes.some((scope) =>
+        hasScope(user?.role, user?.scopes, scope),
+      )
+    ) {
+      return false
+    }
+    return true
+  })
 
   return (
     <Box sx={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>

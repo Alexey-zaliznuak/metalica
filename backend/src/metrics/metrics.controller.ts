@@ -1,28 +1,35 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { UserScope } from '@prisma/client';
 import { MetricsService } from './metrics.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ScopesGuard } from '../auth/scopes.guard';
+import { RequireScopes } from '../auth/scopes.decorator';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, ScopesGuard)
 @Controller('metrics')
 export class MetricsController {
   constructor(private metrics: MetricsService) {}
 
   @Get('overview')
+  @RequireScopes(UserScope.METRICS_VIEW)
   overview() {
     return this.metrics.overview();
   }
 
   @Get('by-designer')
+  @RequireScopes(UserScope.METRICS_VIEW)
   byDesigner() {
     return this.metrics.byDesigner();
   }
 
   @Get('workload')
+  @RequireScopes(UserScope.WORKLOAD_VIEW)
   workload(@Query('orderStatusIds') orderStatusIdsRaw?: string) {
     return this.metrics.workload(orderStatusIdsRaw);
   }
 
   @Get('revisions/analytics')
+  @RequireScopes(UserScope.METRICS_VIEW)
   revisionAnalytics(
     @Query('workStartHour') workStartHour?: string,
     @Query('workEndHour') workEndHour?: string,

@@ -25,6 +25,8 @@ export const ASSIGNABLE_ROLES: { value: string; label: string }[] = [
 
 export const SCOPE_LABELS: Record<string, string> = {
   ORDERS_CHANGE_RESPONSIBLE: 'Изменять ответственных заказа',
+  METRICS_VIEW: 'Просмотр метрик',
+  WORKLOAD_VIEW: 'Просмотр нагрузки',
 }
 
 export const ASSIGNABLE_SCOPES: { value: string; label: string }[] = [
@@ -32,10 +34,32 @@ export const ASSIGNABLE_SCOPES: { value: string; label: string }[] = [
     value: 'ORDERS_CHANGE_RESPONSIBLE',
     label: SCOPE_LABELS.ORDERS_CHANGE_RESPONSIBLE,
   },
+  {
+    value: 'METRICS_VIEW',
+    label: SCOPE_LABELS.METRICS_VIEW,
+  },
+  {
+    value: 'WORKLOAD_VIEW',
+    label: SCOPE_LABELS.WORKLOAD_VIEW,
+  },
 ]
 
 export function scopeLabel(scope: string): string {
   return SCOPE_LABELS[scope] ?? scope
+}
+
+// Проверка наличия скоупа у пользователя. ADMIN всегда имеет доступ.
+// Значение скоупа сравнивается без учёта регистра и разделителя (. / _),
+// чтобы совпадало и с "METRICS_VIEW", и с "metrics.view".
+export function hasScope(
+  role: string | undefined,
+  scopes: string[] | undefined,
+  scope: string,
+): boolean {
+  if ((role ?? '').toUpperCase() === 'ADMIN') return true
+  const normalize = (value: string) => value.toUpperCase().replace(/\./g, '_')
+  const target = normalize(scope)
+  return (scopes ?? []).some((s) => normalize(s) === target)
 }
 
 // Format a duration in seconds into a Russian human-readable string (ч/мин).

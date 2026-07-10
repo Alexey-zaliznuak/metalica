@@ -1,5 +1,9 @@
 export type UserRole = 'DESIGNER' | 'MANAGER' | 'ADMIN' | string
-export type UserScope = 'ORDERS_CHANGE_RESPONSIBLE' | string
+export type UserScope =
+  | 'ORDERS_CHANGE_RESPONSIBLE'
+  | 'METRICS_VIEW'
+  | 'WORKLOAD_VIEW'
+  | string
 
 export interface User {
   id: number
