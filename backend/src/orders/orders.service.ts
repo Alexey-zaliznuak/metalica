@@ -42,6 +42,7 @@ export class OrdersService {
     onboardingManagers?: string[];
     sketchDesigners?: string[];
     revisionDesigners?: string[];
+    ignoreDesigners?: boolean;
     page?: number;
     limit?: number;
   }) {
@@ -79,11 +80,15 @@ export class OrdersService {
     if (params.onboardingManagers?.length) {
       and.push({ onboardingManagerName: { in: params.onboardingManagers } });
     }
-    if (params.sketchDesigners?.length) {
-      and.push({ sketchDesigner: { is: { name: { in: params.sketchDesigners } } } });
-    }
-    if (params.revisionDesigners?.length) {
-      and.push({ revisionDesigner: { is: { name: { in: params.revisionDesigners } } } });
+    // Для колонки «Готовим эскиз» фильтр по художникам может быть отключён
+    // из настроек доски — тогда игнорируем оба фильтра художников.
+    if (!params.ignoreDesigners) {
+      if (params.sketchDesigners?.length) {
+        and.push({ sketchDesigner: { is: { name: { in: params.sketchDesigners } } } });
+      }
+      if (params.revisionDesigners?.length) {
+        and.push({ revisionDesigner: { is: { name: { in: params.revisionDesigners } } } });
+      }
     }
 
     const where: Prisma.OrderWhereInput = and.length > 0 ? { AND: and } : {};

@@ -123,6 +123,7 @@ export interface OrdersBoardSettings {
   columnOrder: number[]
   searchQuery: string
   showNoOrderStatusColumn: boolean
+  disableDesignerFilterForSketch: boolean
 }
 
 export interface OrdersColumnResponse {

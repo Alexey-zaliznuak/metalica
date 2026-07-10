@@ -54,6 +54,13 @@ import { formatLastActivity } from '../utils'
 
 const NO_ORDER_STATUS_COLUMN_ID = -1
 
+// Статус заказа, для которого можно отключить фильтр по художникам.
+const SKETCH_STATUS_NAME = 'Готовим эскиз'
+
+function isSketchStatusName(name: string | undefined): boolean {
+  return (name ?? '').trim().toLowerCase() === SKETCH_STATUS_NAME.toLowerCase()
+}
+
 // Сколько заказов запрашиваем у сервера за одну «страницу» колонки.
 const PAGE_SIZE = 50
 // Сколько карточек добавляем в DOM за один шаг прокрутки (клиентское окно).
@@ -66,6 +73,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   columnOrder: [],
   searchQuery: '',
   showNoOrderStatusColumn: true,
+  disableDesignerFilterForSketch: false,
 }
 
 interface BoardColumn {
@@ -125,11 +133,17 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
         ? raw.showNoCrmColumn
         : true
 
+  const disableDesignerFilterForSketch =
+    typeof raw.disableDesignerFilterForSketch === 'boolean'
+      ? raw.disableDesignerFilterForSketch
+      : false
+
   return {
     selectedOrderStatusIds,
     columnOrder,
     searchQuery,
     showNoOrderStatusColumn,
+    disableDesignerFilterForSketch,
   }
 }
 
@@ -365,6 +379,7 @@ export default function OrdersPage() {
   const [selectedOnboardingManagers, setSelectedOnboardingManagers] = useState<string[]>([])
   const [selectedSketchDesigners, setSelectedSketchDesigners] = useState<string[]>([])
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
+  const [disableDesignerFilterForSketch, setDisableDesignerFilterForSketch] = useState(false)
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [designers, setDesigners] = useState<OrderAssigneesResponse['designers']>([])
   const [managerOptions, setManagerOptions] = useState<OrderFilterOptions>({
@@ -468,6 +483,7 @@ export default function OrdersPage() {
     skipSaveRef.current = true
     setSearch(parsed.searchQuery)
     setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
+    setDisableDesignerFilterForSketch(parsed.disableDesignerFilterForSketch)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -486,6 +502,7 @@ export default function OrdersPage() {
         columnOrder,
         searchQuery: search,
         showNoOrderStatusColumn,
+        disableDesignerFilterForSketch,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -493,6 +510,7 @@ export default function OrdersPage() {
     search,
     selectedOrderStatusIds,
     showNoOrderStatusColumn,
+    disableDesignerFilterForSketch,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -579,6 +597,15 @@ export default function OrdersPage() {
       if (columnId === NO_ORDER_STATUS_COLUMN_ID) params.noStatus = 'true'
       else params.orderStatusId = columnId
 
+      // Для колонки «Готовим эскиз» просим бэкенд игнорировать фильтр по
+      // художникам, если это включено в настройках доски.
+      if (
+        disableDesignerFilterForSketch &&
+        isSketchStatusName(orderStatusNameById.get(columnId))
+      ) {
+        params.ignoreDesigners = 'true'
+      }
+
       try {
         const { data } = await client.get<OrdersColumnResponse>('/orders', { params })
         setColumnData((prev) => {
@@ -607,7 +634,7 @@ export default function OrdersPage() {
         setError('Не удалось загрузить заказы')
       }
     },
-    [buildFilterParams],
+    [buildFilterParams, disableDesignerFilterForSketch, orderStatusNameById],
   )
 
   const reloadAll = useCallback(() => {
@@ -1005,6 +1032,26 @@ export default function OrdersPage() {
               renderInput={(params) => (
                 <TextField {...params} label="Художник правок" placeholder="Все" />
               )}
+            />
+            <Divider />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={disableDesignerFilterForSketch}
+                  onChange={(e) => setDisableDesignerFilterForSketch(e.target.checked)}
+                />
+              }
+              label={
+                <Box>
+                  <Typography variant="body2">
+                    Не фильтровать по художникам в колонке «{SKETCH_STATUS_NAME}»
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    В этой колонке заказы будут показаны независимо от выбранных
+                    художников.
+                  </Typography>
+                </Box>
+              }
             />
           </Stack>
         </DialogContent>

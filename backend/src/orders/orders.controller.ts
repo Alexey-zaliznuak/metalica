@@ -29,6 +29,7 @@ export class OrdersController {
     @Query('onboardingManagers') onboardingManagers?: string | string[],
     @Query('sketchDesigners') sketchDesigners?: string | string[],
     @Query('revisionDesigners') revisionDesigners?: string | string[],
+    @Query('ignoreDesigners') ignoreDesigners?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -50,6 +51,7 @@ export class OrdersController {
       onboardingManagers: toArray(onboardingManagers),
       sketchDesigners: toArray(sketchDesigners),
       revisionDesigners: toArray(revisionDesigners),
+      ignoreDesigners: ignoreDesigners === 'true' || ignoreDesigners === '1',
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });
