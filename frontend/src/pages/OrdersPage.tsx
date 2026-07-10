@@ -40,8 +40,8 @@ import PeopleAltIcon from '@mui/icons-material/PeopleAlt'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { useOrders } from '../orders/OrdersContext'
 import type {
+  BluesalesStatusOption,
   Order,
   OrderAssigneesResponse,
   OrdersBoardSettings,
@@ -126,24 +126,10 @@ function normalizeColumns(
 export default function OrdersPage() {
   const navigate = useNavigate()
   const { user, updateFrontendSettings } = useAuth()
-  const {
-    orders,
-    setOrders,
-    initialLoadDone,
-    error,
-    setError,
-    statuses: orderStatuses,
-    statusesLoaded,
-    statusesError,
-    applyParams,
-    beginInteraction,
-    endInteraction,
-  } = useOrders()
-
-  // Спиннер показываем только пока заказы ни разу не загружены. Фоновые
-  // авто-рефреши (раз в 10 сек) и смена фильтров не «мигают» доской.
-  const loading = !initialLoadDone
-  const bootError = statusesError ? 'Не удалось загрузить статусы заказов' : null
+  const [orders, setOrders] = useState<Order[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [bootError, setBootError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
   const [selectedDeliveryManagers, setSelectedDeliveryManagers] = useState<string[]>([])
@@ -152,6 +138,8 @@ export default function OrdersPage() {
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [designers, setDesigners] = useState<OrderAssigneesResponse['designers']>([])
+  const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
+  const [statusesLoaded, setStatusesLoaded] = useState(false)
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
   const [showNoOrderStatusColumn, setShowNoOrderStatusColumn] = useState(true)
   const [columnOrder, setColumnOrder] = useState<number[]>([])
@@ -171,19 +159,53 @@ export default function OrdersPage() {
   // it applies backend values, so we don't echo them straight back.
   const skipSaveRef = useRef(false)
 
-  // Передаём актуальные параметры выборки в провайдер. Он держит заказы в кэше
-  // и продолжает авто-рефреш раз в 10 сек, поэтому при возврате на страницу
-  // заказы не грузятся заново.
+  const fetchOrders = useCallback(async (q: string, statusIds: number[]) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const { data } = await client.get<{ items: Order[] }>('/orders', {
+        params: {
+          q: q || undefined,
+          orderStatusIds: statusIds.join(','),
+        },
+      })
+      setOrders(data.items)
+    } catch {
+      setError('Не удалось загрузить заказы')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!initialized) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      applyParams(search, selectedOrderStatusIds)
+      fetchOrders(search, selectedOrderStatusIds)
     }, 300)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [search, selectedOrderStatusIds, initialized, applyParams])
+  }, [search, selectedOrderStatusIds, initialized, fetchOrders])
+
+  useEffect(() => {
+    let active = true
+    void client
+      .get<BluesalesStatusOption[]>('/orders/order-statuses')
+      .then((res) => {
+        if (!active) return
+        setOrderStatuses(res.data)
+        setStatusesLoaded(true)
+      })
+      .catch(() => {
+        if (!active) return
+        setBootError('Не удалось загрузить статусы заказов')
+        setStatusesLoaded(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -433,9 +455,6 @@ export default function OrdersPage() {
       const nextOrderStatusId = targetColumnId
       const nextOrderStatus = orderStatusNameById.get(targetColumnId) ?? null
 
-      // Держим фоновый рефреш на паузе на всё время оптимистичного переноса и
-      // запроса к серверу, чтобы авто-обновление не откатило карточку.
-      beginInteraction()
       const prevOrders = orders
       setMovingOrderId(orderId)
       setOrders((prev) =>
@@ -462,10 +481,9 @@ export default function OrdersPage() {
         )
       } finally {
         setMovingOrderId(null)
-        endInteraction()
       }
     },
-    [orderStatusNameById, orders, beginInteraction, endInteraction, setOrders, setError],
+    [orderStatusNameById, orders],
   )
 
   return (
@@ -619,15 +637,9 @@ export default function OrdersPage() {
                           variant="outlined"
                           draggable={canMoveCard}
                           onDragStart={() => {
-                            if (canMoveCard) {
-                              setDraggingOrderId(order.id)
-                              beginInteraction()
-                            }
+                            if (canMoveCard) setDraggingOrderId(order.id)
                           }}
-                          onDragEnd={() => {
-                            setDraggingOrderId(null)
-                            if (canMoveCard) endInteraction()
-                          }}
+                          onDragEnd={() => setDraggingOrderId(null)}
                           onClick={() => navigate(`/orders/${order.id}`)}
                           sx={{
                             p: 1.2,

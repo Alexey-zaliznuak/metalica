@@ -4,7 +4,6 @@ import { CssBaseline, ThemeProvider } from '@mui/material'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import theme from './theme'
 import { AuthProvider } from './auth/AuthContext'
-import { OrdersProvider } from './orders/OrdersContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
@@ -23,7 +22,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <CssBaseline />
       <BrowserRouter>
         <AuthProvider>
-          <OrdersProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route
@@ -108,7 +106,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             />
             <Route path="*" element={<Navigate to="/orders" replace />} />
           </Routes>
-          </OrdersProvider>
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>
