@@ -23,20 +23,41 @@ export class OrdersController {
   @Get()
   findAll(
     @Query('orderStatusId') orderStatusId?: string,
-    @Query('orderStatusIds') orderStatusIds?: string,
-    @Query('crmStatusIds') crmStatusIds?: string,
+    @Query('noStatus') noStatus?: string,
     @Query('q') q?: string,
+    @Query('deliveryManagers') deliveryManagers?: string | string[],
+    @Query('onboardingManagers') onboardingManagers?: string | string[],
+    @Query('sketchDesigners') sketchDesigners?: string | string[],
+    @Query('revisionDesigners') revisionDesigners?: string | string[],
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.orders.findAll(
-      orderStatusId !== undefined ? Number(orderStatusId) : undefined,
-      orderStatusIds,
-      crmStatusIds,
+    const toArray = (value?: string | string[]): string[] | undefined => {
+      if (value == null) return undefined;
+      const arr = Array.isArray(value) ? value : [value];
+      const cleaned = arr.map((v) => v.trim()).filter((v) => v.length > 0);
+      return cleaned.length > 0 ? cleaned : undefined;
+    };
+
+    return this.orders.findAll({
+      orderStatusId:
+        orderStatusId !== undefined && orderStatusId !== ''
+          ? Number(orderStatusId)
+          : undefined,
+      noStatus: noStatus === 'true' || noStatus === '1',
       q,
-      page ? Number(page) : undefined,
-      limit ? Number(limit) : undefined,
-    );
+      deliveryManagers: toArray(deliveryManagers),
+      onboardingManagers: toArray(onboardingManagers),
+      sketchDesigners: toArray(sketchDesigners),
+      revisionDesigners: toArray(revisionDesigners),
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Get('filter-options')
+  getFilterOptions() {
+    return this.orders.getManagerOptions();
   }
 
   @Get('order-statuses')
@@ -72,24 +93,32 @@ export class OrdersController {
   updateOrderStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateOrderStatusDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.orders.updateOrderStatus(id, dto.statusId);
+    return this.orders.updateOrderStatus(id, dto.statusId, user);
   }
 
   @Patch(':id/crm-status')
   updateCrmStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateCrmStatusDto,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.orders.updateCrmStatus(
       id,
       dto.crmStatusId ?? null,
       dto.crmStatus ?? null,
+      user,
     );
   }
 
   @Get(':id/metrics')
   metrics(@Param('id', ParseIntPipe) id: number) {
     return this.orders.getMetrics(id);
+  }
+
+  @Get(':id/events')
+  events(@Param('id', ParseIntPipe) id: number) {
+    return this.orders.getEvents(id);
   }
 }

@@ -11,12 +11,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { AuthUser } from '../auth/current-user.decorator';
+import { OrderEventChange, OrderEventsService } from './order-events.service';
 
 @Injectable()
 export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private bluesalesApi: BluesalesApiService,
+    private orderEvents: OrderEventsService,
   ) {}
 
   private readonly userSelect = {
@@ -26,61 +28,77 @@ export class OrdersService {
     role: true,
   } as const;
 
-  async findAll(
-    orderStatusId?: number,
-    orderStatusIdsRaw?: string,
-    crmStatusIdsRaw?: string,
-    q?: string,
-    page = 1,
-    limit = 30,
-  ) {
-    const where: Prisma.OrderWhereInput = {};
-    const orderStatusIds = this.parseStatusIds(orderStatusIdsRaw);
-    if (orderStatusId !== undefined && Number.isFinite(orderStatusId)) {
-      orderStatusIds.push(orderStatusId);
-    }
-    const normalizedOrderStatusIds = Array.from(new Set(orderStatusIds));
-    const shouldReturnAllForStatuses = normalizedOrderStatusIds.length > 0;
+  /**
+   * Пагинированная выборка заказов для ОДНОЙ колонки доски.
+   * Колонка задаётся либо конкретным статусом заказа (`orderStatusId`), либо
+   * флагом `noStatus` (заказы без статуса / без данных BlueSales). Поиск и
+   * фильтры «по людям» применяются на сервере, чтобы пагинация была корректной.
+   */
+  async findAll(params: {
+    orderStatusId?: number;
+    noStatus?: boolean;
+    q?: string;
+    deliveryManagers?: string[];
+    onboardingManagers?: string[];
+    sketchDesigners?: string[];
+    revisionDesigners?: string[];
+    page?: number;
+    limit?: number;
+  }) {
+    const and: Prisma.OrderWhereInput[] = [];
 
-    const bluesalesInfoFilter: Prisma.BluesalesOrderInfoWhereInput = {};
-    if (normalizedOrderStatusIds.length > 0) {
-      bluesalesInfoFilter.orderStatusId = { in: normalizedOrderStatusIds };
-    }
-    const crmStatusIds = this.parseStatusIds(crmStatusIdsRaw);
-    if (crmStatusIds.length > 0) {
-      bluesalesInfoFilter.crmStatusId = { in: crmStatusIds };
-    }
-    if (shouldReturnAllForStatuses) {
-      const threeMonthsAgo = new Date();
-      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-      bluesalesInfoFilter.bsCreatedAt = { gte: threeMonthsAgo };
-    }
-    if (Object.keys(bluesalesInfoFilter).length > 0) {
-      where.bluesalesInfo = { is: bluesalesInfoFilter };
-    }
-    if (q && q.trim()) {
-      where.OR = [
-        { orderNumber: { contains: q, mode: 'insensitive' } },
-        { title: { contains: q, mode: 'insensitive' } },
-      ];
+    if (params.noStatus) {
+      // «Без статуса заказа»: либо у BlueSales-инфо пустой orderStatusId,
+      // либо заказ вообще без BlueSales-инфо (ручной).
+      and.push({
+        OR: [
+          { bluesalesInfo: { is: { orderStatusId: null } } },
+          { bluesalesInfo: { is: null } },
+        ],
+      });
+    } else if (
+      params.orderStatusId !== undefined &&
+      Number.isFinite(params.orderStatusId)
+    ) {
+      and.push({ bluesalesInfo: { is: { orderStatusId: params.orderStatusId } } });
     }
 
-    const safeLimit = shouldReturnAllForStatuses
-      ? null
-      : Math.min(Math.max(Math.trunc(limit) || 30, 1), 100);
-    const safePage = shouldReturnAllForStatuses ? 1 : Math.max(Math.trunc(page) || 1, 1);
+    const q = params.q?.trim();
+    if (q) {
+      and.push({
+        OR: [
+          { orderNumber: { contains: q, mode: 'insensitive' } },
+          { title: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (params.deliveryManagers?.length) {
+      and.push({ deliveryManagerName: { in: params.deliveryManagers } });
+    }
+    if (params.onboardingManagers?.length) {
+      and.push({ onboardingManagerName: { in: params.onboardingManagers } });
+    }
+    if (params.sketchDesigners?.length) {
+      and.push({ sketchDesigner: { is: { name: { in: params.sketchDesigners } } } });
+    }
+    if (params.revisionDesigners?.length) {
+      and.push({ revisionDesigner: { is: { name: { in: params.revisionDesigners } } } });
+    }
+
+    const where: Prisma.OrderWhereInput = and.length > 0 ? { AND: and } : {};
+
+    const limit = Math.min(Math.max(Math.trunc(params.limit ?? 50) || 50, 1), 100);
+    const page = Math.max(Math.trunc(params.page ?? 1) || 1, 1);
+    const skip = (page - 1) * limit;
 
     const [total, orders] = await Promise.all([
       this.prisma.order.count({ where }),
       this.prisma.order.findMany({
         where,
         orderBy: { updatedAt: 'desc' },
-        ...(safeLimit
-          ? {
-              skip: (safePage - 1) * safeLimit,
-              take: safeLimit,
-            }
-          : {}),
+        skip,
+        take: limit,
         include: {
           sketchDesigner: { select: this.userSelect },
           revisionDesigner: { select: this.userSelect },
@@ -112,9 +130,38 @@ export class OrdersService {
     return {
       items,
       total,
-      page: safePage,
-      limit: safeLimit ?? total,
-      totalPages: safeLimit ? Math.max(Math.ceil(total / safeLimit), 1) : 1,
+      page,
+      limit,
+      hasMore: skip + orders.length < total,
+    };
+  }
+
+  /**
+   * Уникальные имена менеджеров ведения/оформления — для фильтров доски
+   * (клиент больше не держит все заказы у себя, поэтому опции берём с сервера).
+   */
+  async getManagerOptions() {
+    const [delivery, onboarding] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { deliveryManagerName: { not: null } },
+        distinct: ['deliveryManagerName'],
+        select: { deliveryManagerName: true },
+        orderBy: { deliveryManagerName: 'asc' },
+      }),
+      this.prisma.order.findMany({
+        where: { onboardingManagerName: { not: null } },
+        distinct: ['onboardingManagerName'],
+        select: { onboardingManagerName: true },
+        orderBy: { onboardingManagerName: 'asc' },
+      }),
+    ]);
+    return {
+      deliveryManagers: delivery
+        .map((o) => o.deliveryManagerName)
+        .filter((n): n is string => !!n),
+      onboardingManagers: onboarding
+        .map((o) => o.onboardingManagerName)
+        .filter((n): n is string => !!n),
     };
   }
 
@@ -304,7 +351,13 @@ export class OrdersService {
   }
 
   async update(id: number, dto: UpdateOrderDto, actor: AuthUser) {
-    const existing = await this.prisma.order.findUnique({ where: { id } });
+    const existing = await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        sketchDesigner: { select: { id: true, name: true } },
+        revisionDesigner: { select: { id: true, name: true } },
+      },
+    });
     if (!existing) {
       throw new NotFoundException('Заказ не найден');
     }
@@ -315,6 +368,7 @@ export class OrdersService {
     }
 
     const data: Prisma.OrderUpdateInput = {};
+    const changes: OrderEventChange[] = [];
 
     if (dto.orderNumber !== undefined) {
       const orderNumber = dto.orderNumber.trim();
@@ -325,44 +379,80 @@ export class OrdersService {
         if (conflict) {
           throw new ConflictException('Заказ с таким номером уже существует');
         }
+        changes.push({
+          field: 'orderNumber',
+          oldValue: existing.orderNumber,
+          newValue: orderNumber,
+        });
       }
       data.orderNumber = orderNumber;
     }
 
     if (dto.title !== undefined) {
       const title = dto.title.trim();
-      data.title = title.length > 0 ? title : null;
+      const nextTitle = title.length > 0 ? title : null;
+      if (nextTitle !== existing.title) {
+        changes.push({ field: 'title', oldValue: existing.title, newValue: nextTitle });
+      }
+      data.title = nextTitle;
     }
 
     if (dto.dialogLink !== undefined) {
       const dialogLink = (dto.dialogLink ?? '').trim();
-      data.dialogLink = dialogLink.length > 0 ? dialogLink : null;
+      const nextDialogLink = dialogLink.length > 0 ? dialogLink : null;
+      if (nextDialogLink !== existing.dialogLink) {
+        changes.push({
+          field: 'dialogLink',
+          oldValue: existing.dialogLink,
+          newValue: nextDialogLink,
+        });
+      }
+      data.dialogLink = nextDialogLink;
     }
 
     if (dto.sketchDesignerId !== undefined) {
-      const userId = await this.validateAssigneeRole(
+      const next = await this.validateAssigneeRole(
         dto.sketchDesignerId,
         Role.DESIGNER,
         'Художник эскиза',
       );
+      const nextId = next?.id ?? null;
+      if (nextId !== existing.sketchDesignerId) {
+        changes.push({
+          field: 'sketchDesigner',
+          oldValue: existing.sketchDesigner?.name ?? null,
+          newValue: next?.name ?? null,
+          meta: { oldId: existing.sketchDesignerId, newId: nextId },
+        });
+      }
       data.sketchDesigner =
-        userId === null ? { disconnect: true } : { connect: { id: userId } };
+        nextId === null ? { disconnect: true } : { connect: { id: nextId } };
     }
 
     if (dto.revisionDesignerId !== undefined) {
-      const userId = await this.validateAssigneeRole(
+      const next = await this.validateAssigneeRole(
         dto.revisionDesignerId,
         Role.DESIGNER,
         'Художник правок',
       );
+      const nextId = next?.id ?? null;
+      if (nextId !== existing.revisionDesignerId) {
+        changes.push({
+          field: 'revisionDesigner',
+          oldValue: existing.revisionDesigner?.name ?? null,
+          newValue: next?.name ?? null,
+          meta: { oldId: existing.revisionDesignerId, newId: nextId },
+        });
+      }
       data.revisionDesigner =
-        userId === null ? { disconnect: true } : { connect: { id: userId } };
+        nextId === null ? { disconnect: true } : { connect: { id: nextId } };
     }
 
     await this.prisma.order.update({
       where: { id },
       data,
     });
+    await this.orderEvents.record(id, actor.id, changes);
     return this.findOne(id);
   }
 
@@ -414,7 +504,7 @@ export class OrdersService {
       }));
   }
 
-  async updateOrderStatus(id: number, statusId: number) {
+  async updateOrderStatus(id: number, statusId: number, actor?: AuthUser) {
     const order = await this.prisma.order.findUnique({
       where: { id },
       select: {
@@ -423,6 +513,8 @@ export class OrdersService {
         bluesalesInfo: {
           select: {
             bsOrderId: true,
+            orderStatusId: true,
+            orderStatus: true,
           },
         },
       },
@@ -433,6 +525,8 @@ export class OrdersService {
     if (!order.bluesalesInfo || order.source !== OrderSource.BLUESALES) {
       throw new BadRequestException('Для этого заказа недоступно изменение статуса заказа');
     }
+    const prevStatusId = order.bluesalesInfo.orderStatusId;
+    const prevStatusName = order.bluesalesInfo.orderStatus;
 
     try {
       await this.bluesalesApi.setOrderStatus(order.bluesalesInfo.bsOrderId, statusId);
@@ -466,10 +560,26 @@ export class OrdersService {
       },
     });
 
+    if (nextStatusId !== prevStatusId) {
+      await this.orderEvents.record(id, actor?.id ?? null, [
+        {
+          field: 'orderStatus',
+          oldValue: prevStatusName,
+          newValue: nextStatusName ?? (nextStatusId != null ? `Статус #${nextStatusId}` : null),
+          meta: { oldId: prevStatusId, newId: nextStatusId },
+        },
+      ]);
+    }
+
     return this.findOne(id);
   }
 
-  async updateCrmStatus(id: number, crmStatusId: number | null, crmStatus: string | null) {
+  async updateCrmStatus(
+    id: number,
+    crmStatusId: number | null,
+    crmStatus: string | null,
+    actor?: AuthUser,
+  ) {
     const order = await this.prisma.order.findUnique({
       where: { id },
       select: {
@@ -509,6 +619,9 @@ export class OrdersService {
       nextCrmStatus = null;
     }
 
+    const prevCrmStatusId = order.bluesalesInfo.crmStatusId;
+    const prevCrmStatus = order.bluesalesInfo.crmStatus;
+
     await this.prisma.bluesalesOrderInfo.update({
       where: { orderId: id },
       data: {
@@ -518,12 +631,34 @@ export class OrdersService {
       },
     });
 
+    if (nextCrmStatusId !== prevCrmStatusId) {
+      await this.orderEvents.record(id, actor?.id ?? null, [
+        {
+          field: 'crmStatus',
+          oldValue: prevCrmStatus,
+          newValue: nextCrmStatus,
+          meta: { oldId: prevCrmStatusId, newId: nextCrmStatusId },
+        },
+      ]);
+    }
+
     return this.findOne(id);
   }
 
   async getMetrics(id: number) {
     await this.findOne(id);
     return this.computeStats(id);
+  }
+
+  async getEvents(id: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!order) {
+      throw new NotFoundException('Заказ не найден');
+    }
+    return this.orderEvents.list(id);
   }
 
   private async withStats(order: OrderForView) {
@@ -581,13 +716,13 @@ export class OrdersService {
     userId: number | null,
     expectedRole: Role,
     label: string,
-  ): Promise<number | null> {
+  ): Promise<{ id: number; name: string } | null> {
     if (userId === null) {
       return null;
     }
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, role: true },
+      select: { id: true, name: true, role: true },
     });
     if (!user) {
       throw new BadRequestException(`${label}: пользователь не найден`);
@@ -597,16 +732,7 @@ export class OrdersService {
         `${label}: пользователь должен иметь роль ${expectedRole}`,
       );
     }
-    return user.id;
-  }
-
-  private parseStatusIds(raw?: string): number[] {
-    if (!raw) return [];
-    const ids = raw
-      .split(',')
-      .map((part) => Number(part.trim()))
-      .filter((value) => Number.isInteger(value) && value >= 0);
-    return Array.from(new Set(ids));
+    return { id: user.id, name: user.name };
   }
 
   private async computeStats(orderId: number): Promise<OrderStats> {

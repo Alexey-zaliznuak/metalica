@@ -121,6 +121,19 @@ export interface OrdersBoardSettings {
   showNoOrderStatusColumn: boolean
 }
 
+export interface OrdersColumnResponse {
+  items: Order[]
+  total: number
+  page: number
+  limit: number
+  hasMore: boolean
+}
+
+export interface OrderFilterOptions {
+  deliveryManagers: string[]
+  onboardingManagers: string[]
+}
+
 export interface PaginatedResponse<T> {
   items: T[]
   total: number
@@ -167,6 +180,16 @@ export interface Message {
   answerToId: number | null
   answerTo?: AnswerToRef | null
   attachments: Attachment[]
+}
+
+export interface OrderEvent {
+  id: number
+  orderId: number
+  field: string
+  oldValue: string | null
+  newValue: string | null
+  actor: MessageAuthor | null
+  createdAt: string
 }
 
 export type ChatType = 'PUBLIC' | 'PRIVATE'

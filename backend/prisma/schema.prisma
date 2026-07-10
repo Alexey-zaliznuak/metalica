@@ -48,6 +48,8 @@ model User {
   ordersAsRevisionDesigner    Order[]   @relation("OrderRevisionDesigner")
   // Правки, которые пользователь ЗАКРЫЛ (денормализованный closedById в RevisionClosure)
   closedRevisions             RevisionClosure[] @relation("RevisionClosedBy")
+  // События лога заказов, автором которых является пользователь
+  orderEvents                 OrderEvent[] @relation("OrderEventActor")
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
@@ -61,6 +63,7 @@ model Order {
   source              OrderSource         @default(MANUAL)
   messages            Message[]
   revisions           Revision[]
+  events              OrderEvent[]
   // Имена менеджеров подтягиваются из BlueSales (не FK):
   //  - deliveryManagerName  — менеджер ведения (customer.manager из BS)
   //  - onboardingManagerName — менеджер оформления (custom-поле «Оформление» из BS)
@@ -286,6 +289,32 @@ model RevisionClosure {
 
   @@index([closedById])
   @@index([closedAt])
+}
+
+// Лог событий по заказу: аудит ручных изменений полей в нашем CRM
+// («кто и что с чего на что поменял»). Отображается системными плашками
+// в чате заказа. actor = null зарезервировано под системные события
+// (напр. изменения, прилетевшие из синка BlueSales) на будущее.
+model OrderEvent {
+  id        Int      @id @default(autoincrement())
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId   Int
+  // Автор изменения. null = системное событие (не пользователь).
+  actor     User?    @relation("OrderEventActor", fields: [actorId], references: [id])
+  actorId   Int?
+  // Стабильный ключ поля: sketchDesigner | revisionDesigner | orderStatus |
+  // crmStatus | orderNumber | title | dialogLink. Человекочитаемую подпись
+  // формирует фронтенд.
+  field     String
+  // Значения в человекочитаемом виде (имена художников/статусов, текст).
+  oldValue  String?
+  newValue  String?
+  // Доп. данные (напр. { oldId, newId } для статусов/художников).
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([actorId])
 }
 
 model Attachment {

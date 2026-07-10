@@ -45,6 +45,7 @@ import PersonIcon from '@mui/icons-material/Person'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
+import HistoryIcon from '@mui/icons-material/History'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
@@ -56,6 +57,7 @@ import type {
   OrderArticle,
   OrderAssignee,
   Order,
+  OrderEvent,
   OrderMetrics,
   UpdateOrderPayload,
   UploadResponse,
@@ -347,6 +349,61 @@ function MessageBubble({
           </Paper>
         </Box>
       </Stack>
+    </Box>
+  )
+}
+
+// Человекочитаемые подписи полей заказа для системных событий лога.
+const EVENT_FIELD_LABELS: Record<string, string> = {
+  sketchDesigner: 'художника эскиза',
+  revisionDesigner: 'художника правок',
+  orderStatus: 'статус заказа',
+  crmStatus: 'CRM-статус',
+  orderNumber: 'номер заказа',
+  title: 'название',
+  dialogLink: 'ссылку на диалог',
+}
+
+// Системная запись лога заказа: по центру ленты, «кто что с чего на что поменял».
+function SystemEventRow({ event }: { event: OrderEvent }) {
+  const label = EVENT_FIELD_LABELS[event.field] ?? event.field
+  const actorName = event.actor?.name ?? 'Система'
+  const dash = '—'
+  const from = event.oldValue?.trim() ? event.oldValue : dash
+  const to = event.newValue?.trim() ? event.newValue : dash
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', my: 1 }}>
+      <Paper
+        elevation={0}
+        sx={{
+          px: 1.5,
+          py: 0.75,
+          borderRadius: 2,
+          bgcolor: `${BRAND.pale}66`,
+          border: `1px solid ${BRAND.pale}`,
+          maxWidth: '92%',
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={0.75}
+          alignItems="center"
+          justifyContent="center"
+          sx={{ flexWrap: 'wrap' }}
+        >
+          <HistoryIcon sx={{ fontSize: 15, color: 'text.secondary' }} />
+          <Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'center' }}>
+            <b>{actorName}</b> изменил(а) {label}:{' '}
+            <Box component="span" sx={{ textDecoration: 'line-through', opacity: 0.7 }}>
+              {from}
+            </Box>{' '}
+            → <b>{to}</b>
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.6 }}>
+            {formatTime(event.createdAt)}
+          </Typography>
+        </Stack>
+      </Paper>
     </Box>
   )
 }
@@ -847,6 +904,7 @@ export default function OrderThreadPage() {
   const [designerAssignees, setDesignerAssignees] = useState<OrderAssignee[]>([])
   const [metrics, setMetrics] = useState<OrderMetrics | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
+  const [events, setEvents] = useState<OrderEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [hasMore, setHasMore] = useState(false)
@@ -885,20 +943,23 @@ export default function OrderThreadPage() {
     setLoading(true)
     setError(null)
     try {
-      const [orderRes, metricsRes, messagesRes, statusesRes, assigneesRes] = await Promise.all([
-        client.get<Order>(`/orders/${orderId}`),
-        client.get<OrderMetrics>(`/orders/${orderId}/metrics`),
-        client.get<MessagesPage<Message>>(`/orders/${orderId}/messages`, {
-          params: { limit: MESSAGES_PAGE_SIZE },
-        }),
-        client.get<BluesalesStatusOption[]>('/orders/order-statuses'),
-        canReassignResponsible
-          ? client.get<AssigneesResponse>('/orders/assignees')
-          : Promise.resolve({ data: EMPTY_ASSIGNEES }),
-      ])
+      const [orderRes, metricsRes, messagesRes, eventsRes, statusesRes, assigneesRes] =
+        await Promise.all([
+          client.get<Order>(`/orders/${orderId}`),
+          client.get<OrderMetrics>(`/orders/${orderId}/metrics`),
+          client.get<MessagesPage<Message>>(`/orders/${orderId}/messages`, {
+            params: { limit: MESSAGES_PAGE_SIZE },
+          }),
+          client.get<OrderEvent[]>(`/orders/${orderId}/events`),
+          client.get<BluesalesStatusOption[]>('/orders/order-statuses'),
+          canReassignResponsible
+            ? client.get<AssigneesResponse>('/orders/assignees')
+            : Promise.resolve({ data: EMPTY_ASSIGNEES }),
+        ])
       setOrder(orderRes.data)
       setMetrics(metricsRes.data)
       setMessages(messagesRes.data.items)
+      setEvents(eventsRes.data)
       setNextCursor(messagesRes.data.nextCursor)
       setHasMore(messagesRes.data.hasMore)
       pendingScrollBottomRef.current = true
@@ -910,6 +971,15 @@ export default function OrderThreadPage() {
       setLoading(false)
     }
   }, [canReassignResponsible, orderId])
+
+  const refreshEvents = useCallback(async () => {
+    try {
+      const { data } = await client.get<OrderEvent[]>(`/orders/${orderId}/events`)
+      setEvents(data)
+    } catch {
+      /* лог событий не критичен */
+    }
+  }, [orderId])
 
   const loadOlder = useCallback(async () => {
     if (loadingOlderRef.current || !hasMore || nextCursor == null) return
@@ -968,12 +1038,14 @@ export default function OrderThreadPage() {
 
   const refreshOrderMeta = useCallback(async () => {
     try {
-      const [orderRes, metricsRes] = await Promise.all([
+      const [orderRes, metricsRes, eventsRes] = await Promise.all([
         client.get<Order>(`/orders/${orderId}`),
         client.get<OrderMetrics>(`/orders/${orderId}/metrics`),
+        client.get<OrderEvent[]>(`/orders/${orderId}/events`),
       ])
       setOrder(orderRes.data)
       setMetrics(metricsRes.data)
+      setEvents(eventsRes.data)
     } catch {
       /* non-critical */
     }
@@ -1008,6 +1080,7 @@ export default function OrderThreadPage() {
         statusId,
       })
       setOrder(data)
+      void refreshEvents()
     } catch {
       setOrder(prev)
       setSendError('Не удалось изменить статус заказа')
@@ -1028,6 +1101,7 @@ export default function OrderThreadPage() {
       }
       const { data } = await client.patch<Order>(`/orders/${orderId}`, payload)
       setOrder(data)
+      void refreshEvents()
     } catch {
       setSendError('Не удалось изменить ответственного')
     } finally {
@@ -1043,6 +1117,7 @@ export default function OrderThreadPage() {
         dialogLink: dialogLink.trim() ? dialogLink.trim() : null,
       })
       setOrder(data)
+      void refreshEvents()
     } catch {
       setSendError('Не удалось сохранить поле "Даилог BS"')
     } finally {
@@ -1080,6 +1155,7 @@ export default function OrderThreadPage() {
       }
       const { data } = await client.patch<Order>(`/orders/${orderId}`, payload)
       setOrder(data)
+      void refreshEvents()
       setEditOpen(false)
     } catch (err) {
       const status = (err as AxiosError)?.response?.status
@@ -1189,6 +1265,41 @@ export default function OrderThreadPage() {
       setKind('NORMAL')
     }
   }, [hasOpenRevision, kind])
+
+  // Единая лента: сообщения + системные события, отсортированные по времени.
+  // События вне загруженного окна сообщений (когда есть ещё более старые
+  // сообщения) скрываем, чтобы они не «висели» вверху без контекста —
+  // они появятся по мере подгрузки истории.
+  const timeline = useMemo(() => {
+    type TimelineItem =
+      | { type: 'message'; key: string; at: number; message: Message }
+      | { type: 'event'; key: string; at: number; event: OrderEvent }
+
+    const items: TimelineItem[] = messages.map((m) => ({
+      type: 'message',
+      key: `m-${m.id}`,
+      at: new Date(m.createdAt).getTime(),
+      message: m,
+    }))
+
+    const oldestLoadedAt = messages.length
+      ? new Date(messages[0].createdAt).getTime()
+      : null
+
+    for (const e of events) {
+      const at = new Date(e.createdAt).getTime()
+      if (hasMore && oldestLoadedAt != null && at < oldestLoadedAt) continue
+      items.push({ type: 'event', key: `e-${e.id}`, at, event: e })
+    }
+
+    items.sort((a, b) => {
+      if (a.at !== b.at) return a.at - b.at
+      // При равном времени показываем сообщение раньше вызванного им события.
+      if (a.type === b.type) return 0
+      return a.type === 'message' ? -1 : 1
+    })
+    return items
+  }, [messages, events, hasMore])
 
   const canSend = useMemo(
     () =>
@@ -1403,7 +1514,7 @@ export default function OrderThreadPage() {
             )}
           </Box>
         )}
-        {messages.length === 0 ? (
+        {timeline.length === 0 ? (
           <Box
             sx={{
               height: '100%',
@@ -1417,15 +1528,19 @@ export default function OrderThreadPage() {
             </Typography>
           </Box>
         ) : (
-          messages.map((m) => (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              ownSide={isOwnSide(m.author.id, user?.id)}
-              onOpenImage={setLightbox}
-              resolvedSeconds={resolutionByRequestId.get(m.id) ?? null}
-            />
-          ))
+          timeline.map((item) =>
+            item.type === 'message' ? (
+              <MessageBubble
+                key={item.key}
+                message={item.message}
+                ownSide={isOwnSide(item.message.author.id, user?.id)}
+                onOpenImage={setLightbox}
+                resolvedSeconds={resolutionByRequestId.get(item.message.id) ?? null}
+              />
+            ) : (
+              <SystemEventRow key={item.key} event={item.event} />
+            ),
+          )
         )}
         <div ref={listEndRef} />
       </Paper>

@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type UIEvent,
 } from 'react'
 import {
   Alert,
@@ -45,15 +46,20 @@ import type {
   BluesalesStatusOption,
   Order,
   OrderAssigneesResponse,
+  OrderFilterOptions,
   OrdersBoardSettings,
+  OrdersColumnResponse,
 } from '../api/types'
 import { formatLastActivity } from '../utils'
 
 const NO_ORDER_STATUS_COLUMN_ID = -1
 
-// Стабильная ссылка на пустой список — чтобы мемоизированные колонки без
-// заказов не перерисовывались из-за нового литерала [] на каждый рендер.
-const EMPTY_ORDERS: Order[] = []
+// Сколько заказов запрашиваем у сервера за одну «страницу» колонки.
+const PAGE_SIZE = 50
+// Сколько карточек добавляем в DOM за один шаг прокрутки (клиентское окно).
+const RENDER_STEP = 10
+// Высота области прокрутки колонки — чтобы на экране было видно ~4 карточки.
+const COLUMN_MAX_HEIGHT = 520
 
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedOrderStatusIds: [],
@@ -66,6 +72,26 @@ interface BoardColumn {
   id: number
   name: string
   isNoOrderStatus: boolean
+}
+
+interface ColumnState {
+  items: Order[]
+  page: number
+  total: number
+  hasMore: boolean
+  loading: boolean
+  renderCount: number
+  loaded: boolean
+}
+
+const EMPTY_COLUMN_STATE: ColumnState = {
+  items: [],
+  page: 0,
+  total: 0,
+  hasMore: false,
+  loading: false,
+  renderCount: RENDER_STEP,
+  loaded: false,
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -209,7 +235,7 @@ const OrderCard = memo(function OrderCard({
 
 interface BoardColumnViewProps {
   column: BoardColumn
-  orders: Order[]
+  state: ColumnState
   isColumnDragging: boolean
   movingOrderId: number | null
   onColumnDragStart: (id: number) => void
@@ -219,11 +245,12 @@ interface BoardColumnViewProps {
   onOpenOrder: (id: number) => void
   onOrderDragStart: (id: number, canMove: boolean) => void
   onOrderDragEnd: () => void
+  onNearBottom: (columnId: number) => void
 }
 
 const BoardColumnView = memo(function BoardColumnView({
   column,
-  orders,
+  state,
   isColumnDragging,
   movingOrderId,
   onColumnDragStart,
@@ -233,7 +260,24 @@ const BoardColumnView = memo(function BoardColumnView({
   onOpenOrder,
   onOrderDragStart,
   onOrderDragEnd,
+  onNearBottom,
 }: BoardColumnViewProps) {
+  const visibleOrders =
+    state.renderCount >= state.items.length
+      ? state.items
+      : state.items.slice(0, state.renderCount)
+  const canLoadMore = state.renderCount < state.items.length || state.hasMore
+
+  const handleScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      const el = event.currentTarget
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+        onNearBottom(column.id)
+      }
+    },
+    [column.id, onNearBottom],
+  )
+
   return (
     <Paper
       variant="outlined"
@@ -259,16 +303,17 @@ const BoardColumnView = memo(function BoardColumnView({
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
           {column.name}
         </Typography>
-        <Chip size="small" label={orders.length} />
+        <Chip size="small" label={state.total} />
       </Stack>
       <Divider />
       <Stack
         spacing={1}
-        sx={{ p: 1, maxHeight: 560, overflowY: 'auto' }}
+        sx={{ p: 1, maxHeight: COLUMN_MAX_HEIGHT, overflowY: 'auto' }}
+        onScroll={handleScroll}
         onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
         onDrop={() => onOrderDrop(column.id)}
       >
-        {orders.length === 0 && (
+        {state.items.length === 0 && !state.loading && (
           <Typography
             variant="body2"
             color="text.secondary"
@@ -277,7 +322,7 @@ const BoardColumnView = memo(function BoardColumnView({
             Нет заказов
           </Typography>
         )}
-        {orders.map((order) => (
+        {visibleOrders.map((order) => (
           <OrderCard
             key={order.id}
             order={order}
@@ -287,6 +332,21 @@ const BoardColumnView = memo(function BoardColumnView({
             onDragEnd={onOrderDragEnd}
           />
         ))}
+        {state.loading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+            <CircularProgress size={22} />
+          </Box>
+        )}
+        {!state.loading && canLoadMore && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ textAlign: 'center', py: 1 }}
+          >
+            Показано {visibleOrders.length} из {state.total} — прокрутите, чтобы
+            загрузить ещё
+          </Typography>
+        )}
       </Stack>
     </Paper>
   )
@@ -295,8 +355,8 @@ const BoardColumnView = memo(function BoardColumnView({
 export default function OrdersPage() {
   const navigate = useNavigate()
   const { user, updateFrontendSettings } = useAuth()
-  const [orders, setOrders] = useState<Order[]>([])
-  const [loading, setLoading] = useState(true)
+
+  const [columnData, setColumnData] = useState<Record<number, ColumnState>>({})
   const [error, setError] = useState<string | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
 
@@ -307,6 +367,10 @@ export default function OrdersPage() {
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [designers, setDesigners] = useState<OrderAssigneesResponse['designers']>([])
+  const [managerOptions, setManagerOptions] = useState<OrderFilterOptions>({
+    deliveryManagers: [],
+    onboardingManagers: [],
+  })
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [statusesLoaded, setStatusesLoaded] = useState(false)
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
@@ -314,60 +378,24 @@ export default function OrdersPage() {
   const [columnOrder, setColumnOrder] = useState<number[]>([])
   const [draggingColumnId, setDraggingColumnId] = useState<number | null>(null)
   const [movingOrderId, setMovingOrderId] = useState<number | null>(null)
-  // id перетаскиваемой карточки держим в ref, а не в state: перетаскивание
-  // карточек не должно перерисовывать доску (только чтение при drop).
-  const draggingOrderIdRef = useRef<number | null>(null)
-  // Зеркало draggingColumnId для стабильного drop-хендлера (state оставляем
-  // ради подсветки перетаскиваемой колонки).
-  const draggingColumnIdRef = useRef<number | null>(null)
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false)
   const [initialized, setInitialized] = useState(false)
 
-  // Актуальный список заказов для колбэков (drop), чтобы не тянуть `orders` в
-  // зависимости и не пересоздавать хендлеры на каждый рендер.
-  const ordersRef = useRef<Order[]>(orders)
+  // Актуальное состояние колонок для колбэков (скролл/drop), чтобы не тянуть
+  // columnData в зависимости и не пересоздавать хендлеры.
+  const columnDataRef = useRef<Record<number, ColumnState>>(columnData)
   useEffect(() => {
-    ordersRef.current = orders
-  }, [orders])
+    columnDataRef.current = columnData
+  }, [columnData])
+
+  // id перетаскиваемой карточки — в ref: перетаскивание не должно ререндерить доску.
+  const draggingOrderIdRef = useRef<number | null>(null)
+  // Зеркало draggingColumnId для стабильного drop-хендлера колонок.
+  const draggingColumnIdRef = useRef<number | null>(null)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Once the user edits the board locally, stop overwriting their in-progress
-  // selection with settings coming from the backend/other devices for this
-  // mounted session. A remount (e.g. navigating back from an order) resets this
-  // and re-reads the latest account settings.
   const dirtyRef = useRef(false)
-  // Skips the save that the settings-sync effect would otherwise trigger when
-  // it applies backend values, so we don't echo them straight back.
   const skipSaveRef = useRef(false)
-
-  const fetchOrders = useCallback(async (q: string, statusIds: number[]) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const { data } = await client.get<{ items: Order[] }>('/orders', {
-        params: {
-          q: q || undefined,
-          orderStatusIds: statusIds.join(','),
-        },
-      })
-      setOrders(data.items)
-    } catch {
-      setError('Не удалось загрузить заказы')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!initialized) return
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      fetchOrders(search, selectedOrderStatusIds)
-    }, 300)
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-  }, [search, selectedOrderStatusIds, initialized, fetchOrders])
 
   useEffect(() => {
     let active = true
@@ -397,16 +425,30 @@ export default function OrdersPage() {
         setDesigners(res.data.designers)
       })
       .catch(() => {
-        // Художников в фильтре просто дополним именами из заказов, если запрос упал.
+        // Художников в фильтре просто не покажем, если запрос упал.
       })
     return () => {
       active = false
     }
   }, [])
 
-  // Apply the account-wide settings (backend source of truth) to the board.
-  // Runs on mount and whenever the settings change (e.g. after the on-load
-  // refresh pulls another device's changes), unless the user is mid-edit.
+  useEffect(() => {
+    let active = true
+    void client
+      .get<OrderFilterOptions>('/orders/filter-options')
+      .then((res) => {
+        if (!active) return
+        setManagerOptions(res.data)
+      })
+      .catch(() => {
+        // Опции менеджеров необязательны — фильтр останется пустым.
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // Применение настроек доски (источник истины — бэкенд).
   useEffect(() => {
     if (!statusesLoaded) return
     if (dirtyRef.current) return
@@ -423,8 +465,6 @@ export default function OrdersPage() {
       parsed.showNoOrderStatusColumn,
     )
 
-    // The state writes below will trigger the save effect; skip that one run so
-    // we don't immediately persist the values we just loaded.
     skipSaveRef.current = true
     setSearch(parsed.searchQuery)
     setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
@@ -439,8 +479,6 @@ export default function OrdersPage() {
       skipSaveRef.current = false
       return
     }
-    // A genuine local edit: from now on this session owns the board state and
-    // persists it to the account (backend is the single source of truth).
     dirtyRef.current = true
     updateFrontendSettings({
       ordersBoard: {
@@ -461,7 +499,7 @@ export default function OrdersPage() {
 
   const boardColumns = useMemo<BoardColumn[]>(() => {
     const byId = new Map(orderStatuses.map((status) => [status.id, status]))
-    const allColumns = columnOrder
+    return columnOrder
       .filter(
         (id) =>
           id === NO_ORDER_STATUS_COLUMN_ID ||
@@ -472,44 +510,19 @@ export default function OrdersPage() {
           ? { id, name: 'Без статуса заказа', isNoOrderStatus: true }
           : { id, name: byId.get(id)!.name, isNoOrderStatus: false },
       )
-    return allColumns
   }, [orderStatuses, columnOrder, selectedOrderStatusIds])
 
-  const deliveryManagerOptions = useMemo(() => {
-    const set = new Set<string>()
-    for (const order of orders) {
-      const name = order.deliveryManagerName?.trim()
-      if (name) set.add(name)
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
-  }, [orders])
-
-  const onboardingManagerOptions = useMemo(() => {
-    const set = new Set<string>()
-    for (const order of orders) {
-      const name = order.onboardingManagerName?.trim()
-      if (name) set.add(name)
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
-  }, [orders])
+  const deliveryManagerOptions = managerOptions.deliveryManagers
+  const onboardingManagerOptions = managerOptions.onboardingManagers
 
   const designerNameOptions = useMemo(() => {
     const set = new Set<string>()
-    // Все аккаунты-художники, даже если на них ещё нет назначенных заказов.
     for (const designer of designers) {
       const name = designer.name?.trim()
       if (name) set.add(name)
     }
-    // На всякий случай добавляем имена из заказов (например, если аккаунт
-    // сменил роль, но остаётся назначенным на заказ).
-    for (const order of orders) {
-      const sketchName = order.sketchDesigner?.name?.trim()
-      if (sketchName) set.add(sketchName)
-      const revisionName = order.revisionDesigner?.name?.trim()
-      if (revisionName) set.add(revisionName)
-    }
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
-  }, [designers, orders])
+  }, [designers])
 
   const sketchDesignerOptions = designerNameOptions
   const revisionDesignerOptions = designerNameOptions
@@ -528,136 +541,200 @@ export default function OrdersPage() {
     ],
   )
 
-  const filteredOrders = useMemo(() => {
-    if (activePeopleFilterCount === 0) {
-      return orders
-    }
-    const deliverySet = new Set(selectedDeliveryManagers)
-    const onboardingSet = new Set(selectedOnboardingManagers)
-    const sketchSet = new Set(selectedSketchDesigners)
-    const revisionSet = new Set(selectedRevisionDesigners)
-    return orders.filter((order) => {
-      const deliveryOk =
-        deliverySet.size === 0 ||
-        (order.deliveryManagerName != null && deliverySet.has(order.deliveryManagerName))
-      const onboardingOk =
-        onboardingSet.size === 0 ||
-        (order.onboardingManagerName != null &&
-          onboardingSet.has(order.onboardingManagerName))
-      const sketchOk =
-        sketchSet.size === 0 ||
-        (order.sketchDesigner?.name != null && sketchSet.has(order.sketchDesigner.name))
-      const revisionOk =
-        revisionSet.size === 0 ||
-        (order.revisionDesigner?.name != null &&
-          revisionSet.has(order.revisionDesigner.name))
-      return deliveryOk && onboardingOk && sketchOk && revisionOk
-    })
-  }, [
-    orders,
-    activePeopleFilterCount,
-    selectedDeliveryManagers,
-    selectedOnboardingManagers,
-    selectedSketchDesigners,
-    selectedRevisionDesigners,
-  ])
-
-  const ordersByColumn = useMemo(() => {
-    const map = new Map<number, Order[]>()
-    boardColumns.forEach((column) => map.set(column.id, []))
-    for (const order of filteredOrders) {
-      const columnId = order.orderStatusId ?? NO_ORDER_STATUS_COLUMN_ID
-      if (map.has(columnId)) {
-        map.get(columnId)!.push(order)
-      }
-    }
-    return map
-  }, [filteredOrders, boardColumns])
-
-  const isEmpty = useMemo(
-    () => !loading && filteredOrders.length === 0,
-    [loading, filteredOrders.length],
-  )
-
   const orderStatusNameById = useMemo(() => {
     const map = new Map<number, string>()
     orderStatuses.forEach((status) => map.set(status.id, status.name))
     return map
   }, [orderStatuses])
 
-  const toggleOrderStatus = (statusId: number) => {
-    setSelectedOrderStatusIds((prev) => {
-      const exists = prev.includes(statusId)
-      if (exists) {
-        const next = prev.filter((id) => id !== statusId)
-        setColumnOrder((currentOrder) => currentOrder.filter((id) => id !== statusId))
-        return next
-      }
-      setColumnOrder((currentOrder) =>
-        currentOrder.includes(statusId) ? currentOrder : [...currentOrder, statusId],
-      )
-      return [...prev, statusId]
-    })
-  }
+  const buildFilterParams = useCallback((): Record<string, unknown> => {
+    const params: Record<string, unknown> = {}
+    const query = search.trim()
+    if (query) params.q = query
+    if (selectedDeliveryManagers.length) params.deliveryManagers = selectedDeliveryManagers
+    if (selectedOnboardingManagers.length)
+      params.onboardingManagers = selectedOnboardingManagers
+    if (selectedSketchDesigners.length) params.sketchDesigners = selectedSketchDesigners
+    if (selectedRevisionDesigners.length)
+      params.revisionDesigners = selectedRevisionDesigners
+    return params
+  }, [
+    search,
+    selectedDeliveryManagers,
+    selectedOnboardingManagers,
+    selectedSketchDesigners,
+    selectedRevisionDesigners,
+  ])
 
-  const toggleNoOrderStatusColumn = (checked: boolean) => {
-    setShowNoOrderStatusColumn(checked)
-    setColumnOrder((prev) => {
-      if (checked) {
-        return prev.includes(NO_ORDER_STATUS_COLUMN_ID)
-          ? prev
-          : [...prev, NO_ORDER_STATUS_COLUMN_ID]
-      }
-      return prev.filter((id) => id !== NO_ORDER_STATUS_COLUMN_ID)
-    })
-  }
+  const fetchColumnPage = useCallback(
+    async (columnId: number, page: number, replace: boolean) => {
+      setColumnData((prev) => ({
+        ...prev,
+        [columnId]: { ...(prev[columnId] ?? EMPTY_COLUMN_STATE), loading: true },
+      }))
 
-  const handleColumnDrop = useCallback((targetColumnId: number) => {
-    const draggedId = draggingColumnIdRef.current
-    if (draggedId == null || draggedId === targetColumnId) return
-    setColumnOrder((prev) => {
-      const withoutDragged = prev.filter((id) => id !== draggedId)
-      const targetIndex = withoutDragged.indexOf(targetColumnId)
-      if (targetIndex < 0) return prev
-      const next = [...withoutDragged]
-      next.splice(targetIndex, 0, draggedId)
-      return next
+      const params = buildFilterParams()
+      params.page = page
+      params.limit = PAGE_SIZE
+      if (columnId === NO_ORDER_STATUS_COLUMN_ID) params.noStatus = 'true'
+      else params.orderStatusId = columnId
+
+      try {
+        const { data } = await client.get<OrdersColumnResponse>('/orders', { params })
+        setColumnData((prev) => {
+          const existing = prev[columnId]
+          const items = replace ? data.items : [...(existing?.items ?? []), ...data.items]
+          const prevRender = replace ? 0 : existing?.renderCount ?? 0
+          const renderCount = Math.min(prevRender + RENDER_STEP, items.length)
+          return {
+            ...prev,
+            [columnId]: {
+              items,
+              page: data.page,
+              total: data.total,
+              hasMore: data.hasMore,
+              loading: false,
+              renderCount: Math.max(renderCount, Math.min(RENDER_STEP, items.length)),
+              loaded: true,
+            },
+          }
+        })
+      } catch {
+        setColumnData((prev) => ({
+          ...prev,
+          [columnId]: { ...(prev[columnId] ?? EMPTY_COLUMN_STATE), loading: false, loaded: true },
+        }))
+        setError('Не удалось загрузить заказы')
+      }
+    },
+    [buildFilterParams],
+  )
+
+  const reloadAll = useCallback(() => {
+    boardColumns.forEach((column) => {
+      void fetchColumnPage(column.id, 1, true)
     })
-  }, [])
+  }, [boardColumns, fetchColumnPage])
+
+  useEffect(() => {
+    if (!initialized) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(reloadAll, 300)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [initialized, reloadAll])
+
+  const handleColumnNearBottom = useCallback(
+    (columnId: number) => {
+      const state = columnDataRef.current[columnId]
+      if (!state || state.loading) return
+      if (state.renderCount < state.items.length) {
+        setColumnData((prev) => {
+          const current = prev[columnId]
+          if (!current) return prev
+          return {
+            ...prev,
+            [columnId]: {
+              ...current,
+              renderCount: Math.min(current.renderCount + RENDER_STEP, current.items.length),
+            },
+          }
+        })
+        return
+      }
+      if (state.hasMore) {
+        void fetchColumnPage(columnId, state.page + 1, false)
+      }
+    },
+    [fetchColumnPage],
+  )
 
   const moveOrderToColumn = useCallback(
     async (orderId: number, targetColumnId: number) => {
-      const current = ordersRef.current.find((order) => order.id === orderId)
-      if (!current) return
-
-      const currentColumnId = current.orderStatusId ?? NO_ORDER_STATUS_COLUMN_ID
-      if (currentColumnId === targetColumnId) return
       if (targetColumnId === NO_ORDER_STATUS_COLUMN_ID) return
 
-      const nextOrderStatusId = targetColumnId
-      const nextOrderStatus = orderStatusNameById.get(targetColumnId) ?? null
+      // Ищем исходную колонку и заказ в текущем состоянии.
+      let sourceColumnId: number | null = null
+      let sourceOrder: Order | null = null
+      for (const [colId, state] of Object.entries(columnDataRef.current)) {
+        const found = state.items.find((o) => o.id === orderId)
+        if (found) {
+          sourceColumnId = Number(colId)
+          sourceOrder = found
+          break
+        }
+      }
+      if (sourceColumnId === null || sourceOrder === null) return
+      if (sourceColumnId === targetColumnId) return
 
-      const prevOrders = ordersRef.current
+      const nextStatus = orderStatusNameById.get(targetColumnId) ?? null
+      const movedOrder: Order = {
+        ...sourceOrder,
+        orderStatusId: targetColumnId,
+        orderStatus: nextStatus,
+      }
+      const fromColumnId = sourceColumnId
+      const originalOrder = sourceOrder
+
       setMovingOrderId(orderId)
-      setOrders((prev) =>
-        prev.map((order) =>
-          order.id === orderId
-            ? {
-                ...order,
-                orderStatusId: nextOrderStatusId,
-                orderStatus: nextOrderStatus,
-              }
-            : order,
-        ),
-      )
+      // Оптимистично переносим карточку между колонками.
+      setColumnData((prev) => {
+        const next = { ...prev }
+        const from = prev[fromColumnId]
+        if (from) {
+          next[fromColumnId] = {
+            ...from,
+            items: from.items.filter((o) => o.id !== orderId),
+            total: Math.max(from.total - 1, 0),
+            renderCount: Math.max(from.renderCount - 1, RENDER_STEP),
+          }
+        }
+        const to = prev[targetColumnId] ?? EMPTY_COLUMN_STATE
+        next[targetColumnId] = {
+          ...to,
+          items: [movedOrder, ...to.items.filter((o) => o.id !== orderId)],
+          total: to.total + 1,
+          renderCount: Math.max(to.renderCount, RENDER_STEP),
+        }
+        return next
+      })
 
       try {
         const { data } = await client.patch<Order>(`/orders/${orderId}/order-status`, {
-          statusId: nextOrderStatusId,
+          statusId: targetColumnId,
         })
-        setOrders((prev) => prev.map((order) => (order.id === orderId ? data : order)))
+        setColumnData((prev) => {
+          const to = prev[targetColumnId]
+          if (!to) return prev
+          return {
+            ...prev,
+            [targetColumnId]: {
+              ...to,
+              items: to.items.map((o) => (o.id === orderId ? data : o)),
+            },
+          }
+        })
       } catch {
-        setOrders(prevOrders)
+        // Откат: возвращаем заказ в исходную колонку.
+        setColumnData((prev) => {
+          const next = { ...prev }
+          const to = prev[targetColumnId]
+          if (to) {
+            next[targetColumnId] = {
+              ...to,
+              items: to.items.filter((o) => o.id !== orderId),
+              total: Math.max(to.total - 1, 0),
+            }
+          }
+          const from = prev[fromColumnId] ?? EMPTY_COLUMN_STATE
+          next[fromColumnId] = {
+            ...from,
+            items: [originalOrder, ...from.items.filter((o) => o.id !== orderId)],
+            total: from.total + 1,
+          }
+          return next
+        })
         setError(
           'Не удалось переместить заказ. Для ручных заказов статус в BlueSales не меняется.',
         )
@@ -668,10 +745,7 @@ export default function OrdersPage() {
     [orderStatusNameById],
   )
 
-  const handleOpenOrder = useCallback(
-    (id: number) => navigate(`/orders/${id}`),
-    [navigate],
-  )
+  const handleOpenOrder = useCallback((id: number) => navigate(`/orders/${id}`), [navigate])
 
   const handleOrderDragStart = useCallback((id: number, canMove: boolean) => {
     draggingOrderIdRef.current = canMove ? id : null
@@ -700,6 +774,56 @@ export default function OrdersPage() {
     draggingColumnIdRef.current = null
     setDraggingColumnId(null)
   }, [])
+
+  const handleColumnDrop = useCallback((targetColumnId: number) => {
+    const draggedId = draggingColumnIdRef.current
+    if (draggedId == null || draggedId === targetColumnId) return
+    setColumnOrder((prev) => {
+      const withoutDragged = prev.filter((id) => id !== draggedId)
+      const targetIndex = withoutDragged.indexOf(targetColumnId)
+      if (targetIndex < 0) return prev
+      const next = [...withoutDragged]
+      next.splice(targetIndex, 0, draggedId)
+      return next
+    })
+  }, [])
+
+  const toggleOrderStatus = (statusId: number) => {
+    setSelectedOrderStatusIds((prev) => {
+      const exists = prev.includes(statusId)
+      if (exists) {
+        const next = prev.filter((id) => id !== statusId)
+        setColumnOrder((currentOrder) => currentOrder.filter((id) => id !== statusId))
+        return next
+      }
+      setColumnOrder((currentOrder) =>
+        currentOrder.includes(statusId) ? currentOrder : [...currentOrder, statusId],
+      )
+      return [...prev, statusId]
+    })
+  }
+
+  const toggleNoOrderStatusColumn = (checked: boolean) => {
+    setShowNoOrderStatusColumn(checked)
+    setColumnOrder((prev) => {
+      if (checked) {
+        return prev.includes(NO_ORDER_STATUS_COLUMN_ID)
+          ? prev
+          : [...prev, NO_ORDER_STATUS_COLUMN_ID]
+      }
+      return prev.filter((id) => id !== NO_ORDER_STATUS_COLUMN_ID)
+    })
+  }
+
+  const totalShown = useMemo(
+    () => boardColumns.reduce((sum, c) => sum + (columnData[c.id]?.total ?? 0), 0),
+    [boardColumns, columnData],
+  )
+  const anyLoaded = useMemo(
+    () => boardColumns.some((c) => columnData[c.id]?.loaded),
+    [boardColumns, columnData],
+  )
+  const isEmpty = anyLoaded && totalShown === 0
 
   return (
     <Box>
@@ -778,7 +902,7 @@ export default function OrdersPage() {
           bgcolor: '#f7f9fc',
         }}
       >
-        {loading ? (
+        {!initialized ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
             <CircularProgress />
           </Box>
@@ -797,7 +921,7 @@ export default function OrdersPage() {
               <BoardColumnView
                 key={column.id}
                 column={column}
-                orders={ordersByColumn.get(column.id) ?? EMPTY_ORDERS}
+                state={columnData[column.id] ?? EMPTY_COLUMN_STATE}
                 isColumnDragging={draggingColumnId === column.id}
                 movingOrderId={movingOrderId}
                 onColumnDragStart={handleColumnDragStart}
@@ -807,15 +931,16 @@ export default function OrdersPage() {
                 onOpenOrder={handleOpenOrder}
                 onOrderDragStart={handleOrderDragStart}
                 onOrderDragEnd={handleOrderDragEnd}
+                onNearBottom={handleColumnNearBottom}
               />
             ))}
           </Stack>
         )}
       </Paper>
 
-      {!loading && (
+      {initialized && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-          Показано заказов: {filteredOrders.length}
+          Всего заказов по колонкам: {totalShown}
           {isEmpty ? ' (ничего не найдено по текущим фильтрам)' : ''}
         </Typography>
       )}
