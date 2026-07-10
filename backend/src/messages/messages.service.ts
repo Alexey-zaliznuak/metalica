@@ -81,6 +81,19 @@ export class MessagesService {
 
     // Запрос правки: сообщение + связанная (пустая) модель Revision.
     if (dto.kind === MessageKind.REVISION_REQUEST) {
+      // Нельзя открывать новую правку, пока не закрыта предыдущая: иначе
+      // теряется однозначная связь «правка -> закрытие» и портится аналитика.
+      const openRevision = await this.prisma.revision.findFirst({
+        where: { orderId, closure: { is: null } },
+        select: { id: true },
+      });
+      if (openRevision) {
+        throw new BadRequestException(
+          'По заказу уже есть незакрытая правка. Дождитесь её закрытия, ' +
+            'а новые детали добавьте, отредактировав запрос правки или отправив обычное сообщение.',
+        );
+      }
+
       const message = await this.prisma.message.create({
         data: {
           orderId,

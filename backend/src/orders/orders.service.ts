@@ -12,6 +12,13 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { AuthUser } from '../auth/current-user.decorator';
 
+interface OrderStats {
+  revisionCount: number;
+  openRevisions: number;
+  avgRevisionSeconds: number | null;
+  lastMessageAt: Date | null;
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -96,7 +103,10 @@ export class OrdersService {
       }),
     ]);
 
-    const items = await Promise.all(orders.map((o) => this.withStats(o)));
+    const statsByOrderId = await this.computeStatsForOrders(orders.map((o) => o.id));
+    const items = orders.map((o) =>
+      this.serializeOrder(o, statsByOrderId.get(o.id) ?? this.emptyStats()),
+    );
 
     return {
       items,
@@ -511,7 +521,13 @@ export class OrdersService {
   }
 
   async getMetrics(id: number) {
-    await this.findOne(id);
+    const exists = await this.prisma.order.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!exists) {
+      throw new NotFoundException('Заказ не найден');
+    }
     return this.computeStats(id);
   }
 
@@ -549,6 +565,48 @@ export class OrdersService {
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true },
     });
+    return this.serializeOrder(order, {
+      ...stats,
+      lastMessageAt: last?.createdAt ?? null,
+    });
+  }
+
+  /**
+   * Приводит заказ + предрассчитанную статистику к форме карточки для списка.
+   * Используется и в findAll (batch-статистика), и в withStats (одиночный заказ),
+   * чтобы форма ответа не расходилась между эндпоинтами.
+   */
+  private serializeOrder(
+    order: {
+      id: number;
+      orderNumber: string;
+      title: string | null;
+      source: OrderSource;
+      createdAt: Date;
+      dialogLink?: string | null;
+      deliveryManagerName?: string | null;
+      onboardingManagerName?: string | null;
+      sketchDesigner?: {
+        id: number;
+        name: string;
+        username: string;
+        role: Role;
+      } | null;
+      revisionDesigner?: {
+        id: number;
+        name: string;
+        username: string;
+        role: Role;
+      } | null;
+      bluesalesInfo?: {
+        orderStatusId: number | null;
+        orderStatus: string | null;
+        crmStatusId: number | null;
+        crmStatus: string | null;
+      } | null;
+    },
+    stats: OrderStats,
+  ) {
     return {
       id: order.id,
       orderNumber: order.orderNumber,
@@ -566,9 +624,96 @@ export class OrdersService {
       revisionCount: stats.revisionCount,
       openRevisions: stats.openRevisions,
       avgRevisionSeconds: stats.avgRevisionSeconds,
-      lastMessageAt: last?.createdAt ?? null,
+      lastMessageAt: stats.lastMessageAt,
       createdAt: order.createdAt,
     };
+  }
+
+  private emptyStats(): OrderStats {
+    return {
+      revisionCount: 0,
+      openRevisions: 0,
+      avgRevisionSeconds: null,
+      lastMessageAt: null,
+    };
+  }
+
+  /**
+   * Считает статистику (кол-во правок, открытые правки, среднее время правки,
+   * дата последнего сообщения) сразу для набора заказов за фиксированное число
+   * запросов — вместо ~4 запросов на каждый заказ (устраняет N+1 в списке).
+   */
+  private async computeStatsForOrders(
+    orderIds: number[],
+  ): Promise<Map<number, OrderStats>> {
+    const result = new Map<number, OrderStats>();
+    if (orderIds.length === 0) {
+      return result;
+    }
+    for (const id of orderIds) {
+      result.set(id, this.emptyStats());
+    }
+
+    const [totalGroups, openGroups, closures, lastMessageGroups] =
+      await Promise.all([
+        this.prisma.revision.groupBy({
+          by: ['orderId'],
+          where: { orderId: { in: orderIds } },
+          _count: { _all: true },
+        }),
+        this.prisma.revision.groupBy({
+          by: ['orderId'],
+          where: { orderId: { in: orderIds }, closure: { is: null } },
+          _count: { _all: true },
+        }),
+        this.prisma.revisionClosure.findMany({
+          where: { revision: { orderId: { in: orderIds } } },
+          select: {
+            openedAt: true,
+            closedAt: true,
+            revision: { select: { orderId: true } },
+          },
+        }),
+        this.prisma.message.groupBy({
+          by: ['orderId'],
+          where: { orderId: { in: orderIds } },
+          _max: { createdAt: true },
+        }),
+      ]);
+
+    for (const group of totalGroups) {
+      const entry = result.get(group.orderId);
+      if (entry) entry.revisionCount = group._count._all;
+    }
+    for (const group of openGroups) {
+      const entry = result.get(group.orderId);
+      if (entry) entry.openRevisions = group._count._all;
+    }
+
+    const durations = new Map<number, { sum: number; count: number }>();
+    for (const closure of closures) {
+      const orderId = closure.revision.orderId;
+      const seconds =
+        (closure.closedAt.getTime() - closure.openedAt.getTime()) / 1000;
+      if (seconds < 0) continue;
+      const acc = durations.get(orderId) ?? { sum: 0, count: 0 };
+      acc.sum += seconds;
+      acc.count += 1;
+      durations.set(orderId, acc);
+    }
+    for (const [orderId, acc] of durations) {
+      const entry = result.get(orderId);
+      if (entry && acc.count > 0) {
+        entry.avgRevisionSeconds = Math.round(acc.sum / acc.count);
+      }
+    }
+
+    for (const group of lastMessageGroups) {
+      const entry = result.get(group.orderId);
+      if (entry) entry.lastMessageAt = group._max.createdAt ?? null;
+    }
+
+    return result;
   }
 
   private canChangeResponsible(actor: AuthUser) {

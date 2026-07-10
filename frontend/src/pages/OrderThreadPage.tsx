@@ -1165,9 +1165,38 @@ export default function OrderThreadPage() {
     return result
   }, [messages])
 
+  // Есть ли незакрытая правка: запрос правки, на который ещё нет ответа.
+  // Пока такая правка открыта, нельзя отправлять новый запрос правки.
+  const hasOpenRevision = useMemo(() => {
+    const answeredRequestIds = new Set<number>()
+    for (const m of messages) {
+      if (m.kind === 'REVISION_ANSWER' && m.answerToId != null) {
+        answeredRequestIds.add(m.answerToId)
+      }
+    }
+    return messages.some(
+      (m) => m.kind === 'REVISION_REQUEST' && !answeredRequestIds.has(m.id),
+    )
+  }, [messages])
+
+  // Мягко возвращаем режим к обычному сообщению, если выбранный режим больше
+  // недоступен: «Запрос правки» — когда правка уже открыта, «Правка готова» —
+  // когда закрывать нечего (иначе получилось бы два закрытия подряд).
+  useEffect(() => {
+    if (hasOpenRevision && kind === 'REVISION_REQUEST') {
+      setKind('NORMAL')
+    } else if (!hasOpenRevision && kind === 'REVISION_ANSWER') {
+      setKind('NORMAL')
+    }
+  }, [hasOpenRevision, kind])
+
   const canSend = useMemo(
-    () => (body.trim().length > 0 || pendingImages.length > 0) && !sending,
-    [body, pendingImages.length, sending],
+    () =>
+      (body.trim().length > 0 || pendingImages.length > 0) &&
+      !sending &&
+      !(kind === 'REVISION_REQUEST' && hasOpenRevision) &&
+      !(kind === 'REVISION_ANSWER' && !hasOpenRevision),
+    [body, pendingImages.length, sending, kind, hasOpenRevision],
   )
 
   const handleSend = async () => {
@@ -1202,8 +1231,16 @@ export default function OrderThreadPage() {
       setBody('')
       setKind('NORMAL')
       refreshOrderMeta()
-    } catch {
-      setSendError('Не удалось отправить сообщение')
+    } catch (err) {
+      const axiosErr = err as AxiosError<{ message?: string | string[] }>
+      const serverMessage = axiosErr?.response?.data?.message
+      setSendError(
+        axiosErr?.response?.status === 400 && serverMessage
+          ? Array.isArray(serverMessage)
+            ? serverMessage.join(', ')
+            : serverMessage
+          : 'Не удалось отправить сообщение',
+      )
     } finally {
       setSending(false)
     }
@@ -1426,31 +1463,61 @@ export default function OrderThreadPage() {
           sx={{ mb: 1, flexWrap: 'wrap', gap: 0.5 }}
         >
           <ToggleButton value="NORMAL">Обычное</ToggleButton>
-          <ToggleButton
-            value="REVISION_REQUEST"
-            sx={{
-              '&.Mui-selected': {
-                bgcolor: `${ACCENT.revision}1f`,
-                color: ACCENT.revision,
-                '&:hover': { bgcolor: `${ACCENT.revision}2e` },
-              },
-            }}
+          <Tooltip
+            title={
+              hasOpenRevision
+                ? 'По заказу уже есть незакрытая правка — дождитесь её закрытия'
+                : ''
+            }
           >
-            Запрос правки
-          </ToggleButton>
-          <ToggleButton
-            value="REVISION_ANSWER"
-            sx={{
-              '&.Mui-selected': {
-                bgcolor: `${ACCENT.resolution}1f`,
-                color: ACCENT.resolution,
-                '&:hover': { bgcolor: `${ACCENT.resolution}2e` },
-              },
-            }}
+            <span>
+              <ToggleButton
+                value="REVISION_REQUEST"
+                disabled={hasOpenRevision}
+                sx={{
+                  '&.Mui-selected': {
+                    bgcolor: `${ACCENT.revision}1f`,
+                    color: ACCENT.revision,
+                    '&:hover': { bgcolor: `${ACCENT.revision}2e` },
+                  },
+                }}
+              >
+                Запрос правки
+              </ToggleButton>
+            </span>
+          </Tooltip>
+          <Tooltip
+            title={
+              !hasOpenRevision
+                ? 'Нет открытой правки — закрывать нечего'
+                : ''
+            }
           >
-            Правка готова
-          </ToggleButton>
+            <span>
+              <ToggleButton
+                value="REVISION_ANSWER"
+                disabled={!hasOpenRevision}
+                sx={{
+                  '&.Mui-selected': {
+                    bgcolor: `${ACCENT.resolution}1f`,
+                    color: ACCENT.resolution,
+                    '&:hover': { bgcolor: `${ACCENT.resolution}2e` },
+                  },
+                }}
+              >
+                Правка готова
+              </ToggleButton>
+            </span>
+          </Tooltip>
         </ToggleButtonGroup>
+
+        {hasOpenRevision && (
+          <Alert severity="info" icon={<InfoOutlinedIcon fontSize="small" />} sx={{ mb: 1 }}>
+            По заказу уже есть незакрытая правка. Новый запрос правки создать нельзя, пока
+            текущая не закрыта. Если появились новые детали — отредактируйте существующий
+            запрос правки или отправьте обычное сообщение (без пометок).
+          </Alert>
+        )}
 
         {pendingImages.length > 0 && (
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 1, gap: 1 }}>

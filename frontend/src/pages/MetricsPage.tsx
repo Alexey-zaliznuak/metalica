@@ -7,25 +7,16 @@ import {
   CardContent,
   CircularProgress,
   Grid,
-  Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Typography,
 } from '@mui/material'
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
 import EditNoteIcon from '@mui/icons-material/EditNote'
-import TimerIcon from '@mui/icons-material/Timer'
 import PendingActionsIcon from '@mui/icons-material/PendingActions'
 import ReportProblemIcon from '@mui/icons-material/ReportProblem'
 import type { ReactNode } from 'react'
 import client from '../api/client'
-import type { DesignerMetric, MetricsOverview } from '../api/types'
-import { formatDuration } from '../utils'
+import type { MetricsOverview } from '../api/types'
 import { BRAND, ACCENT } from '../theme'
 
 function MetricCard({
@@ -91,7 +82,6 @@ function MetricCard({
 export default function MetricsPage() {
   const navigate = useNavigate()
   const [overview, setOverview] = useState<MetricsOverview | null>(null)
-  const [byDesigner, setByDesigner] = useState<DesignerMetric[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -101,13 +91,11 @@ export default function MetricsPage() {
       setLoading(true)
       setError(null)
       try {
-        const [overviewRes, designerRes] = await Promise.all([
-          client.get<MetricsOverview>('/metrics/overview'),
-          client.get<DesignerMetric[]>('/metrics/by-designer'),
-        ])
+        const overviewRes = await client.get<MetricsOverview>(
+          '/metrics/overview',
+        )
         if (!active) return
         setOverview(overviewRes.data)
-        setByDesigner(designerRes.data)
       } catch {
         if (active) setError('Не удалось загрузить метрики')
       } finally {
@@ -126,11 +114,6 @@ export default function MetricsPage() {
       </Box>
     )
   }
-
-  const maxRevisions = byDesigner.reduce(
-    (max, d) => Math.max(max, d.revisions),
-    0,
-  )
 
   return (
     <Box>
@@ -161,18 +144,10 @@ export default function MetricsPage() {
         <Grid item xs={12} sm={6} md={2.4}>
           <MetricCard
             icon={<EditNoteIcon />}
-            label="всего правок — открыть аналитику"
+            label="Правки"
             value={overview?.totalRevisions ?? 0}
             color={BRAND.main}
             onClick={() => navigate('/metrics/revisions')}
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={2.4}>
-          <MetricCard
-            icon={<TimerIcon />}
-            label="среднее время правки"
-            value={formatDuration(overview?.avgRevisionSeconds)}
-            color={BRAND.light}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
@@ -192,72 +167,6 @@ export default function MetricsPage() {
           />
         </Grid>
       </Grid>
-
-      <Typography variant="h6" sx={{ mb: 1.5 }}>
-        По дизайнерам
-      </Typography>
-      <Paper variant="outlined" sx={{ borderRadius: 1.5, overflow: 'hidden' }}>
-        <TableContainer>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 700 }}>Имя</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Число правок</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>Среднее время</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {byDesigner.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                    <Typography color="text.secondary">Нет данных</Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-              {byDesigner.map((d) => (
-                <TableRow key={d.designerId} hover>
-                  <TableCell sx={{ fontWeight: 600 }}>{d.name}</TableCell>
-                  <TableCell>
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      alignItems="center"
-                      sx={{ maxWidth: 320 }}
-                    >
-                      <Box
-                        sx={{
-                          flexGrow: 1,
-                          height: 8,
-                          borderRadius: 4,
-                          bgcolor: `${BRAND.pale}`,
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            height: '100%',
-                            borderRadius: 4,
-                            width: `${
-                              maxRevisions > 0
-                                ? (d.revisions / maxRevisions) * 100
-                                : 0
-                            }%`,
-                            background: `linear-gradient(90deg, ${BRAND.deep}, ${BRAND.light})`,
-                          }}
-                        />
-                      </Box>
-                      <Typography variant="body2" sx={{ minWidth: 24 }}>
-                        {d.revisions}
-                      </Typography>
-                    </Stack>
-                  </TableCell>
-                  <TableCell>{formatDuration(d.avgRevisionSeconds)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
     </Box>
   )
 }

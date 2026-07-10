@@ -85,6 +85,8 @@ model Order {
   @@index([onboardingManagerName])
   @@index([sketchDesignerId])
   @@index([revisionDesignerId])
+  // Список заказов на доске сортируется по updatedAt desc.
+  @@index([updatedAt])
 }
 
 // Данные заказа, специфичные для BlueSales (1-к-1 с Order)
