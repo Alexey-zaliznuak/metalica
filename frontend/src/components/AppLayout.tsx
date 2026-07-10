@@ -92,6 +92,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const location = useLocation()
   const isOrdersBoardPage = location.pathname === '/orders'
+  const isOrderThreadPage = /^\/orders\/[^/]+$/.test(location.pathname)
+  const isWidePage = isOrdersBoardPage || isOrderThreadPage
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   const handleLogout = () => {
@@ -318,12 +320,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       </Drawer>
 
       <Container
-        maxWidth={isOrdersBoardPage ? 'xl' : 'lg'}
+        maxWidth={isWidePage ? false : 'lg'}
         sx={{
           flexGrow: 1,
           display: 'flex',
           flexDirection: 'column',
           py: { xs: 2, sm: 3 },
+          px: isWidePage ? { xs: 2, sm: 3 } : undefined,
         }}
       >
         {children}
