@@ -96,7 +96,18 @@ export class OrdersService {
       }),
     ]);
 
-    const items = await Promise.all(orders.map((o) => this.withStats(o)));
+    const orderIds = orders.map((o) => o.id);
+    const [statsById, lastMessageById] = await Promise.all([
+      this.computeStatsBatch(orderIds),
+      this.lastMessagesBatch(orderIds),
+    ]);
+    const items = orders.map((o) =>
+      this.buildOrderView(
+        o,
+        statsById.get(o.id) ?? { revisionCount: 0, openRevisions: 0, avgRevisionSeconds: null },
+        lastMessageById.get(o.id) ?? null,
+      ),
+    );
 
     return {
       items,
@@ -515,40 +526,21 @@ export class OrdersService {
     return this.computeStats(id);
   }
 
-  private async withStats(order: {
-    id: number;
-    orderNumber: string;
-    title: string | null;
-    source: OrderSource;
-    createdAt: Date;
-    dialogLink?: string | null;
-    deliveryManagerName?: string | null;
-    onboardingManagerName?: string | null;
-    sketchDesigner?: {
-      id: number;
-      name: string;
-      username: string;
-      role: Role;
-    } | null;
-    revisionDesigner?: {
-      id: number;
-      name: string;
-      username: string;
-      role: Role;
-    } | null;
-    bluesalesInfo?: {
-      orderStatusId: number | null;
-      orderStatus: string | null;
-      crmStatusId: number | null;
-      crmStatus: string | null;
-    } | null;
-  }) {
+  private async withStats(order: OrderForView) {
     const stats = await this.computeStats(order.id);
     const last = await this.prisma.message.findFirst({
       where: { orderId: order.id },
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true },
     });
+    return this.buildOrderView(order, stats, last?.createdAt ?? null);
+  }
+
+  private buildOrderView(
+    order: OrderForView,
+    stats: OrderStats,
+    lastMessageAt: Date | null,
+  ) {
     return {
       id: order.id,
       orderNumber: order.orderNumber,
@@ -566,7 +558,7 @@ export class OrdersService {
       revisionCount: stats.revisionCount,
       openRevisions: stats.openRevisions,
       avgRevisionSeconds: stats.avgRevisionSeconds,
-      lastMessageAt: last?.createdAt ?? null,
+      lastMessageAt,
       createdAt: order.createdAt,
     };
   }
@@ -617,7 +609,7 @@ export class OrdersService {
     return Array.from(new Set(ids));
   }
 
-  private async computeStats(orderId: number) {
+  private async computeStats(orderId: number): Promise<OrderStats> {
     const revisionCount = await this.prisma.revision.count({
       where: { orderId },
     });
@@ -640,4 +632,119 @@ export class OrdersService {
 
     return { revisionCount, openRevisions, avgRevisionSeconds };
   }
+
+  /**
+   * Считает статистику правок сразу для набора заказов (для списка).
+   * Вместо N+1 (по 3 запроса на каждый заказ) — 3 запроса на всю страницу:
+   * общее число правок, число открытых и среднее время закрытия.
+   */
+  private async computeStatsBatch(orderIds: number[]): Promise<Map<number, OrderStats>> {
+    const result = new Map<number, OrderStats>();
+    if (orderIds.length === 0) {
+      return result;
+    }
+
+    const [totals, open, closures] = await Promise.all([
+      this.prisma.revision.groupBy({
+        by: ['orderId'],
+        where: { orderId: { in: orderIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.revision.groupBy({
+        by: ['orderId'],
+        where: { orderId: { in: orderIds }, closure: { is: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.revisionClosure.findMany({
+        where: { revision: { orderId: { in: orderIds } } },
+        select: {
+          openedAt: true,
+          closedAt: true,
+          revision: { select: { orderId: true } },
+        },
+      }),
+    ]);
+
+    const totalById = new Map(totals.map((t) => [t.orderId, t._count._all]));
+    const openById = new Map(open.map((t) => [t.orderId, t._count._all]));
+
+    const durSum = new Map<number, number>();
+    const durCount = new Map<number, number>();
+    for (const c of closures) {
+      const orderId = c.revision.orderId;
+      const seconds = (c.closedAt.getTime() - c.openedAt.getTime()) / 1000;
+      if (seconds < 0) continue;
+      durSum.set(orderId, (durSum.get(orderId) ?? 0) + seconds);
+      durCount.set(orderId, (durCount.get(orderId) ?? 0) + 1);
+    }
+
+    for (const orderId of orderIds) {
+      const count = durCount.get(orderId) ?? 0;
+      const avgRevisionSeconds =
+        count > 0 ? Math.round((durSum.get(orderId) ?? 0) / count) : null;
+      result.set(orderId, {
+        revisionCount: totalById.get(orderId) ?? 0,
+        openRevisions: openById.get(orderId) ?? 0,
+        avgRevisionSeconds,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Время последнего сообщения для набора заказов — одним groupBy вместо
+   * findFirst на каждый заказ.
+   */
+  private async lastMessagesBatch(orderIds: number[]): Promise<Map<number, Date>> {
+    const result = new Map<number, Date>();
+    if (orderIds.length === 0) {
+      return result;
+    }
+    const grouped = await this.prisma.message.groupBy({
+      by: ['orderId'],
+      where: { orderId: { in: orderIds } },
+      _max: { createdAt: true },
+    });
+    for (const g of grouped) {
+      if (g._max.createdAt) {
+        result.set(g.orderId, g._max.createdAt);
+      }
+    }
+    return result;
+  }
 }
+
+type OrderStats = {
+  revisionCount: number;
+  openRevisions: number;
+  avgRevisionSeconds: number | null;
+};
+
+type OrderForView = {
+  id: number;
+  orderNumber: string;
+  title: string | null;
+  source: OrderSource;
+  createdAt: Date;
+  dialogLink?: string | null;
+  deliveryManagerName?: string | null;
+  onboardingManagerName?: string | null;
+  sketchDesigner?: {
+    id: number;
+    name: string;
+    username: string;
+    role: Role;
+  } | null;
+  revisionDesigner?: {
+    id: number;
+    name: string;
+    username: string;
+    role: Role;
+  } | null;
+  bluesalesInfo?: {
+    orderStatusId: number | null;
+    orderStatus: string | null;
+    crmStatusId: number | null;
+    crmStatus: string | null;
+  } | null;
+};
