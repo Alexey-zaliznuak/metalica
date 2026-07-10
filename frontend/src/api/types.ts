@@ -80,6 +80,11 @@ export interface OrderAssignee {
   role: UserRole
 }
 
+export interface OrderAssigneesResponse {
+  managers: OrderAssignee[]
+  designers: OrderAssignee[]
+}
+
 export interface OrderArticle {
   article: string | null
   name: string | null

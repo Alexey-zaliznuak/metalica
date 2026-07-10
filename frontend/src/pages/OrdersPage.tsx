@@ -40,7 +40,12 @@ import PeopleAltIcon from '@mui/icons-material/PeopleAlt'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import type { BluesalesStatusOption, Order, OrdersBoardSettings } from '../api/types'
+import type {
+  BluesalesStatusOption,
+  Order,
+  OrderAssigneesResponse,
+  OrdersBoardSettings,
+} from '../api/types'
 import { formatLastActivity } from '../utils'
 
 const NO_ORDER_STATUS_COLUMN_ID = -1
@@ -132,6 +137,7 @@ export default function OrdersPage() {
   const [selectedSketchDesigners, setSelectedSketchDesigners] = useState<string[]>([])
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
+  const [designers, setDesigners] = useState<OrderAssigneesResponse['designers']>([])
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [statusesLoaded, setStatusesLoaded] = useState(false)
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
@@ -195,6 +201,22 @@ export default function OrdersPage() {
         if (!active) return
         setBootError('Не удалось загрузить статусы заказов')
         setStatusesLoaded(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void client
+      .get<OrderAssigneesResponse>('/orders/assignees')
+      .then((res) => {
+        if (!active) return
+        setDesigners(res.data.designers)
+      })
+      .catch(() => {
+        // Художников в фильтре просто дополним именами из заказов, если запрос упал.
       })
     return () => {
       active = false
@@ -290,23 +312,26 @@ export default function OrdersPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
   }, [orders])
 
-  const sketchDesignerOptions = useMemo(() => {
+  const designerNameOptions = useMemo(() => {
     const set = new Set<string>()
-    for (const order of orders) {
-      const name = order.sketchDesigner?.name?.trim()
+    // Все аккаунты-художники, даже если на них ещё нет назначенных заказов.
+    for (const designer of designers) {
+      const name = designer.name?.trim()
       if (name) set.add(name)
     }
+    // На всякий случай добавляем имена из заказов (например, если аккаунт
+    // сменил роль, но остаётся назначенным на заказ).
+    for (const order of orders) {
+      const sketchName = order.sketchDesigner?.name?.trim()
+      if (sketchName) set.add(sketchName)
+      const revisionName = order.revisionDesigner?.name?.trim()
+      if (revisionName) set.add(revisionName)
+    }
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
-  }, [orders])
+  }, [designers, orders])
 
-  const revisionDesignerOptions = useMemo(() => {
-    const set = new Set<string>()
-    for (const order of orders) {
-      const name = order.revisionDesigner?.name?.trim()
-      if (name) set.add(name)
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
-  }, [orders])
+  const sketchDesignerOptions = designerNameOptions
+  const revisionDesignerOptions = designerNameOptions
 
   const activePeopleFilterCount = useMemo(
     () =>
