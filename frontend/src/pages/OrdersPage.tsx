@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -49,6 +50,10 @@ import type {
 import { formatLastActivity } from '../utils'
 
 const NO_ORDER_STATUS_COLUMN_ID = -1
+
+// Стабильная ссылка на пустой список — чтобы мемоизированные колонки без
+// заказов не перерисовывались из-за нового литерала [] на каждый рендер.
+const EMPTY_ORDERS: Order[] = []
 
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedOrderStatusIds: [],
@@ -123,6 +128,170 @@ function normalizeColumns(
   return { selectedIds, columnOrder: [...ordered, ...missing] }
 }
 
+interface OrderCardProps {
+  order: Order
+  isMoving: boolean
+  onOpen: (id: number) => void
+  onDragStart: (id: number, canMove: boolean) => void
+  onDragEnd: () => void
+}
+
+const OrderCard = memo(function OrderCard({
+  order,
+  isMoving,
+  onOpen,
+  onDragStart,
+  onDragEnd,
+}: OrderCardProps) {
+  const canMoveCard = order.source === 'BLUESALES'
+  return (
+    <Paper
+      variant="outlined"
+      draggable={canMoveCard}
+      onDragStart={() => onDragStart(order.id, canMoveCard)}
+      onDragEnd={onDragEnd}
+      onClick={() => onOpen(order.id)}
+      sx={{
+        p: 1.2,
+        borderRadius: 1.3,
+        cursor: 'pointer',
+        opacity: isMoving ? 0.6 : 1,
+        '&:hover': { borderColor: 'primary.main', boxShadow: 1 },
+      }}
+    >
+      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+        {order.orderNumber}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1, minHeight: 20 }}>
+        {order.title || 'Без названия'}
+      </Typography>
+      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+        <Chip
+          size="small"
+          label={order.orderStatus ?? '—'}
+          color={order.orderStatus ? 'info' : 'default'}
+          variant={order.orderStatus ? 'filled' : 'outlined'}
+        />
+        <Tooltip
+          title={
+            order.openRevisions > 0
+              ? `Открытых правок: ${order.openRevisions}`
+              : 'Все правки закрыты'
+          }
+        >
+          <Badge
+            color="warning"
+            badgeContent={order.openRevisions}
+            invisible={order.openRevisions === 0}
+            overlap="circular"
+          >
+            <Chip
+              size="small"
+              icon={<EditNoteIcon />}
+              label={order.revisionCount}
+              variant="outlined"
+            />
+          </Badge>
+        </Tooltip>
+      </Stack>
+      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.8 }}>
+        <SyncAltIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
+        <Typography variant="caption" color="text.secondary">
+          {canMoveCard ? 'Можно перетаскивать' : 'Ручной заказ: статус не переносится'}
+        </Typography>
+      </Stack>
+      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.4 }}>
+        {formatLastActivity(order.lastMessageAt)}
+      </Typography>
+    </Paper>
+  )
+})
+
+interface BoardColumnViewProps {
+  column: BoardColumn
+  orders: Order[]
+  isColumnDragging: boolean
+  movingOrderId: number | null
+  onColumnDragStart: (id: number) => void
+  onColumnDrop: (id: number) => void
+  onColumnDragEnd: () => void
+  onOrderDrop: (columnId: number) => void
+  onOpenOrder: (id: number) => void
+  onOrderDragStart: (id: number, canMove: boolean) => void
+  onOrderDragEnd: () => void
+}
+
+const BoardColumnView = memo(function BoardColumnView({
+  column,
+  orders,
+  isColumnDragging,
+  movingOrderId,
+  onColumnDragStart,
+  onColumnDrop,
+  onColumnDragEnd,
+  onOrderDrop,
+  onOpenOrder,
+  onOrderDragStart,
+  onOrderDragEnd,
+}: BoardColumnViewProps) {
+  return (
+    <Paper
+      variant="outlined"
+      draggable
+      onDragStart={() => onColumnDragStart(column.id)}
+      onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
+      onDrop={() => onColumnDrop(column.id)}
+      onDragEnd={onColumnDragEnd}
+      sx={{
+        width: 320,
+        flexShrink: 0,
+        borderRadius: 1.5,
+        borderColor: isColumnDragging ? 'primary.main' : 'divider',
+        background: '#fff',
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        sx={{ px: 1.5, py: 1.2 }}
+      >
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+          {column.name}
+        </Typography>
+        <Chip size="small" label={orders.length} />
+      </Stack>
+      <Divider />
+      <Stack
+        spacing={1}
+        sx={{ p: 1, maxHeight: 560, overflowY: 'auto' }}
+        onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
+        onDrop={() => onOrderDrop(column.id)}
+      >
+        {orders.length === 0 && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ textAlign: 'center', py: 3 }}
+          >
+            Нет заказов
+          </Typography>
+        )}
+        {orders.map((order) => (
+          <OrderCard
+            key={order.id}
+            order={order}
+            isMoving={movingOrderId === order.id}
+            onOpen={onOpenOrder}
+            onDragStart={onOrderDragStart}
+            onDragEnd={onOrderDragEnd}
+          />
+        ))}
+      </Stack>
+    </Paper>
+  )
+})
+
 export default function OrdersPage() {
   const navigate = useNavigate()
   const { user, updateFrontendSettings } = useAuth()
@@ -144,10 +313,22 @@ export default function OrdersPage() {
   const [showNoOrderStatusColumn, setShowNoOrderStatusColumn] = useState(true)
   const [columnOrder, setColumnOrder] = useState<number[]>([])
   const [draggingColumnId, setDraggingColumnId] = useState<number | null>(null)
-  const [draggingOrderId, setDraggingOrderId] = useState<number | null>(null)
   const [movingOrderId, setMovingOrderId] = useState<number | null>(null)
+  // id перетаскиваемой карточки держим в ref, а не в state: перетаскивание
+  // карточек не должно перерисовывать доску (только чтение при drop).
+  const draggingOrderIdRef = useRef<number | null>(null)
+  // Зеркало draggingColumnId для стабильного drop-хендлера (state оставляем
+  // ради подсветки перетаскиваемой колонки).
+  const draggingColumnIdRef = useRef<number | null>(null)
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false)
   const [initialized, setInitialized] = useState(false)
+
+  // Актуальный список заказов для колбэков (drop), чтобы не тянуть `orders` в
+  // зависимости и не пересоздавать хендлеры на каждый рендер.
+  const ordersRef = useRef<Order[]>(orders)
+  useEffect(() => {
+    ordersRef.current = orders
+  }, [orders])
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Once the user edits the board locally, stop overwriting their in-progress
@@ -431,21 +612,22 @@ export default function OrdersPage() {
     })
   }
 
-  const handleColumnDrop = (targetColumnId: number) => {
-    if (draggingColumnId == null || draggingColumnId === targetColumnId) return
+  const handleColumnDrop = useCallback((targetColumnId: number) => {
+    const draggedId = draggingColumnIdRef.current
+    if (draggedId == null || draggedId === targetColumnId) return
     setColumnOrder((prev) => {
-      const withoutDragged = prev.filter((id) => id !== draggingColumnId)
+      const withoutDragged = prev.filter((id) => id !== draggedId)
       const targetIndex = withoutDragged.indexOf(targetColumnId)
       if (targetIndex < 0) return prev
       const next = [...withoutDragged]
-      next.splice(targetIndex, 0, draggingColumnId)
+      next.splice(targetIndex, 0, draggedId)
       return next
     })
-  }
+  }, [])
 
   const moveOrderToColumn = useCallback(
     async (orderId: number, targetColumnId: number) => {
-      const current = orders.find((order) => order.id === orderId)
+      const current = ordersRef.current.find((order) => order.id === orderId)
       if (!current) return
 
       const currentColumnId = current.orderStatusId ?? NO_ORDER_STATUS_COLUMN_ID
@@ -455,7 +637,7 @@ export default function OrdersPage() {
       const nextOrderStatusId = targetColumnId
       const nextOrderStatus = orderStatusNameById.get(targetColumnId) ?? null
 
-      const prevOrders = orders
+      const prevOrders = ordersRef.current
       setMovingOrderId(orderId)
       setOrders((prev) =>
         prev.map((order) =>
@@ -483,8 +665,41 @@ export default function OrdersPage() {
         setMovingOrderId(null)
       }
     },
-    [orderStatusNameById, orders],
+    [orderStatusNameById],
   )
+
+  const handleOpenOrder = useCallback(
+    (id: number) => navigate(`/orders/${id}`),
+    [navigate],
+  )
+
+  const handleOrderDragStart = useCallback((id: number, canMove: boolean) => {
+    draggingOrderIdRef.current = canMove ? id : null
+  }, [])
+
+  const handleOrderDragEnd = useCallback(() => {
+    draggingOrderIdRef.current = null
+  }, [])
+
+  const handleOrderDrop = useCallback(
+    (columnId: number) => {
+      const orderId = draggingOrderIdRef.current
+      if (orderId != null) {
+        void moveOrderToColumn(orderId, columnId)
+      }
+    },
+    [moveOrderToColumn],
+  )
+
+  const handleColumnDragStart = useCallback((id: number) => {
+    draggingColumnIdRef.current = id
+    setDraggingColumnId(id)
+  }, [])
+
+  const handleColumnDragEnd = useCallback(() => {
+    draggingColumnIdRef.current = null
+    setDraggingColumnId(null)
+  }, [])
 
   return (
     <Box>
@@ -578,144 +793,22 @@ export default function OrdersPage() {
           </Box>
         ) : (
           <Stack direction="row" spacing={1.5} alignItems="flex-start">
-            {boardColumns.map((column) => {
-              const columnOrders = ordersByColumn.get(column.id) ?? []
-              return (
-                <Paper
-                  key={column.id}
-                  variant="outlined"
-                  draggable
-                  onDragStart={() => setDraggingColumnId(column.id)}
-                  onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
-                  onDrop={() => handleColumnDrop(column.id)}
-                  onDragEnd={() => setDraggingColumnId(null)}
-                  sx={{
-                    width: 320,
-                    flexShrink: 0,
-                    borderRadius: 1.5,
-                    borderColor:
-                      draggingColumnId === column.id ? 'primary.main' : 'divider',
-                    background: '#fff',
-                  }}
-                >
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    justifyContent="space-between"
-                    sx={{ px: 1.5, py: 1.2 }}
-                  >
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                      {column.name}
-                    </Typography>
-                    <Chip size="small" label={columnOrders.length} />
-                  </Stack>
-                  <Divider />
-                  <Stack
-                    spacing={1}
-                    sx={{ p: 1, maxHeight: 560, overflowY: 'auto' }}
-                    onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
-                    onDrop={() => {
-                      if (draggingOrderId != null) {
-                        void moveOrderToColumn(draggingOrderId, column.id)
-                      }
-                    }}
-                  >
-                    {columnOrders.length === 0 && (
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ textAlign: 'center', py: 3 }}
-                      >
-                        Нет заказов
-                      </Typography>
-                    )}
-                    {columnOrders.map((order) => {
-                      const canMoveCard = order.source === 'BLUESALES'
-                      return (
-                        <Paper
-                          key={order.id}
-                          variant="outlined"
-                          draggable={canMoveCard}
-                          onDragStart={() => {
-                            if (canMoveCard) setDraggingOrderId(order.id)
-                          }}
-                          onDragEnd={() => setDraggingOrderId(null)}
-                          onClick={() => navigate(`/orders/${order.id}`)}
-                          sx={{
-                            p: 1.2,
-                            borderRadius: 1.3,
-                            cursor: 'pointer',
-                            opacity: movingOrderId === order.id ? 0.6 : 1,
-                            '&:hover': { borderColor: 'primary.main', boxShadow: 1 },
-                          }}
-                        >
-                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                            {order.orderNumber}
-                          </Typography>
-                          <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{ mb: 1, minHeight: 20 }}
-                          >
-                            {order.title || 'Без названия'}
-                          </Typography>
-                          <Stack
-                            direction="row"
-                            spacing={1}
-                            alignItems="center"
-                            justifyContent="space-between"
-                          >
-                            <Chip
-                              size="small"
-                              label={order.orderStatus ?? '—'}
-                              color={order.orderStatus ? 'info' : 'default'}
-                              variant={order.orderStatus ? 'filled' : 'outlined'}
-                            />
-                            <Tooltip
-                              title={
-                                order.openRevisions > 0
-                                  ? `Открытых правок: ${order.openRevisions}`
-                                  : 'Все правки закрыты'
-                              }
-                            >
-                              <Badge
-                                color="warning"
-                                badgeContent={order.openRevisions}
-                                invisible={order.openRevisions === 0}
-                                overlap="circular"
-                              >
-                                <Chip
-                                  size="small"
-                                  icon={<EditNoteIcon />}
-                                  label={order.revisionCount}
-                                  variant="outlined"
-                                />
-                              </Badge>
-                            </Tooltip>
-                          </Stack>
-                          <Stack
-                            direction="row"
-                            alignItems="center"
-                            spacing={0.5}
-                            sx={{ mt: 0.8 }}
-                          >
-                            <SyncAltIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
-                            <Typography variant="caption" color="text.secondary">
-                              {canMoveCard
-                                ? 'Можно перетаскивать'
-                                : 'Ручной заказ: статус не переносится'}
-                            </Typography>
-                          </Stack>
-                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.4 }}>
-                            {formatLastActivity(order.lastMessageAt)}
-                          </Typography>
-                        </Paper>
-                      )
-                    })}
-                  </Stack>
-                </Paper>
-              )
-            })}
+            {boardColumns.map((column) => (
+              <BoardColumnView
+                key={column.id}
+                column={column}
+                orders={ordersByColumn.get(column.id) ?? EMPTY_ORDERS}
+                isColumnDragging={draggingColumnId === column.id}
+                movingOrderId={movingOrderId}
+                onColumnDragStart={handleColumnDragStart}
+                onColumnDrop={handleColumnDrop}
+                onColumnDragEnd={handleColumnDragEnd}
+                onOrderDrop={handleOrderDrop}
+                onOpenOrder={handleOpenOrder}
+                onOrderDragStart={handleOrderDragStart}
+                onOrderDragEnd={handleOrderDragEnd}
+              />
+            ))}
           </Stack>
         )}
       </Paper>
