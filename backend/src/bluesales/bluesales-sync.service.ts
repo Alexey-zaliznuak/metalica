@@ -47,7 +47,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly leadsPauseMs: number;
   /** Refresh-loop лидов обновляет только тех, у кого последний контакт за N дней. */
   private readonly leadsRefreshLookbackDays: number;
-  /** Периодический добор «потеряшек» за столько последних дней (включая сегодня). */
+  /** Периодический добор новых лидов за столько последних дней (включая сегодня). */
   private readonly backfillDays: number;
 
   /** Защита от параллельного запуска быстрого синка. */
@@ -212,14 +212,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   async handleRecentBackfill(): Promise<void> {
     if (!this.enabled || !this.api.isConfigured) return;
     if (this.backfillRunning) {
-      this.logger.debug('Добор «потеряшек» ещё выполняется — пропуск');
+      this.logger.debug('Добор новых лидов ещё выполняется — пропуск');
       return;
     }
     this.backfillRunning = true;
     try {
       await this.runRecentBackfill();
     } catch (err) {
-      this.logger.error(`Добор «потеряшек» ошибка: ${(err as Error).message}`);
+      this.logger.error(`Добор новых лидов ошибка: ${(err as Error).message}`);
     } finally {
       this.backfillRunning = false;
     }
@@ -250,7 +250,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       await this.sleep(this.refreshPauseMs);
     }
 
-    this.logger.log(`Добор «потеряшек» за ${this.backfillDays} дн.: заказов ${orders}, лидов ${leads}`);
+    this.logger.log(`Добор новых лидов за ${this.backfillDays} дн.: заказов ${orders}, лидов ${leads}`);
     return { orders, leads };
   }
 
