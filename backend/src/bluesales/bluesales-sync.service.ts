@@ -13,6 +13,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 const FAST_SYNC_CRON = process.env.BLUESALES_FAST_SYNC_CRON ?? '*/5 * * * *';
 
+/**
+ * Cron периодического добора «потеряшек» — заказов и лидов за последние
+ * несколько дней по дате создания / первого контакта. Переопределяется через
+ * BLUESALES_BACKFILL_CRON (читается на этапе загрузки модуля).
+ */
+const BACKFILL_CRON = process.env.BLUESALES_BACKFILL_CRON ?? '0 * * * *';
+
 @Injectable()
 export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BluesalesSyncService.name);
@@ -40,9 +47,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly leadsPauseMs: number;
   /** Refresh-loop лидов обновляет только тех, у кого последний контакт за N дней. */
   private readonly leadsRefreshLookbackDays: number;
+  /** Периодический добор «потеряшек» за столько последних дней (включая сегодня). */
+  private readonly backfillDays: number;
 
   /** Защита от параллельного запуска быстрого синка. */
   private fastSyncRunning = false;
+  /** Защита от параллельного запуска периодического добора. */
+  private backfillRunning = false;
   /** Флаг остановки фонового цикла (выставляется при shutdown). */
   private loopActive = false;
 
@@ -64,6 +75,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.leadsRefreshBatchSize = this.envInt('BLUESALES_LEADS_REFRESH_BATCH_SIZE', 50);
     this.leadsPauseMs = this.envInt('BLUESALES_LEADS_PAUSE_MS', 3000);
     this.leadsRefreshLookbackDays = this.envInt('BLUESALES_LEADS_REFRESH_LOOKBACK_DAYS', 60);
+    // 2 = сегодня + вчера. Запас во «вчера» страхует от рассинхрона границы суток
+    // (BS фильтрует по дню в МСК, а formatDate считает день по UTC).
+    this.backfillDays = this.envInt('BLUESALES_BACKFILL_DAYS', 2);
   }
 
   onModuleInit(): void {
@@ -79,6 +93,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     }
     this.logger.log(
       `BlueSales sync активен: cron "${FAST_SYNC_CRON}" + refresh-loop заказов + loop лидов` +
+        ` + backfill "${BACKFILL_CRON}" за ${this.backfillDays} дн.` +
         (this.fullSyncOnStartup ? ` + полный синк при старте за ${this.fullSyncDays} дн.` : ''),
     );
     this.loopActive = true;
@@ -182,6 +197,61 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       lastContactTo: to,
     });
     return this.upsertLeads(customers);
+  }
+
+  // ─── Периодический добор «потеряшек» (раз в час) ──────────────────────────
+
+  /**
+   * По cron добирает заказы и лидов за последние {@link backfillDays} дней
+   * (по дате создания заказа / первого контакта лида). Закрывает записи, которые
+   * пропустил быстрый синк из-за простоя бэка, ошибок BS API или рассинхрона
+   * границы суток: инкрементальный синк ищет лидов только по дате последнего
+   * контакта в узком скользящем окне, поэтому «потеряшки» иначе не восстановятся.
+   */
+  @Cron(BACKFILL_CRON)
+  async handleRecentBackfill(): Promise<void> {
+    if (!this.enabled || !this.api.isConfigured) return;
+    if (this.backfillRunning) {
+      this.logger.debug('Добор «потеряшек» ещё выполняется — пропуск');
+      return;
+    }
+    this.backfillRunning = true;
+    try {
+      await this.runRecentBackfill();
+    } catch (err) {
+      this.logger.error(`Добор «потеряшек» ошибка: ${(err as Error).message}`);
+    } finally {
+      this.backfillRunning = false;
+    }
+  }
+
+  /**
+   * Проходит последние {@link backfillDays} дней отдельными однодневными окнами
+   * (сегодня, вчера, …) с паузой между ними. Однодневные окна дают лёгкие запросы
+   * к BS (страницы по 500 за один день), а background-приоритет в очереди API
+   * пропускает вперёд интерактивные запросы менеджеров.
+   */
+  private async runRecentBackfill(): Promise<{ orders: number; leads: number }> {
+    const now = new Date();
+    let orders = 0;
+    let leads = 0;
+
+    for (let i = 0; i < this.backfillDays && this.loopActive; i++) {
+      const day = new Date(now.getTime() - i * DAY_MS);
+      try {
+        orders += await this.syncOrdersWindow(day, day);
+        leads += await this.syncLeadsWindow(day, day);
+      } catch (err) {
+        this.logger.error(
+          `Добор: день ${this.formatDate(day)} ошибка: ${(err as Error).message}`,
+        );
+      }
+      // Пауза между днями — не монополизируем единственную сессию BlueSales.
+      await this.sleep(this.refreshPauseMs);
+    }
+
+    this.logger.log(`Добор «потеряшек» за ${this.backfillDays} дн.: заказов ${orders}, лидов ${leads}`);
+    return { orders, leads };
   }
 
   // ─── Фоновый refresh-loop ──────────────────────────────────────────────────
