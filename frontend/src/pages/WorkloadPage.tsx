@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Autocomplete,
@@ -18,9 +18,9 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material'
-import client, { USER_KEY } from '../api/client'
+import client from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import type { BluesalesStatusOption, User, WorkloadMetric } from '../api/types'
+import type { BluesalesStatusOption, WorkloadMetric } from '../api/types'
 
 type WorkloadFilter = 'MANAGER' | 'DESIGNER'
 type SortDirection = 'asc' | 'desc'
@@ -62,21 +62,25 @@ function normalizeStatusSelection(availableStatusIds: number[], selectedRaw: num
 }
 
 export default function WorkloadPage() {
-  const { user } = useAuth()
+  const { user, updateFrontendSettings } = useAuth()
   const [loading, setLoading] = useState(true)
   const [statusesLoading, setStatusesLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkloadFilter>('MANAGER')
   const [items, setItems] = useState<WorkloadMetric[]>([])
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
+  const [statusesLoaded, setStatusesLoaded] = useState(false)
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [sortField, setSortField] = useState<SortField>('PRIMARY_ORDERS')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
-  const [frontendSettingsBase, setFrontendSettingsBase] = useState<
-    Record<string, unknown>
-  >({})
   const [initialized, setInitialized] = useState(false)
+
+  // See OrdersPage for the rationale: once the user edits locally we stop
+  // overwriting their selection with backend/other-device settings until
+  // remount; skipSaveRef prevents echoing applied settings back to the server.
+  const dirtyRef = useRef(false)
+  const skipSaveRef = useRef(false)
 
   useEffect(() => {
     let active = true
@@ -86,18 +90,12 @@ export default function WorkloadPage() {
       try {
         const { data } = await client.get<BluesalesStatusOption[]>('/orders/order-statuses')
         if (!active) return
-        const allStatusIds = data.map((status) => status.id)
-        const baseSettings = isRecord(user?.frontendSettings) ? user.frontendSettings : {}
-        const parsed = parseWorkloadSettings(
-          isRecord(baseSettings.workloadPage) ? baseSettings.workloadPage : undefined,
-        )
         setOrderStatuses(data)
-        setFrontendSettingsBase(baseSettings)
-        setSelectedOrderStatusIds(normalizeStatusSelection(allStatusIds, parsed.selectedOrderStatusIds))
-        setInitialized(true)
+        setStatusesLoaded(true)
       } catch {
         if (!active) return
         setError('Не удалось загрузить статусы заказов')
+        setStatusesLoaded(true)
       } finally {
         if (active) {
           setStatusesLoading(false)
@@ -107,7 +105,24 @@ export default function WorkloadPage() {
     return () => {
       active = false
     }
-  }, [user?.frontendSettings])
+  }, [])
+
+  useEffect(() => {
+    if (!statusesLoaded) return
+    if (dirtyRef.current) return
+
+    const settings = user?.frontendSettings
+    const parsed = parseWorkloadSettings(
+      isRecord(settings) ? settings.workloadPage : undefined,
+    )
+    const allStatusIds = orderStatuses.map((status) => status.id)
+
+    skipSaveRef.current = true
+    setSelectedOrderStatusIds(
+      normalizeStatusSelection(allStatusIds, parsed.selectedOrderStatusIds),
+    )
+    setInitialized(true)
+  }, [statusesLoaded, orderStatuses, user?.frontendSettings])
 
   useEffect(() => {
     if (!initialized) return
@@ -141,29 +156,17 @@ export default function WorkloadPage() {
 
   useEffect(() => {
     if (!initialized) return
-    const timeout = setTimeout(() => {
-      const frontendSettings = {
-        ...frontendSettingsBase,
-        workloadPage: {
-          selectedOrderStatusIds,
-        },
-      }
-      void client.patch<User>('/auth/frontend-settings', { frontendSettings }).then(({ data }) => {
-        const rawUser = localStorage.getItem(USER_KEY)
-        if (!rawUser) return
-        try {
-          const cached = JSON.parse(rawUser) as User
-          localStorage.setItem(
-            USER_KEY,
-            JSON.stringify({ ...cached, frontendSettings: data.frontendSettings }),
-          )
-        } catch {
-          /* ignore invalid cache */
-        }
-      })
-    }, 500)
-    return () => clearTimeout(timeout)
-  }, [initialized, selectedOrderStatusIds, frontendSettingsBase])
+    if (skipSaveRef.current) {
+      skipSaveRef.current = false
+      return
+    }
+    dirtyRef.current = true
+    updateFrontendSettings({
+      workloadPage: {
+        selectedOrderStatusIds,
+      } satisfies WorkloadPageSettings,
+    })
+  }, [initialized, selectedOrderStatusIds, updateFrontendSettings])
 
   const visibleItems = useMemo(() => {
     return items.filter((item) => item.role === filter)

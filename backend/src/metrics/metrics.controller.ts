@@ -21,4 +21,23 @@ export class MetricsController {
   workload(@Query('orderStatusIds') orderStatusIdsRaw?: string) {
     return this.metrics.workload(orderStatusIdsRaw);
   }
+
+  @Get('revisions/analytics')
+  revisionAnalytics(
+    @Query('workStartHour') workStartHour?: string,
+    @Query('workEndHour') workEndHour?: string,
+    @Query('tzOffsetMinutes') tzOffsetMinutes?: string,
+  ) {
+    return this.metrics.revisionAnalytics({
+      workStartHour: this.toNumber(workStartHour),
+      workEndHour: this.toNumber(workEndHour),
+      tzOffsetMinutes: this.toNumber(tzOffsetMinutes),
+    });
+  }
+
+  private toNumber(raw?: string): number | undefined {
+    if (raw === undefined || raw === '') return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  }
 }

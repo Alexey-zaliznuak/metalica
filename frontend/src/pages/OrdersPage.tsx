@@ -36,10 +36,11 @@ import SearchIcon from '@mui/icons-material/Search'
 import EditNoteIcon from '@mui/icons-material/EditNote'
 import ViewWeekIcon from '@mui/icons-material/ViewWeek'
 import SyncAltIcon from '@mui/icons-material/SyncAlt'
+import PeopleAltIcon from '@mui/icons-material/PeopleAlt'
 import { useNavigate } from 'react-router-dom'
-import client, { USER_KEY } from '../api/client'
+import client from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import type { BluesalesStatusOption, Order, OrdersBoardSettings, User } from '../api/types'
+import type { BluesalesStatusOption, Order, OrdersBoardSettings } from '../api/types'
 import { formatLastActivity } from '../utils'
 
 const NO_ORDER_STATUS_COLUMN_ID = -1
@@ -118,8 +119,8 @@ function normalizeColumns(
 }
 
 export default function OrdersPage() {
-  const { user } = useAuth()
   const navigate = useNavigate()
+  const { user, updateFrontendSettings } = useAuth()
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -128,7 +129,11 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('')
   const [selectedDeliveryManagers, setSelectedDeliveryManagers] = useState<string[]>([])
   const [selectedOnboardingManagers, setSelectedOnboardingManagers] = useState<string[]>([])
+  const [selectedSketchDesigners, setSelectedSketchDesigners] = useState<string[]>([])
+  const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
+  const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
+  const [statusesLoaded, setStatusesLoaded] = useState(false)
   const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
   const [showNoOrderStatusColumn, setShowNoOrderStatusColumn] = useState(true)
   const [columnOrder, setColumnOrder] = useState<number[]>([])
@@ -138,11 +143,15 @@ export default function OrdersPage() {
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false)
   const [initialized, setInitialized] = useState(false)
 
-  const [frontendSettingsBase, setFrontendSettingsBase] = useState<
-    Record<string, unknown>
-  >({})
-
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Once the user edits the board locally, stop overwriting their in-progress
+  // selection with settings coming from the backend/other devices for this
+  // mounted session. A remount (e.g. navigating back from an order) resets this
+  // and re-reads the latest account settings.
+  const dirtyRef = useRef(false)
+  // Skips the save that the settings-sync effect would otherwise trigger when
+  // it applies backend values, so we don't echo them straight back.
+  const skipSaveRef = useRef(false)
 
   const fetchOrders = useCallback(async (q: string, statusIds: number[]) => {
     setLoading(true)
@@ -180,71 +189,71 @@ export default function OrdersPage() {
       .then((res) => {
         if (!active) return
         setOrderStatuses(res.data)
-
-        const baseSettings = isRecord(user?.frontendSettings) ? user.frontendSettings : {}
-        const parsed = parseBoardSettings(
-          isRecord(baseSettings.ordersBoard) ? baseSettings.ordersBoard : undefined,
-        )
-        const allOrderStatusIds = res.data.map((status) => status.id)
-        const normalized = normalizeColumns(
-          allOrderStatusIds,
-          parsed.selectedOrderStatusIds,
-          parsed.columnOrder,
-          parsed.showNoOrderStatusColumn,
-        )
-
-        setFrontendSettingsBase(baseSettings)
-        setSearch(parsed.searchQuery)
-        setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
-        setSelectedOrderStatusIds(normalized.selectedIds)
-        setColumnOrder(normalized.columnOrder)
-        setInitialized(true)
+        setStatusesLoaded(true)
       })
       .catch(() => {
         if (!active) return
         setBootError('Не удалось загрузить статусы заказов')
-        setInitialized(true)
+        setStatusesLoaded(true)
       })
     return () => {
       active = false
     }
-  }, [user?.frontendSettings])
+  }, [])
+
+  // Apply the account-wide settings (backend source of truth) to the board.
+  // Runs on mount and whenever the settings change (e.g. after the on-load
+  // refresh pulls another device's changes), unless the user is mid-edit.
+  useEffect(() => {
+    if (!statusesLoaded) return
+    if (dirtyRef.current) return
+
+    const settings = user?.frontendSettings
+    const parsed = parseBoardSettings(
+      isRecord(settings) ? settings.ordersBoard : undefined,
+    )
+    const allOrderStatusIds = orderStatuses.map((status) => status.id)
+    const normalized = normalizeColumns(
+      allOrderStatusIds,
+      parsed.selectedOrderStatusIds,
+      parsed.columnOrder,
+      parsed.showNoOrderStatusColumn,
+    )
+
+    // The state writes below will trigger the save effect; skip that one run so
+    // we don't immediately persist the values we just loaded.
+    skipSaveRef.current = true
+    setSearch(parsed.searchQuery)
+    setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
+    setSelectedOrderStatusIds(normalized.selectedIds)
+    setColumnOrder(normalized.columnOrder)
+    setInitialized(true)
+  }, [statusesLoaded, orderStatuses, user?.frontendSettings])
 
   useEffect(() => {
     if (!initialized) return
-    const timeout = setTimeout(() => {
-      const boardSettings: OrdersBoardSettings = {
+    if (skipSaveRef.current) {
+      skipSaveRef.current = false
+      return
+    }
+    // A genuine local edit: from now on this session owns the board state and
+    // persists it to the account (backend is the single source of truth).
+    dirtyRef.current = true
+    updateFrontendSettings({
+      ordersBoard: {
         selectedOrderStatusIds,
         columnOrder,
         searchQuery: search,
         showNoOrderStatusColumn,
-      }
-      const frontendSettings = {
-        ...frontendSettingsBase,
-        ordersBoard: boardSettings,
-      }
-      void client.patch<User>('/auth/frontend-settings', { frontendSettings }).then(({ data }) => {
-        const rawUser = localStorage.getItem(USER_KEY)
-        if (!rawUser) return
-        try {
-          const cached = JSON.parse(rawUser) as User
-          localStorage.setItem(
-            USER_KEY,
-            JSON.stringify({ ...cached, frontendSettings: data.frontendSettings }),
-          )
-        } catch {
-          /* ignore invalid cache */
-        }
-      })
-    }, 600)
-    return () => clearTimeout(timeout)
+      } satisfies OrdersBoardSettings,
+    })
   }, [
     initialized,
     search,
     selectedOrderStatusIds,
     showNoOrderStatusColumn,
     columnOrder,
-    frontendSettingsBase,
+    updateFrontendSettings,
   ])
 
   const boardColumns = useMemo<BoardColumn[]>(() => {
@@ -281,12 +290,46 @@ export default function OrdersPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
   }, [orders])
 
+  const sketchDesignerOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const order of orders) {
+      const name = order.sketchDesigner?.name?.trim()
+      if (name) set.add(name)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
+  }, [orders])
+
+  const revisionDesignerOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const order of orders) {
+      const name = order.revisionDesigner?.name?.trim()
+      if (name) set.add(name)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
+  }, [orders])
+
+  const activePeopleFilterCount = useMemo(
+    () =>
+      selectedDeliveryManagers.length +
+      selectedOnboardingManagers.length +
+      selectedSketchDesigners.length +
+      selectedRevisionDesigners.length,
+    [
+      selectedDeliveryManagers,
+      selectedOnboardingManagers,
+      selectedSketchDesigners,
+      selectedRevisionDesigners,
+    ],
+  )
+
   const filteredOrders = useMemo(() => {
-    if (selectedDeliveryManagers.length === 0 && selectedOnboardingManagers.length === 0) {
+    if (activePeopleFilterCount === 0) {
       return orders
     }
     const deliverySet = new Set(selectedDeliveryManagers)
     const onboardingSet = new Set(selectedOnboardingManagers)
+    const sketchSet = new Set(selectedSketchDesigners)
+    const revisionSet = new Set(selectedRevisionDesigners)
     return orders.filter((order) => {
       const deliveryOk =
         deliverySet.size === 0 ||
@@ -295,9 +338,23 @@ export default function OrdersPage() {
         onboardingSet.size === 0 ||
         (order.onboardingManagerName != null &&
           onboardingSet.has(order.onboardingManagerName))
-      return deliveryOk && onboardingOk
+      const sketchOk =
+        sketchSet.size === 0 ||
+        (order.sketchDesigner?.name != null && sketchSet.has(order.sketchDesigner.name))
+      const revisionOk =
+        revisionSet.size === 0 ||
+        (order.revisionDesigner?.name != null &&
+          revisionSet.has(order.revisionDesigner.name))
+      return deliveryOk && onboardingOk && sketchOk && revisionOk
     })
-  }, [orders, selectedDeliveryManagers, selectedOnboardingManagers])
+  }, [
+    orders,
+    activePeopleFilterCount,
+    selectedDeliveryManagers,
+    selectedOnboardingManagers,
+    selectedSketchDesigners,
+    selectedRevisionDesigners,
+  ])
 
   const ordersByColumn = useMemo(() => {
     const map = new Map<number, Order[]>()
@@ -447,34 +504,16 @@ export default function OrdersPage() {
             ),
           }}
         />
-        <Autocomplete
-          multiple
-          disableCloseOnSelect
-          size="small"
-          options={deliveryManagerOptions}
-          value={selectedDeliveryManagers}
-          onChange={(_, values) => setSelectedDeliveryManagers(values)}
-          sx={{ minWidth: { xs: '100%', sm: 260 } }}
-          limitTags={1}
-          noOptionsText="Нет менеджеров"
-          renderInput={(params) => (
-            <TextField {...params} placeholder="Менеджер ведения" />
-          )}
-        />
-        <Autocomplete
-          multiple
-          disableCloseOnSelect
-          size="small"
-          options={onboardingManagerOptions}
-          value={selectedOnboardingManagers}
-          onChange={(_, values) => setSelectedOnboardingManagers(values)}
-          sx={{ minWidth: { xs: '100%', sm: 260 } }}
-          limitTags={1}
-          noOptionsText="Нет менеджеров"
-          renderInput={(params) => (
-            <TextField {...params} placeholder="Менеджер оформления" />
-          )}
-        />
+        <Badge color="primary" badgeContent={activePeopleFilterCount} overlap="rectangular">
+          <Button
+            variant="outlined"
+            startIcon={<PeopleAltIcon />}
+            onClick={() => setPeopleFilterOpen(true)}
+            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', sm: 'auto' } }}
+          >
+            Фильтры по людям
+          </Button>
+        </Badge>
       </Stack>
 
       {error && (
@@ -662,6 +701,88 @@ export default function OrdersPage() {
           {isEmpty ? ' (ничего не найдено по текущим фильтрам)' : ''}
         </Typography>
       )}
+
+      <Dialog
+        open={peopleFilterOpen}
+        onClose={() => setPeopleFilterOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Фильтры по людям</DialogTitle>
+        <DialogContent dividers>
+          <DialogContentText sx={{ mb: 2 }}>
+            Заказы можно отфильтровать по менеджерам и художникам. Пустой фильтр —
+            без ограничения.
+          </DialogContentText>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={deliveryManagerOptions}
+              value={selectedDeliveryManagers}
+              onChange={(_, values) => setSelectedDeliveryManagers(values)}
+              noOptionsText="Нет менеджеров"
+              renderInput={(params) => (
+                <TextField {...params} label="Менеджер ведения" placeholder="Все" />
+              )}
+            />
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={onboardingManagerOptions}
+              value={selectedOnboardingManagers}
+              onChange={(_, values) => setSelectedOnboardingManagers(values)}
+              noOptionsText="Нет менеджеров"
+              renderInput={(params) => (
+                <TextField {...params} label="Менеджер оформления" placeholder="Все" />
+              )}
+            />
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={sketchDesignerOptions}
+              value={selectedSketchDesigners}
+              onChange={(_, values) => setSelectedSketchDesigners(values)}
+              noOptionsText="Нет художников"
+              renderInput={(params) => (
+                <TextField {...params} label="Художник эскиза" placeholder="Все" />
+              )}
+            />
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={revisionDesignerOptions}
+              value={selectedRevisionDesigners}
+              onChange={(_, values) => setSelectedRevisionDesigners(values)}
+              noOptionsText="Нет художников"
+              renderInput={(params) => (
+                <TextField {...params} label="Художник правок" placeholder="Все" />
+              )}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            color="inherit"
+            disabled={activePeopleFilterCount === 0}
+            onClick={() => {
+              setSelectedDeliveryManagers([])
+              setSelectedOnboardingManagers([])
+              setSelectedSketchDesigners([])
+              setSelectedRevisionDesigners([])
+            }}
+          >
+            Сбросить
+          </Button>
+          <Button variant="contained" onClick={() => setPeopleFilterOpen(false)}>
+            Готово
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog
         open={columnsDialogOpen}

@@ -4,17 +4,30 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { MessageKind, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { AuthUser } from '../auth/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { UpdateMessageTextDto } from './dto/update-message-text.dto';
+import { MessageKind } from './message-kind';
 
 const messageInclude = {
   author: { select: { id: true, name: true, role: true } },
   attachments: true,
-  answerTo: { select: { id: true, createdAt: true, body: true } },
+  // Наличие revision -> запрос правки; наличие revisionClosure -> ответ/закрытие.
+  revision: { select: { id: true, closure: { select: { id: true } } } },
+  revisionClosure: {
+    select: {
+      id: true,
+      revision: {
+        select: {
+          messageId: true,
+          message: { select: { id: true, createdAt: true, body: true } },
+        },
+      },
+    },
+  },
 } satisfies Prisma.MessageInclude;
 
 type MessageWithRelations = Prisma.MessageGetPayload<{ include: typeof messageInclude }>;
@@ -54,43 +67,77 @@ export class MessagesService {
       throw new BadRequestException('Сообщение не может быть пустым');
     }
 
-    let answerToId: number | null = dto.answerToId ?? null;
+    const body = dto.body?.trim() || null;
+    const buildAttachments = (attachmentKind: string) =>
+      dto.attachmentKeys?.length
+        ? {
+            create: dto.attachmentKeys.map((key) => ({
+              objectKey: key,
+              filename: key.substring(key.lastIndexOf('/') + 1),
+              kind: attachmentKind,
+            })),
+          }
+        : undefined;
 
-    // Auto-pair an answer to the latest still-open revision request.
-    if (dto.kind === MessageKind.REVISION_ANSWER && !answerToId) {
-      const openRequest = await this.prisma.message.findFirst({
-        where: { orderId, kind: MessageKind.REVISION_REQUEST, answeredBy: { none: {} } },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true },
+    // Запрос правки: сообщение + связанная (пустая) модель Revision.
+    if (dto.kind === MessageKind.REVISION_REQUEST) {
+      const message = await this.prisma.message.create({
+        data: {
+          orderId,
+          authorId,
+          body,
+          attachments: buildAttachments('attachment'),
+          revision: { create: { orderId } },
+        },
+        include: messageInclude,
       });
-      answerToId = openRequest?.id ?? null;
+      return this.serialize(message);
     }
 
-    if (answerToId) {
-      const target = await this.prisma.message.findFirst({
-        where: { id: answerToId, orderId },
-      });
-      if (!target) {
-        throw new BadRequestException('Запрос правки для ответа не найден в этом заказе');
+    // Ответ/закрытие правки: находим открытую правку и создаём RevisionClosure
+    // с денормализацией (кто закрыл + время открытия/закрытия).
+    if (dto.kind === MessageKind.REVISION_ANSWER) {
+      const revision = dto.answerToId
+        ? await this.prisma.revision.findFirst({
+            where: { orderId, messageId: dto.answerToId, closure: { is: null } },
+            select: { id: true, openedAt: true },
+          })
+        : await this.prisma.revision.findFirst({
+            where: { orderId, closure: { is: null } },
+            orderBy: { openedAt: 'desc' },
+            select: { id: true, openedAt: true },
+          });
+
+      if (!revision) {
+        throw new BadRequestException('Нет открытой правки для закрытия в этом заказе');
       }
+
+      const message = await this.prisma.message.create({
+        data: {
+          orderId,
+          authorId,
+          body,
+          attachments: buildAttachments('revision'),
+          revisionClosure: {
+            create: {
+              revisionId: revision.id,
+              closedById: authorId,
+              openedAt: revision.openedAt,
+            },
+          },
+        },
+        include: messageInclude,
+      });
+      return this.serialize(message);
     }
 
+    // Обычное сообщение.
     const message = await this.prisma.message.create({
       data: {
         orderId,
         authorId,
-        kind: dto.kind,
-        body: dto.body?.trim() || null,
-        answerToId,
-        attachments: dto.attachmentKeys?.length
-          ? {
-              create: dto.attachmentKeys.map((key) => ({
-                objectKey: key,
-                filename: key.substring(key.lastIndexOf('/') + 1),
-                kind: dto.kind === MessageKind.REVISION_ANSWER ? 'revision' : 'attachment',
-              })),
-            }
-          : undefined,
+        body,
+        attachments: buildAttachments('attachment'),
       },
       include: messageInclude,
     });
@@ -158,15 +205,29 @@ export class MessagesService {
       })),
     );
 
+    const kind = m.revision
+      ? MessageKind.REVISION_REQUEST
+      : m.revisionClosure
+        ? MessageKind.REVISION_ANSWER
+        : MessageKind.NORMAL;
+
+    const answerToMessage = m.revisionClosure?.revision?.message ?? null;
+
     return {
       id: m.id,
       orderId: m.orderId,
-      kind: m.kind,
+      kind,
       body: m.body,
       createdAt: m.createdAt,
       author: m.author,
-      answerToId: m.answerToId,
-      answerTo: m.answerTo,
+      answerToId: m.revisionClosure?.revision?.messageId ?? null,
+      answerTo: answerToMessage
+        ? {
+            id: answerToMessage.id,
+            createdAt: answerToMessage.createdAt,
+            body: answerToMessage.body,
+          }
+        : null,
       attachments,
     };
   }

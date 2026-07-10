@@ -6,7 +6,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import { MessageKind } from '@prisma/client';
+import { MessageKind } from '../message-kind';
 
 export class CreateMessageDto {
   @IsOptional()

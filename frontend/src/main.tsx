@@ -10,6 +10,7 @@ import LoginPage from './pages/LoginPage'
 import OrdersPage from './pages/OrdersPage'
 import OrderThreadPage from './pages/OrderThreadPage'
 import MetricsPage from './pages/MetricsPage'
+import RevisionAnalyticsPage from './pages/RevisionAnalyticsPage'
 import UsersPage from './pages/UsersPage'
 import WorkloadPage from './pages/WorkloadPage'
 import ChatsPage from './pages/ChatsPage'
@@ -49,6 +50,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <ProtectedRoute>
                   <AppLayout>
                     <MetricsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/metrics/revisions"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <RevisionAnalyticsPage />
                   </AppLayout>
                 </ProtectedRoute>
               }

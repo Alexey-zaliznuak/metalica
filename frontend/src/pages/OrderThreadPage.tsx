@@ -44,6 +44,7 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import PersonIcon from '@mui/icons-material/Person'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
@@ -52,6 +53,7 @@ import type {
   Message,
   MessageKind,
   MessagesPage,
+  OrderArticle,
   OrderAssignee,
   Order,
   OrderMetrics,
@@ -460,7 +462,7 @@ function OrderInfoPanel({
               p: 2,
               borderRadius: 1.5,
               overflowY: 'auto',
-              display: { xs: 'none', md: 'block' },
+              display: { xs: 'none', lg: 'block' },
             }
       }
     >
@@ -751,6 +753,85 @@ function OrderInfoPanel({
           </Typography>
         )}
       </Box>
+    </Paper>
+  )
+}
+
+function OrderArticlesPanel({
+  articles,
+  inDrawer = false,
+}: {
+  articles: OrderArticle[]
+  inDrawer?: boolean
+}) {
+  return (
+    <Paper
+      variant={inDrawer ? 'elevation' : 'outlined'}
+      elevation={0}
+      sx={
+        inDrawer
+          ? {
+              width: '100%',
+              p: 2,
+              borderRadius: 0,
+              overflowY: 'auto',
+            }
+          : {
+              width: 300,
+              flexShrink: 0,
+              p: 2,
+              borderRadius: 1.5,
+              overflowY: 'auto',
+              display: { xs: 'none', lg: 'block' },
+            }
+      }
+    >
+      <SectionTitle icon={<Inventory2OutlinedIcon fontSize="small" />}>
+        Артикулы заказа
+      </SectionTitle>
+      {articles.length === 0 ? (
+        <Typography variant="body2" color="text.secondary">
+          Артикулы не найдены
+        </Typography>
+      ) : (
+        <Stack divider={<Divider flexItem />} spacing={0}>
+          {articles.map((item, index) => (
+            <Stack
+              key={`${item.article ?? 'noart'}-${index}`}
+              direction="row"
+              spacing={1}
+              alignItems="flex-start"
+              justifyContent="space-between"
+              sx={{ py: 0.8 }}
+            >
+              <Box sx={{ minWidth: 0 }}>
+                <Typography
+                  variant="body2"
+                  sx={{ fontWeight: 700, fontFamily: 'monospace', wordBreak: 'break-word' }}
+                >
+                  {item.article ?? '—'}
+                </Typography>
+                {item.name && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', wordBreak: 'break-word' }}
+                  >
+                    {item.name}
+                  </Typography>
+                )}
+              </Box>
+              {item.quantity != null && (
+                <Chip
+                  size="small"
+                  label={`×${item.quantity.toLocaleString('ru-RU')}`}
+                  sx={{ flexShrink: 0, fontWeight: 700, bgcolor: `${BRAND.pale}99` }}
+                />
+              )}
+            </Stack>
+          ))}
+        </Stack>
+      )}
     </Paper>
   )
 }
@@ -1245,11 +1326,11 @@ export default function OrderThreadPage() {
               </Box>
             </Stack>
 
-            <Tooltip title="Информация о заказе">
+            <Tooltip title="Информация и артикулы заказа">
               <IconButton
                 onClick={() => setInfoOpen(true)}
                 sx={{
-                  display: { xs: 'inline-flex', md: 'none' },
+                  display: { xs: 'inline-flex', lg: 'none' },
                   bgcolor: `${BRAND.pale}66`,
                   '&:hover': { bgcolor: `${BRAND.pale}` },
                 }}
@@ -1489,12 +1570,15 @@ export default function OrderThreadPage() {
         }}
       />
 
-      {/* Info panel as a drawer (mobile / tablet) */}
+      {/* Right articles panel (desktop) */}
+      <OrderArticlesPanel articles={order.articles ?? []} />
+
+      {/* Info + articles panels as a drawer (mobile / tablet) */}
       <Drawer
         anchor="right"
         open={infoOpen}
         onClose={() => setInfoOpen(false)}
-        sx={{ display: { xs: 'block', md: 'none' } }}
+        sx={{ display: { xs: 'block', lg: 'none' } }}
         PaperProps={{ sx: { width: { xs: '88%', sm: 360 }, maxWidth: 420 } }}
       >
         <OrderInfoPanel
@@ -1516,6 +1600,8 @@ export default function OrderThreadPage() {
             void handleDialogLinkChange(dialogLink)
           }}
         />
+        <Divider />
+        <OrderArticlesPanel inDrawer articles={order.articles ?? []} />
       </Drawer>
 
       {/* Edit order dialog */}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Alert,
   Box,
@@ -32,14 +33,29 @@ function MetricCard({
   label,
   value,
   color,
+  onClick,
 }: {
   icon: ReactNode
   label: string
   value: ReactNode
   color: string
+  onClick?: () => void
 }) {
   return (
-    <Card sx={{ height: '100%' }}>
+    <Card
+      sx={{
+        height: '100%',
+        ...(onClick && {
+          cursor: 'pointer',
+          transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: 4,
+          },
+        }),
+      }}
+      onClick={onClick}
+    >
       <CardContent>
         <Stack direction="row" spacing={2} alignItems="center">
           <Box
@@ -73,6 +89,7 @@ function MetricCard({
 }
 
 export default function MetricsPage() {
+  const navigate = useNavigate()
   const [overview, setOverview] = useState<MetricsOverview | null>(null)
   const [byDesigner, setByDesigner] = useState<DesignerMetric[]>([])
   const [loading, setLoading] = useState(true)
@@ -144,9 +161,10 @@ export default function MetricsPage() {
         <Grid item xs={12} sm={6} md={2.4}>
           <MetricCard
             icon={<EditNoteIcon />}
-            label="всего правок"
+            label="всего правок — открыть аналитику"
             value={overview?.totalRevisions ?? 0}
             color={BRAND.main}
+            onClick={() => navigate('/metrics/revisions')}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>

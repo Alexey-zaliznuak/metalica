@@ -80,6 +80,12 @@ export interface OrderAssignee {
   role: UserRole
 }
 
+export interface OrderArticle {
+  article: string | null
+  name: string | null
+  quantity: number | null
+}
+
 export interface Order {
   id: number
   orderNumber: string
@@ -100,6 +106,7 @@ export interface Order {
   revisionDesigner?: OrderAssignee | null
   lead?: OrderLead | null
   bluesalesInfo?: BluesalesOrderInfo | null
+  articles?: OrderArticle[]
 }
 
 export interface OrdersBoardSettings {
@@ -231,6 +238,24 @@ export interface DesignerMetric {
   name: string
   revisions: number
   avgRevisionSeconds: number
+}
+
+export interface RevisionAnalyticsDesigner {
+  designerId: number
+  name: string
+  count: number
+  avgWorkingSeconds: number | null
+}
+
+export interface RevisionAnalytics {
+  workStartHour: number
+  workEndHour: number
+  tzOffsetMinutes: number
+  overall: {
+    count: number
+    avgWorkingSeconds: number | null
+  }
+  byDesigner: RevisionAnalyticsDesigner[]
 }
 
 export interface WorkloadMetric {

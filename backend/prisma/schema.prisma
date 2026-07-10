@@ -22,12 +22,6 @@ enum OrderSource {
   BLUESALES
 }
 
-enum MessageKind {
-  NORMAL
-  REVISION_REQUEST
-  REVISION_ANSWER
-}
-
 enum ChatType {
   PUBLIC
   PRIVATE
@@ -52,6 +46,8 @@ model User {
   createdChats                Chat[]    @relation("ChatCreatedBy")
   ordersAsSketchDesigner      Order[]   @relation("OrderSketchDesigner")
   ordersAsRevisionDesigner    Order[]   @relation("OrderRevisionDesigner")
+  // Правки, которые пользователь ЗАКРЫЛ (денормализованный closedById в RevisionClosure)
+  closedRevisions             RevisionClosure[] @relation("RevisionClosedBy")
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
 
@@ -64,6 +60,7 @@ model Order {
   title               String?
   source              OrderSource         @default(MANUAL)
   messages            Message[]
+  revisions           Revision[]
   // Имена менеджеров подтягиваются из BlueSales (не FK):
   //  - deliveryManagerName  — менеджер ведения (customer.manager из BS)
   //  - onboardingManagerName — менеджер оформления (custom-поле «Оформление» из BS)
@@ -240,18 +237,55 @@ model Message {
   orderId     Int
   author      User         @relation(fields: [authorId], references: [id])
   authorId    Int
-  kind        MessageKind  @default(NORMAL)
   body        String?
-  // Self-relation: an ANSWER points to the REQUEST it resolves (revision pairing)
-  answerTo    Message?     @relation("RevisionPair", fields: [answerToId], references: [id])
-  answerToId  Int?
-  answeredBy  Message[]    @relation("RevisionPair")
+  // Тип сообщения теперь выводится из связей, а не хранится в колонке kind:
+  //  - есть revision            -> это ЗАПРОС правки (REVISION_REQUEST)
+  //  - есть revisionClosure     -> это ОТВЕТ/закрытие правки (REVISION_ANSWER)
+  //  - нет ни того ни другого   -> обычное сообщение (NORMAL)
+  revision        Revision?        @relation("RevisionRequestMessage")
+  revisionClosure RevisionClosure? @relation("RevisionClosureMessage")
   attachments Attachment[]
   createdAt   DateTime     @default(now())
 
   @@index([orderId, createdAt])
-  @@index([orderId, kind])
-  @@index([answerToId])
+}
+
+// Запрос на правку. Намеренно «пустая» модель — для аналитики важен сам факт
+// правки, а не кто её открыл (это видно через связанное сообщение при желании).
+model Revision {
+  id        Int              @id @default(autoincrement())
+  order     Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId   Int
+  // 1-к-1 с сообщением-запросом
+  message   Message          @relation("RevisionRequestMessage", fields: [messageId], references: [id], onDelete: Cascade)
+  messageId Int              @unique
+  openedAt  DateTime         @default(now())
+  // 1-к-1 закрытие (если правка закрыта)
+  closure   RevisionClosure?
+  createdAt DateTime         @default(now())
+
+  @@index([orderId])
+}
+
+// Закрытие правки. С денормализацией под аналитику: кто закрыл + когда открыта/закрыта.
+model RevisionClosure {
+  id         Int      @id @default(autoincrement())
+  // 1-к-1 с правкой
+  revision   Revision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  revisionId Int      @unique
+  // 1-к-1 с сообщением-ответом (может отсутствовать, если сообщение удалят)
+  message    Message? @relation("RevisionClosureMessage", fields: [messageId], references: [id], onDelete: SetNull)
+  messageId  Int?     @unique
+  // Денормализовано: дизайнер, закрывший правку
+  closedBy   User     @relation("RevisionClosedBy", fields: [closedById], references: [id])
+  closedById Int
+  // Денормализовано под аналитику: время открытия (дублирует Revision.openedAt) и закрытия
+  openedAt   DateTime
+  closedAt   DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([closedById])
+  @@index([closedAt])
 }
 
 model Attachment {

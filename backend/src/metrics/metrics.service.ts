@@ -1,6 +1,56 @@
 import { Injectable } from '@nestjs/common';
-import { MessageKind, Prisma, Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+// Часовой пояс по умолчанию для расчёта рабочего окна — Москва (UTC+3).
+const DEFAULT_TZ_OFFSET_MINUTES = 180;
+const DEFAULT_WORK_START_HOUR = 9;
+const DEFAULT_WORK_END_HOUR = 21;
+
+/**
+ * Считает «рабочее» время (в секундах) между openedAt и closedAt, вычитая
+ * нерабочие часы каждых суток. Рабочий день — суточное окно [workStartHour, workEndHour)
+ * в часовом поясе, заданном tzOffsetMinutes.
+ *
+ * Пример: открыто 20:00, закрыто 11:00 следующего дня, окно 09:00–21:00 ->
+ * 1ч вечером + 2ч утром = 3 часа.
+ */
+export function workingSecondsBetween(
+  openedAt: Date,
+  closedAt: Date,
+  workStartHour: number,
+  workEndHour: number,
+  tzOffsetMinutes: number,
+): number {
+  const startMs = openedAt.getTime();
+  const endMs = closedAt.getTime();
+  if (endMs <= startMs) return 0;
+  // Некорректное окно -> считаем всё время рабочим (fallback).
+  if (!(workEndHour > workStartHour)) {
+    return Math.round((endMs - startMs) / 1000);
+  }
+
+  const offsetMs = tzOffsetMinutes * 60_000;
+  // Переводим в «локальное» псевдо-UTC время, чтобы сутки/часы считались в нужной TZ.
+  const localStart = startMs + offsetMs;
+  const localEnd = endMs + offsetMs;
+
+  const dayMs = 86_400_000;
+  const workStartMs = workStartHour * 3_600_000;
+  const workEndMs = workEndHour * 3_600_000;
+
+  let total = 0;
+  for (
+    let dayStart = Math.floor(localStart / dayMs) * dayMs;
+    dayStart <= localEnd;
+    dayStart += dayMs
+  ) {
+    const from = Math.max(dayStart + workStartMs, localStart);
+    const to = Math.min(dayStart + workEndMs, localEnd);
+    if (to > from) total += to - from;
+  }
+  return Math.round(total / 1000);
+}
 
 @Injectable()
 export class MetricsService {
@@ -20,19 +70,16 @@ export class MetricsService {
 
   async overview() {
     const totalOrders = await this.prisma.order.count();
-    const totalRevisions = await this.prisma.message.count({
-      where: { kind: MessageKind.REVISION_REQUEST },
-    });
-    const openRevisions = await this.prisma.message.count({
-      where: { kind: MessageKind.REVISION_REQUEST, answeredBy: { none: {} } },
+    const totalRevisions = await this.prisma.revision.count();
+    const openRevisions = await this.prisma.revision.count({
+      where: { closure: { is: null } },
     });
 
     const stuckThreshold = new Date(Date.now() - this.stuckHours * 3600 * 1000);
-    const stuckRevisions = await this.prisma.message.count({
+    const stuckRevisions = await this.prisma.revision.count({
       where: {
-        kind: MessageKind.REVISION_REQUEST,
-        answeredBy: { none: {} },
-        createdAt: { lt: stuckThreshold },
+        closure: { is: null },
+        openedAt: { lt: stuckThreshold },
       },
     });
 
@@ -47,19 +94,14 @@ export class MetricsService {
       select: { id: true, name: true },
     });
 
-    const answers = await this.prisma.message.findMany({
-      where: { kind: MessageKind.REVISION_ANSWER, answerToId: { not: null } },
-      select: {
-        authorId: true,
-        createdAt: true,
-        answerTo: { select: { createdAt: true } },
-      },
+    const closures = await this.prisma.revisionClosure.findMany({
+      select: { closedById: true, openedAt: true, closedAt: true },
     });
 
     return designers.map((d) => {
-      const own = answers.filter((a) => a.authorId === d.id && a.answerTo);
+      const own = closures.filter((c) => c.closedById === d.id);
       const durations = own
-        .map((a) => (a.createdAt.getTime() - a.answerTo!.createdAt.getTime()) / 1000)
+        .map((c) => (c.closedAt.getTime() - c.openedAt.getTime()) / 1000)
         .filter((s) => s >= 0);
       const avg =
         durations.length > 0
@@ -72,6 +114,89 @@ export class MetricsService {
         avgRevisionSeconds: avg,
       };
     });
+  }
+
+  /**
+   * Аналитика правок по «рабочему» времени закрытия.
+   *
+   * Считает среднее рабочее время закрытия правки по каждому дизайнеру, который
+   * ЗАКРЫЛ правку (closedById), а также общее среднее по всем правкам.
+   * На вход — суточное окно рабочего времени (часы) и часовой пояс.
+   */
+  async revisionAnalytics(params: {
+    workStartHour?: number;
+    workEndHour?: number;
+    tzOffsetMinutes?: number;
+  }) {
+    const workStartHour = this.clampHour(params.workStartHour, DEFAULT_WORK_START_HOUR);
+    const workEndHour = this.clampHour(params.workEndHour, DEFAULT_WORK_END_HOUR);
+    const tzOffsetMinutes = Number.isFinite(params.tzOffsetMinutes)
+      ? (params.tzOffsetMinutes as number)
+      : DEFAULT_TZ_OFFSET_MINUTES;
+
+    const closures = await this.prisma.revisionClosure.findMany({
+      select: {
+        closedById: true,
+        openedAt: true,
+        closedAt: true,
+        closedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    const byDesignerMap = new Map<
+      number,
+      { designerId: number; name: string; count: number; totalSeconds: number }
+    >();
+    let overallCount = 0;
+    let overallTotalSeconds = 0;
+
+    for (const c of closures) {
+      const seconds = workingSecondsBetween(
+        c.openedAt,
+        c.closedAt,
+        workStartHour,
+        workEndHour,
+        tzOffsetMinutes,
+      );
+      overallCount += 1;
+      overallTotalSeconds += seconds;
+
+      const entry = byDesignerMap.get(c.closedById) ?? {
+        designerId: c.closedById,
+        name: c.closedBy?.name ?? `#${c.closedById}`,
+        count: 0,
+        totalSeconds: 0,
+      };
+      entry.count += 1;
+      entry.totalSeconds += seconds;
+      byDesignerMap.set(c.closedById, entry);
+    }
+
+    const byDesigner = Array.from(byDesignerMap.values())
+      .map((e) => ({
+        designerId: e.designerId,
+        name: e.name,
+        count: e.count,
+        avgWorkingSeconds: e.count > 0 ? Math.round(e.totalSeconds / e.count) : null,
+      }))
+      .sort((a, b) => (b.avgWorkingSeconds ?? 0) - (a.avgWorkingSeconds ?? 0));
+
+    return {
+      workStartHour,
+      workEndHour,
+      tzOffsetMinutes,
+      overall: {
+        count: overallCount,
+        avgWorkingSeconds:
+          overallCount > 0 ? Math.round(overallTotalSeconds / overallCount) : null,
+      },
+      byDesigner,
+    };
+  }
+
+  private clampHour(value: number | undefined, fallback: number): number {
+    if (value === undefined || !Number.isFinite(value)) return fallback;
+    return Math.min(Math.max(Math.trunc(value), 0), 24);
   }
 
   async workload(orderStatusIdsRaw?: string) {
@@ -164,13 +289,11 @@ export class MetricsService {
   }
 
   private async avgRevisionSeconds(): Promise<number | null> {
-    const answers = await this.prisma.message.findMany({
-      where: { kind: MessageKind.REVISION_ANSWER, answerToId: { not: null } },
-      select: { createdAt: true, answerTo: { select: { createdAt: true } } },
+    const closures = await this.prisma.revisionClosure.findMany({
+      select: { openedAt: true, closedAt: true },
     });
-    const durations = answers
-      .filter((a) => a.answerTo)
-      .map((a) => (a.createdAt.getTime() - a.answerTo!.createdAt.getTime()) / 1000)
+    const durations = closures
+      .map((c) => (c.closedAt.getTime() - c.openedAt.getTime()) / 1000)
       .filter((s) => s >= 0);
     if (durations.length === 0) {
       return null;
@@ -259,14 +382,16 @@ export class MetricsService {
         COUNT(*) AS "openRevisionOrders"
       FROM "Order" o
       JOIN LATERAL (
-        SELECT m."kind"
+        SELECT m."id"
         FROM "Message" m
         WHERE m."orderId" = o."id"
         ORDER BY m."createdAt" DESC, m."id" DESC
         LIMIT 1
       ) lm ON TRUE
+      JOIN "Revision" rev ON rev."messageId" = lm."id"
+      LEFT JOIN "RevisionClosure" rc ON rc."revisionId" = rev."id"
       WHERE o."revisionDesignerId" IS NOT NULL
-        AND lm."kind" = 'REVISION_REQUEST'::"MessageKind"
+        AND rc."id" IS NULL
         ${statusFilterSql}
       GROUP BY o."revisionDesignerId"
     `;
