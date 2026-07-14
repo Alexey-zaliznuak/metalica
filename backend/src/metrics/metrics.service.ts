@@ -242,6 +242,11 @@ export class MetricsService {
       },
     });
 
+    // Эскизы «в работе»: старт проставлен, но готовности ещё нет.
+    const inProgressCount = await this.prisma.order.count({
+      where: { sketchStartedAt: { not: null }, sketchReadyAt: null },
+    });
+
     const UNASSIGNED_ID = 0;
     const byDesignerMap = new Map<
       number,
@@ -289,6 +294,7 @@ export class MetricsService {
       workStartHour,
       workEndHour,
       tzOffsetMinutes,
+      inProgressCount,
       overall: {
         count: overallCount,
         avgWorkingSeconds:

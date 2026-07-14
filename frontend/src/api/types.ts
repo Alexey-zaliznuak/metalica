@@ -304,6 +304,8 @@ export interface SketchAnalytics {
   workStartHour: number
   workEndHour: number
   tzOffsetMinutes: number
+  // Заказы, где эскиз начали готовить, но он ещё не готов.
+  inProgressCount: number
   overall: {
     count: number
     avgWorkingSeconds: number | null

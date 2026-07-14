@@ -24,6 +24,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import TimerIcon from '@mui/icons-material/Timer'
 import BrushIcon from '@mui/icons-material/Brush'
+import PendingActionsIcon from '@mui/icons-material/PendingActions'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
 import type { SketchAnalytics } from '../api/types'
@@ -151,7 +152,7 @@ export default function SketchAnalyticsPage() {
       ) : (
         <>
           <Grid container spacing={2} sx={{ mb: 4 }}>
-            <Grid item xs={12} sm={6}>
+            <Grid item xs={12} sm={6} md={4}>
               <Card sx={{ height: '100%' }}>
                 <CardContent>
                   <Stack direction="row" spacing={2} alignItems="center">
@@ -182,7 +183,7 @@ export default function SketchAnalyticsPage() {
                 </CardContent>
               </Card>
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid item xs={12} sm={6} md={4}>
               <Card sx={{ height: '100%' }}>
                 <CardContent>
                   <Stack direction="row" spacing={2} alignItems="center">
@@ -207,6 +208,37 @@ export default function SketchAnalyticsPage() {
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         всего готовых эскизов
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6} md={4}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Box
+                      sx={{
+                        width: 52,
+                        height: 52,
+                        borderRadius: 1.5,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'linear-gradient(135deg, #ed6c02, #ed6c02cc)',
+                        color: '#fff',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <PendingActionsIcon />
+                    </Box>
+                    <Box>
+                      <Typography variant="h5" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                        {data?.inProgressCount ?? 0}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        эскизов в работе (начали, но не готовы)
                       </Typography>
                     </Box>
                   </Stack>
