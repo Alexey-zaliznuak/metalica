@@ -22,35 +22,92 @@ import client from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import type { BluesalesStatusOption, WorkloadMetric } from '../api/types'
 
-type WorkloadFilter = 'MANAGER' | 'DESIGNER'
+type WorkloadTab = 'sketch' | 'revision' | 'delivery' | 'onboarding'
 type SortDirection = 'asc' | 'desc'
-type SortField = 'PRIMARY_ORDERS' | 'SECONDARY_ORDERS'
+type WorkloadMetricKey =
+  | 'sketchOrders'
+  | 'revisionOrders'
+  | 'deliveryOrders'
+  | 'onboardingOrders'
 
-const FILTER_LABELS: Record<WorkloadFilter, string> = {
-  MANAGER: 'Менеджеры',
-  DESIGNER: 'Дизайнеры',
+const WORKLOAD_TABS: WorkloadTab[] = ['sketch', 'revision', 'delivery', 'onboarding']
+
+const TAB_CONFIG: Record<
+  WorkloadTab,
+  {
+    label: string
+    role: 'DESIGNER' | 'MANAGER'
+    metric: WorkloadMetricKey
+    columnLabel: string
+  }
+> = {
+  sketch: {
+    label: 'Художники · Эскизы',
+    role: 'DESIGNER',
+    metric: 'sketchOrders',
+    columnLabel: 'Эскизы',
+  },
+  revision: {
+    label: 'Художники · Правки',
+    role: 'DESIGNER',
+    metric: 'revisionOrders',
+    columnLabel: 'Правки',
+  },
+  delivery: {
+    label: 'Менеджеры · Ведение',
+    role: 'MANAGER',
+    metric: 'deliveryOrders',
+    columnLabel: 'Ведение',
+  },
+  onboarding: {
+    label: 'Менеджеры · Оформление',
+    role: 'MANAGER',
+    metric: 'onboardingOrders',
+    columnLabel: 'Оформление',
+  },
 }
 
-const DEFAULT_WORKLOAD_SETTINGS = {
-  selectedOrderStatusIds: [] as number[],
+type StatusSelections = Record<WorkloadTab, number[]>
+
+const DEFAULT_STATUS_SELECTIONS: StatusSelections = {
+  sketch: [],
+  revision: [],
+  delivery: [],
+  onboarding: [],
 }
 
-interface WorkloadPageSettings {
+interface WorkloadTabSettings {
   selectedOrderStatusIds: number[]
 }
+
+type WorkloadPageSettings = Record<WorkloadTab, WorkloadTabSettings>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function parseWorkloadSettings(raw: unknown): WorkloadPageSettings {
-  if (!isRecord(raw)) return DEFAULT_WORKLOAD_SETTINGS
-  const selectedOrderStatusIds = Array.isArray(raw.selectedOrderStatusIds)
-    ? raw.selectedOrderStatusIds
-        .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value >= 0)
-    : []
-  return { selectedOrderStatusIds }
+function parseStatusIds(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((value) => Number(value))
+    .filter((value, index, arr) => Number.isInteger(value) && value >= 0 && arr.indexOf(value) === index)
+}
+
+function parseWorkloadSettings(raw: unknown): StatusSelections {
+  const result: StatusSelections = {
+    sketch: [],
+    revision: [],
+    delivery: [],
+    onboarding: [],
+  }
+  if (!isRecord(raw)) return result
+  for (const tab of WORKLOAD_TABS) {
+    const tabRaw = raw[tab]
+    if (isRecord(tabRaw)) {
+      result[tab] = parseStatusIds(tabRaw.selectedOrderStatusIds)
+    }
+  }
+  return result
 }
 
 function normalizeStatusSelection(availableStatusIds: number[], selectedRaw: number[]) {
@@ -66,13 +123,14 @@ export default function WorkloadPage() {
   const [loading, setLoading] = useState(true)
   const [statusesLoading, setStatusesLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filter, setFilter] = useState<WorkloadFilter>('MANAGER')
+  const [tab, setTab] = useState<WorkloadTab>('sketch')
   const [items, setItems] = useState<WorkloadMetric[]>([])
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [statusesLoaded, setStatusesLoaded] = useState(false)
-  const [selectedOrderStatusIds, setSelectedOrderStatusIds] = useState<number[]>([])
+  const [statusSelections, setStatusSelections] = useState<StatusSelections>(
+    DEFAULT_STATUS_SELECTIONS,
+  )
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
-  const [sortField, setSortField] = useState<SortField>('PRIMARY_ORDERS')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [initialized, setInitialized] = useState(false)
 
@@ -81,6 +139,8 @@ export default function WorkloadPage() {
   // remount; skipSaveRef prevents echoing applied settings back to the server.
   const dirtyRef = useRef(false)
   const skipSaveRef = useRef(false)
+
+  const activeSelection = statusSelections[tab]
 
   useEffect(() => {
     let active = true
@@ -117,10 +177,15 @@ export default function WorkloadPage() {
     )
     const allStatusIds = orderStatuses.map((status) => status.id)
 
+    const normalized: StatusSelections = {
+      sketch: normalizeStatusSelection(allStatusIds, parsed.sketch),
+      revision: normalizeStatusSelection(allStatusIds, parsed.revision),
+      delivery: normalizeStatusSelection(allStatusIds, parsed.delivery),
+      onboarding: normalizeStatusSelection(allStatusIds, parsed.onboarding),
+    }
+
     skipSaveRef.current = true
-    setSelectedOrderStatusIds(
-      normalizeStatusSelection(allStatusIds, parsed.selectedOrderStatusIds),
-    )
+    setStatusSelections(normalized)
     setInitialized(true)
   }, [statusesLoaded, orderStatuses, user?.frontendSettings])
 
@@ -134,7 +199,7 @@ export default function WorkloadPage() {
         const { data } = await client.get<WorkloadMetric[]>('/metrics/workload', {
           params: {
             orderStatusIds:
-              selectedOrderStatusIds.length > 0 ? selectedOrderStatusIds.join(',') : undefined,
+              activeSelection.length > 0 ? activeSelection.join(',') : undefined,
           },
         })
         if (!active) return
@@ -152,7 +217,7 @@ export default function WorkloadPage() {
     return () => {
       active = false
     }
-  }, [initialized, selectedOrderStatusIds])
+  }, [initialized, activeSelection])
 
   useEffect(() => {
     if (!initialized) return
@@ -163,57 +228,37 @@ export default function WorkloadPage() {
     dirtyRef.current = true
     updateFrontendSettings({
       workloadPage: {
-        selectedOrderStatusIds,
+        sketch: { selectedOrderStatusIds: statusSelections.sketch },
+        revision: { selectedOrderStatusIds: statusSelections.revision },
+        delivery: { selectedOrderStatusIds: statusSelections.delivery },
+        onboarding: { selectedOrderStatusIds: statusSelections.onboarding },
       } satisfies WorkloadPageSettings,
     })
-  }, [initialized, selectedOrderStatusIds, updateFrontendSettings])
+  }, [initialized, statusSelections, updateFrontendSettings])
+
+  const config = TAB_CONFIG[tab]
 
   const visibleItems = useMemo(() => {
-    return items.filter((item) => item.role === filter)
-  }, [filter, items])
-
-  const sortedVisibleItems = useMemo(() => {
-    const getPrimaryOrders = (item: WorkloadMetric) =>
-      item.role === 'MANAGER' ? item.deliveryOrders : item.sketchOrders
-    const getSecondaryOrders = (item: WorkloadMetric) =>
-      item.role === 'MANAGER' ? item.onboardingOrders : item.revisionOrders
-
-    const sorted = [...visibleItems].sort((a, b) => {
-      const aValue =
-        sortField === 'PRIMARY_ORDERS' ? getPrimaryOrders(a) : getSecondaryOrders(a)
-      const bValue =
-        sortField === 'PRIMARY_ORDERS' ? getPrimaryOrders(b) : getSecondaryOrders(b)
-      const diff = aValue - bValue
+    const filtered = items.filter(
+      (item) => item.role === config.role && item[config.metric] > 0,
+    )
+    const sorted = [...filtered].sort((a, b) => {
+      const diff = a[config.metric] - b[config.metric]
       if (diff !== 0) {
         return sortDirection === 'asc' ? diff : -diff
       }
       return a.name.localeCompare(b.name, 'ru')
     })
-
     return sorted
-  }, [visibleItems, sortDirection, sortField])
-
-  const managersCount = useMemo(
-    () => items.filter((item) => item.role === 'MANAGER').length,
-    [items],
-  )
-  const designersCount = useMemo(
-    () => items.filter((item) => item.role === 'DESIGNER').length,
-    [items],
-  )
+  }, [items, config, sortDirection])
 
   const selectedStatuses = useMemo(
-    () => orderStatuses.filter((status) => selectedOrderStatusIds.includes(status.id)),
-    [orderStatuses, selectedOrderStatusIds],
+    () => orderStatuses.filter((status) => activeSelection.includes(status.id)),
+    [orderStatuses, activeSelection],
   )
 
-  const handleSortChange = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
-      return
-    }
-    setSortField(field)
-    setSortDirection('desc')
+  const toggleSortDirection = () => {
+    setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
   }
 
   const showInitialLoader = statusesLoading || (loading && !initialized)
@@ -243,7 +288,23 @@ export default function WorkloadPage() {
         </Alert>
       )}
 
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+      <ToggleButtonGroup
+        value={tab}
+        exclusive
+        onChange={(_, value: WorkloadTab | null) => {
+          if (value) setTab(value)
+        }}
+        size="small"
+        sx={{ mb: 2, flexWrap: 'wrap' }}
+      >
+        {WORKLOAD_TABS.map((tabKey) => (
+          <ToggleButton key={tabKey} value={tabKey}>
+            {TAB_CONFIG[tabKey].label}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }} alignItems={{ sm: 'center' }}>
         <Autocomplete
           multiple
           disableCloseOnSelect
@@ -259,7 +320,8 @@ export default function WorkloadPage() {
           isOptionEqualToValue={(option, value) => option.id === value.id}
           onChange={(_, values) => {
             if (values.length === 0) return
-            setSelectedOrderStatusIds(values.map((status) => status.id))
+            const ids = values.map((status) => status.id)
+            setStatusSelections((prev) => ({ ...prev, [tab]: ids }))
           }}
           size="small"
           sx={{ minWidth: { xs: '100%', sm: 360 } }}
@@ -276,21 +338,9 @@ export default function WorkloadPage() {
             </li>
           )}
         />
-        <ToggleButtonGroup
-          value={filter}
-          exclusive
-          onChange={(_, value: WorkloadFilter | null) => {
-            if (value) setFilter(value)
-          }}
-          size="small"
-        >
-          <ToggleButton value="MANAGER">
-            {FILTER_LABELS.MANAGER} ({managersCount})
-          </ToggleButton>
-          <ToggleButton value="DESIGNER">
-            {FILTER_LABELS.DESIGNER} ({designersCount})
-          </ToggleButton>
-        </ToggleButtonGroup>
+        <Typography variant="body2" color="text.secondary">
+          Показано: {visibleItems.length}
+        </Typography>
         {loading && initialized && (
           <Stack direction="row" alignItems="center" spacing={1}>
             <CircularProgress size={16} />
@@ -309,43 +359,29 @@ export default function WorkloadPage() {
                 <TableCell sx={{ fontWeight: 700 }}>Пользователь</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>
                   <TableSortLabel
-                    active={sortField === 'PRIMARY_ORDERS'}
-                    direction={sortField === 'PRIMARY_ORDERS' ? sortDirection : 'desc'}
-                    onClick={() => handleSortChange('PRIMARY_ORDERS')}
+                    active
+                    direction={sortDirection}
+                    onClick={toggleSortDirection}
                     sx={{
                       color: 'text.primary',
                       '&.Mui-active': { color: 'text.primary' },
                       '& .MuiTableSortLabel-icon': { color: 'text.secondary !important' },
                     }}
                   >
-                    {filter === 'MANAGER' ? 'Ведение' : 'Эскизы'}
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>
-                  <TableSortLabel
-                    active={sortField === 'SECONDARY_ORDERS'}
-                    direction={sortField === 'SECONDARY_ORDERS' ? sortDirection : 'desc'}
-                    onClick={() => handleSortChange('SECONDARY_ORDERS')}
-                    sx={{
-                      color: 'text.primary',
-                      '&.Mui-active': { color: 'text.primary' },
-                      '& .MuiTableSortLabel-icon': { color: 'text.secondary !important' },
-                    }}
-                  >
-                    {filter === 'MANAGER' ? 'Оформление' : 'Правки'}
+                    {config.columnLabel}
                   </TableSortLabel>
                 </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {sortedVisibleItems.length === 0 && (
+              {visibleItems.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={2} align="center" sx={{ py: 4 }}>
                     <Typography color="text.secondary">Нет пользователей</Typography>
                   </TableCell>
                 </TableRow>
               )}
-              {sortedVisibleItems.map((item) => (
+              {visibleItems.map((item) => (
                 <TableRow key={`${item.role}-${item.username || item.name}`} hover>
                   <TableCell>
                     <Typography sx={{ fontWeight: 700 }}>{item.name}</Typography>
@@ -355,10 +391,9 @@ export default function WorkloadPage() {
                       </Typography>
                     )}
                   </TableCell>
-                  <TableCell>{item.role === 'MANAGER' ? item.deliveryOrders : item.sketchOrders}</TableCell>
                   <TableCell>
-                    {item.role === 'MANAGER' ? item.onboardingOrders : item.revisionOrders}
-                    {item.role === 'DESIGNER' && (
+                    {item[config.metric]}
+                    {tab === 'revision' && item.revisionOrdersWithOpenRequest > 0 && (
                       <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
                         ждут: {item.revisionOrdersWithOpenRequest}
                       </Typography>
