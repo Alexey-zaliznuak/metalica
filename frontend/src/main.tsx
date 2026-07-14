@@ -11,6 +11,7 @@ import OrdersPage from './pages/OrdersPage'
 import OrderThreadPage from './pages/OrderThreadPage'
 import MetricsPage from './pages/MetricsPage'
 import RevisionAnalyticsPage from './pages/RevisionAnalyticsPage'
+import SketchAnalyticsPage from './pages/SketchAnalyticsPage'
 import UsersPage from './pages/UsersPage'
 import WorkloadPage from './pages/WorkloadPage'
 import ChatsPage from './pages/ChatsPage'
@@ -60,6 +61,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
                   <AppLayout>
                     <RevisionAnalyticsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/metrics/sketches"
+              element={
+                <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
+                  <AppLayout>
+                    <SketchAnalyticsPage />
                   </AppLayout>
                 </ProtectedRoute>
               }

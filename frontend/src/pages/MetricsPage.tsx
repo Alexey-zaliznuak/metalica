@@ -12,6 +12,7 @@ import {
 } from '@mui/material'
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart'
 import EditNoteIcon from '@mui/icons-material/EditNote'
+import BrushIcon from '@mui/icons-material/Brush'
 import PendingActionsIcon from '@mui/icons-material/PendingActions'
 import ReportProblemIcon from '@mui/icons-material/ReportProblem'
 import type { ReactNode } from 'react'
@@ -148,6 +149,15 @@ export default function MetricsPage() {
             value={overview?.totalRevisions ?? 0}
             color={BRAND.main}
             onClick={() => navigate('/metrics/revisions')}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={2.4}>
+          <MetricCard
+            icon={<BrushIcon />}
+            label="Эскизы"
+            value={overview?.totalSketches ?? 0}
+            color={BRAND.light}
+            onClick={() => navigate('/metrics/sketches')}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>

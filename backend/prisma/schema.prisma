@@ -75,6 +75,11 @@ model Order {
   sketchDesignerId    Int?
   revisionDesigner    User?               @relation("OrderRevisionDesigner", fields: [revisionDesignerId], references: [id])
   revisionDesignerId  Int?
+  // Замер времени эскиза по статусам заказа BlueSales:
+  //  - sketchStartedAt — момент ПЕРВОГО входа в статус «Готовим эскиз» (ставится один раз)
+  //  - sketchReadyAt   — момент ПЕРВОГО перехода в статус «Эскиз готов» (ставится один раз)
+  sketchStartedAt     DateTime?
+  sketchReadyAt       DateTime?
   // Лид (клиент из BlueSales), создавший заказ
   lead                Lead?               @relation(fields: [leadId], references: [id])
   leadId              Int?

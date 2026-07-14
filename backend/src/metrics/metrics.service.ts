@@ -85,7 +85,23 @@ export class MetricsService {
 
     const avgRevisionSeconds = await this.avgRevisionSeconds();
 
-    return { totalOrders, totalRevisions, avgRevisionSeconds, openRevisions, stuckRevisions };
+    // Эскизы: готовые (обе метки) и в работе (старт есть, готовности нет).
+    const totalSketches = await this.prisma.order.count({
+      where: { sketchStartedAt: { not: null }, sketchReadyAt: { not: null } },
+    });
+    const openSketches = await this.prisma.order.count({
+      where: { sketchStartedAt: { not: null }, sketchReadyAt: null },
+    });
+
+    return {
+      totalOrders,
+      totalRevisions,
+      avgRevisionSeconds,
+      openRevisions,
+      stuckRevisions,
+      totalSketches,
+      openSketches,
+    };
   }
 
   async byDesigner() {
@@ -170,6 +186,94 @@ export class MetricsService {
       entry.count += 1;
       entry.totalSeconds += seconds;
       byDesignerMap.set(c.closedById, entry);
+    }
+
+    const byDesigner = Array.from(byDesignerMap.values())
+      .map((e) => ({
+        designerId: e.designerId,
+        name: e.name,
+        count: e.count,
+        avgWorkingSeconds: e.count > 0 ? Math.round(e.totalSeconds / e.count) : null,
+      }))
+      .sort((a, b) => (b.avgWorkingSeconds ?? 0) - (a.avgWorkingSeconds ?? 0));
+
+    return {
+      workStartHour,
+      workEndHour,
+      tzOffsetMinutes,
+      overall: {
+        count: overallCount,
+        avgWorkingSeconds:
+          overallCount > 0 ? Math.round(overallTotalSeconds / overallCount) : null,
+      },
+      byDesigner,
+    };
+  }
+
+  /**
+   * Аналитика эскизов по «рабочему» времени изготовления.
+   *
+   * Для каждого заказа, у которого проставлены обе метки (sketchStartedAt и
+   * sketchReadyAt), считает рабочее время между ними и группирует по текущему
+   * художнику эскиза (sketchDesignerId). Заказы без художника попадают в
+   * отдельную строку «Без художника».
+   */
+  async sketchAnalytics(params: {
+    workStartHour?: number;
+    workEndHour?: number;
+    tzOffsetMinutes?: number;
+  }) {
+    const workStartHour = this.clampHour(params.workStartHour, DEFAULT_WORK_START_HOUR);
+    const workEndHour = this.clampHour(params.workEndHour, DEFAULT_WORK_END_HOUR);
+    const tzOffsetMinutes = Number.isFinite(params.tzOffsetMinutes)
+      ? (params.tzOffsetMinutes as number)
+      : DEFAULT_TZ_OFFSET_MINUTES;
+
+    const orders = await this.prisma.order.findMany({
+      where: {
+        sketchStartedAt: { not: null },
+        sketchReadyAt: { not: null },
+      },
+      select: {
+        sketchDesignerId: true,
+        sketchStartedAt: true,
+        sketchReadyAt: true,
+        sketchDesigner: { select: { id: true, name: true } },
+      },
+    });
+
+    const UNASSIGNED_ID = 0;
+    const byDesignerMap = new Map<
+      number,
+      { designerId: number; name: string; count: number; totalSeconds: number }
+    >();
+    let overallCount = 0;
+    let overallTotalSeconds = 0;
+
+    for (const order of orders) {
+      // where гарантирует not null, но TS этого не знает.
+      if (!order.sketchStartedAt || !order.sketchReadyAt) continue;
+      const seconds = workingSecondsBetween(
+        order.sketchStartedAt,
+        order.sketchReadyAt,
+        workStartHour,
+        workEndHour,
+        tzOffsetMinutes,
+      );
+      overallCount += 1;
+      overallTotalSeconds += seconds;
+
+      const designerId = order.sketchDesigner?.id ?? UNASSIGNED_ID;
+      const name = order.sketchDesigner?.name ?? 'Без художника';
+      const entry = byDesignerMap.get(designerId) ?? {
+        designerId,
+        name,
+        count: 0,
+        totalSeconds: 0,
+      };
+      entry.count += 1;
+      entry.totalSeconds += seconds;
+      byDesignerMap.set(designerId, entry);
     }
 
     const byDesigner = Array.from(byDesignerMap.values())

@@ -12,6 +12,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { AuthUser } from '../auth/current-user.decorator';
 import { OrderEventChange, OrderEventsService } from './order-events.service';
+import { computeSketchTimestampUpdate } from './sketch-status';
 
 @Injectable()
 export class OrdersService {
@@ -539,6 +540,8 @@ export class OrdersService {
       select: {
         id: true,
         source: true,
+        sketchStartedAt: true,
+        sketchReadyAt: true,
         bluesalesInfo: {
           select: {
             bsOrderId: true,
@@ -588,6 +591,15 @@ export class OrdersService {
         lastSyncedAt: new Date(),
       },
     });
+
+    // Замер времени эскиза по смене статуса заказа (метки одноразовые).
+    const sketchUpdate = computeSketchTimestampUpdate(nextStatusName, {
+      sketchStartedAt: order.sketchStartedAt,
+      sketchReadyAt: order.sketchReadyAt,
+    });
+    if (Object.keys(sketchUpdate).length > 0) {
+      await this.prisma.order.update({ where: { id }, data: sketchUpdate });
+    }
 
     if (nextStatusId !== prevStatusId) {
       await this.orderEvents.record(id, actor?.id ?? null, [

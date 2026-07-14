@@ -4,6 +4,13 @@ import { Cron } from '@nestjs/schedule';
 import { OrderSource, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BluesalesApiService, BsCustomer, BsOrder } from './bluesales-api.service';
+import {
+  computeSketchTimestampUpdate,
+  isSketchTrackedStatus,
+  SKETCH_READY_STATUS,
+  SKETCH_START_STATUS,
+  SketchTimestamps,
+} from '../orders/sketch-status';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -49,6 +56,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly leadsRefreshLookbackDays: number;
   /** Периодический добор новых лидов за столько последних дней (включая сегодня). */
   private readonly backfillDays: number;
+  /** Размер пачки в фоновом бэкфилле меток эскиза. */
+  private readonly sketchBackfillBatchSize: number;
+  /** Пауза между итерациями бэкфилла меток эскиза, когда работы нет (мс). */
+  private readonly sketchBackfillIdleMs: number;
 
   /** Защита от параллельного запуска быстрого синка. */
   private fastSyncRunning = false;
@@ -78,6 +89,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // 2 = сегодня + вчера. Запас во «вчера» страхует от рассинхрона границы суток
     // (BS фильтрует по дню в МСК, а formatDate считает день по UTC).
     this.backfillDays = this.envInt('BLUESALES_BACKFILL_DAYS', 2);
+    this.sketchBackfillBatchSize = this.envInt('SKETCH_BACKFILL_BATCH_SIZE', 500);
+    this.sketchBackfillIdleMs = this.envInt('SKETCH_BACKFILL_IDLE_MS', 60000);
   }
 
   onModuleInit(): void {
@@ -100,6 +113,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // Запускаем циклы после небольшой паузы, чтобы приложение успело подняться.
     setTimeout(() => void this.runRefreshLoop(), 5000);
     setTimeout(() => void this.runLeadsLoop(), 8000);
+    // Фоновый бэкфилл меток эскиза (только по БД, без запросов в BlueSales).
+    setTimeout(() => void this.runSketchBackfillLoop(), 6000);
     // Полный синк за период выполняется один раз при старте, если включён через env.
     if (this.fullSyncOnStartup) {
       setTimeout(() => void this.runFullSync(), 11000);
@@ -365,6 +380,89 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       `Refresh-loop: обновлено ${synced}, пропущено (нет в BS) ${missingIds.length}, ` +
         `время запроса ${apiMs} мс, время батча ${elapsedMs} мс, лаг старейшего ${this.formatDuration(oldestSyncLagMs)}`,
     );
+  }
+
+  // ─── Фоновый бэкфилл меток эскиза ──────────────────────────────────────────
+
+  /**
+   * Бесконечный цикл, который проставляет метки времени эскиза заказам, уже
+   * находящимся в соответствующем статусе, но без метки. Работает только по нашей
+   * БД (без запросов в BlueSales):
+   *  - заказ в статусе «Готовим эскиз» без sketchStartedAt -> ставим sketchStartedAt;
+   *  - заказ в статусе «Эскиз готов» без sketchReadyAt      -> ставим sketchReadyAt.
+   *
+   * Служит первичным бэкфиллом исторических заказов и страховкой на случай, если
+   * быстрый синк «проскочил» момент смены статуса между итерациями.
+   *
+   * Метки выставляются моментом обнаружения (now), т.к. реальное время входа в
+   * статус для уже находящихся в нём заказов неизвестно.
+   */
+  private async runSketchBackfillLoop(): Promise<void> {
+    this.logger.log('Фоновый sketch-backfill loop запущен');
+
+    while (this.loopActive) {
+      let updated = 0;
+      try {
+        updated = await this.sketchBackfillBatch();
+      } catch (err) {
+        this.logger.error(`Sketch-backfill loop ошибка: ${(err as Error).message}`);
+      }
+      // Есть работа — продолжаем быстро (могут быть ещё батчи), иначе ждём подольше.
+      await this.sleep(updated > 0 ? this.refreshPauseMs : this.sketchBackfillIdleMs);
+    }
+
+    this.logger.log('Фоновый sketch-backfill loop остановлен');
+  }
+
+  /** Одна итерация бэкфилла меток эскиза. Возвращает число проставленных меток. */
+  private async sketchBackfillBatch(): Promise<number> {
+    const now = new Date();
+
+    const [needStart, needReady] = await Promise.all([
+      this.prisma.order.findMany({
+        where: {
+          sketchStartedAt: null,
+          bluesalesInfo: {
+            is: { orderStatus: { equals: SKETCH_START_STATUS, mode: 'insensitive' } },
+          },
+        },
+        select: { id: true },
+        take: this.sketchBackfillBatchSize,
+      }),
+      this.prisma.order.findMany({
+        where: {
+          sketchReadyAt: null,
+          bluesalesInfo: {
+            is: { orderStatus: { equals: SKETCH_READY_STATUS, mode: 'insensitive' } },
+          },
+        },
+        select: { id: true },
+        take: this.sketchBackfillBatchSize,
+      }),
+    ]);
+
+    let updated = 0;
+    if (needStart.length > 0) {
+      const res = await this.prisma.order.updateMany({
+        where: { id: { in: needStart.map((o) => o.id) } },
+        data: { sketchStartedAt: now },
+      });
+      updated += res.count;
+    }
+    if (needReady.length > 0) {
+      const res = await this.prisma.order.updateMany({
+        where: { id: { in: needReady.map((o) => o.id) } },
+        data: { sketchReadyAt: now },
+      });
+      updated += res.count;
+    }
+
+    if (updated > 0) {
+      this.logger.debug(
+        `Sketch-backfill: проставлено меток ${updated} (старт ${needStart.length}, готов ${needReady.length})`,
+      );
+    }
+    return updated;
   }
 
   // ─── Полный синк за период (по env, разово при старте) ────────────────────
@@ -745,7 +843,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             select: { orderId: true },
           });
 
+    const statusName = bsOrder.orderStatus?.name ?? null;
+
     if (existingInfo) {
+      const sketchData = await this.resolveSketchTimestampUpdate(
+        existingInfo.orderId,
+        statusName,
+      );
       await this.prisma.$transaction([
         this.prisma.bluesalesOrderInfo.update({
           where: { bsOrderId: bsOrder.id },
@@ -753,7 +857,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         }),
         this.prisma.order.update({
           where: { id: existingInfo.orderId },
-          data: { ...managerData, ...(leadId ? { leadId } : {}) },
+          data: { ...managerData, ...sketchData, ...(leadId ? { leadId } : {}) },
         }),
       ]);
       return;
@@ -761,6 +865,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     const sameNumber = await this.prisma.order.findUnique({ where: { orderNumber } });
     if (sameNumber) {
+      const sketchData = await this.resolveSketchTimestampUpdate(sameNumber.id, statusName);
       await this.prisma.bluesalesOrderInfo.create({
         data: { ...infoData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
       });
@@ -768,12 +873,18 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         where: { id: sameNumber.id },
         data: {
           ...managerData,
+          ...sketchData,
           ...(leadId && sameNumber.leadId !== leadId ? { leadId } : {}),
         },
       });
       return;
     }
 
+    // Новый заказ: если он сразу приходит в статусе эскиза — проставляем метку.
+    const newSketchData = computeSketchTimestampUpdate(statusName, {
+      sketchStartedAt: null,
+      sketchReadyAt: null,
+    });
     await this.prisma.order.create({
       data: {
         orderNumber,
@@ -781,9 +892,32 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         source: OrderSource.BLUESALES,
         leadId: leadId ?? undefined,
         ...managerData,
+        ...newSketchData,
         bluesalesInfo: { create: { ...infoData, bsOrderId: bsOrder.id } },
       },
     });
+  }
+
+  /**
+   * Вычисляет апдейт меток эскиза для существующего заказа при синке из BlueSales.
+   * Дешёвый short-circuit: лишний запрос в БД делаем только когда статус относится
+   * к циклу эскиза («Готовим эскиз» / «Эскиз готов»).
+   */
+  private async resolveSketchTimestampUpdate(
+    orderId: number,
+    statusName: string | null,
+  ): Promise<Partial<SketchTimestamps>> {
+    if (!isSketchTrackedStatus(statusName)) {
+      return {};
+    }
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { sketchStartedAt: true, sketchReadyAt: true },
+    });
+    if (!order) {
+      return {};
+    }
+    return computeSketchTimestampUpdate(statusName, order);
   }
 
   // ─── Вспомогательные методы ───────────────────────────────────────────────

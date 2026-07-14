@@ -42,6 +42,20 @@ export class MetricsController {
     });
   }
 
+  @Get('sketches/analytics')
+  @RequireScopes(UserScope.METRICS_VIEW)
+  sketchAnalytics(
+    @Query('workStartHour') workStartHour?: string,
+    @Query('workEndHour') workEndHour?: string,
+    @Query('tzOffsetMinutes') tzOffsetMinutes?: string,
+  ) {
+    return this.metrics.sketchAnalytics({
+      workStartHour: this.toNumber(workStartHour),
+      workEndHour: this.toNumber(workEndHour),
+      tzOffsetMinutes: this.toNumber(tzOffsetMinutes),
+    });
+  }
+
   private toNumber(raw?: string): number | undefined {
     if (raw === undefined || raw === '') return undefined;
     const n = Number(raw);

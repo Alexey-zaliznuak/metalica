@@ -264,6 +264,8 @@ export interface MetricsOverview {
   avgRevisionSeconds: number
   openRevisions: number
   stuckRevisions: number
+  totalSketches: number
+  openSketches: number
 }
 
 export interface DesignerMetric {
@@ -289,6 +291,24 @@ export interface RevisionAnalytics {
     avgWorkingSeconds: number | null
   }
   byDesigner: RevisionAnalyticsDesigner[]
+}
+
+export interface SketchAnalyticsDesigner {
+  designerId: number
+  name: string
+  count: number
+  avgWorkingSeconds: number | null
+}
+
+export interface SketchAnalytics {
+  workStartHour: number
+  workEndHour: number
+  tzOffsetMinutes: number
+  overall: {
+    count: number
+    avgWorkingSeconds: number | null
+  }
+  byDesigner: SketchAnalyticsDesigner[]
 }
 
 export interface WorkloadMetric {
