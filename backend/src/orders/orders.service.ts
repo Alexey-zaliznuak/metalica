@@ -474,6 +474,7 @@ export class OrdersService {
   }
 
   async getOrderStatuses() {
+    // Текущие статусы, реально встречающиеся среди синхронизированных заказов.
     const grouped = await this.prisma.bluesalesOrderInfo.groupBy({
       by: ['orderStatusId', 'orderStatus'],
       where: {
@@ -483,12 +484,35 @@ export class OrdersService {
       orderBy: [{ orderStatus: 'asc' }],
     });
 
-    return grouped
+    const fromOrders = grouped
       .filter((s) => s.orderStatusId !== null && s.orderStatus !== null)
       .map((s) => ({
         id: s.orderStatusId as number,
         name: s.orderStatus as string,
       }));
+
+    // Актуализируем накопительный справочник: если постгрес вернул статус,
+    // которого ещё нет в справочнике (или у него изменилось имя) — фиксируем его.
+    // Благодаря этому статус остаётся в списке даже когда в нём сейчас 0 заказов.
+    if (fromOrders.length > 0) {
+      await this.prisma.$transaction(
+        fromOrders.map((s) =>
+          this.prisma.bluesalesOrderStatus.upsert({
+            where: { bsOrderStatusId: s.id },
+            create: { bsOrderStatusId: s.id, name: s.name },
+            update: { name: s.name },
+          }),
+        ),
+      );
+    }
+
+    // Возвращаем объединение: полный справочник (он уже включает всё, что вернул
+    // постгрес, плюс ранее накопленные статусы без активных заказов).
+    const dictionary = await this.prisma.bluesalesOrderStatus.findMany({
+      orderBy: [{ name: 'asc' }],
+    });
+
+    return dictionary.map((s) => ({ id: s.bsOrderStatusId, name: s.name }));
   }
 
   async getCrmStatuses() {
