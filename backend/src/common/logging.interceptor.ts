@@ -34,10 +34,11 @@ export class LoggingInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap({
-        next: () => {
+        next: (payload) => {
           const ms = Date.now() - startedAt;
+          const size = this.describePayload(payload);
           this.logger.log(
-            `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms (${who})`,
+            `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms (${who})${size}`,
           );
         },
         error: (err: unknown) => {
@@ -49,5 +50,24 @@ export class LoggingInterceptor implements NestInterceptor {
         },
       }),
     );
+  }
+
+  /**
+   * Короткая сводка по телу ответа, чтобы из логов было видно, вернулось ли
+   * что-то (пустой ответ или нет). Форматы: массив -> [n]; пагинация
+   * { items, total } -> [items/total]; иначе ничего не добавляем.
+   */
+  private describePayload(payload: unknown): string {
+    if (Array.isArray(payload)) {
+      return ` [items=${payload.length}]`;
+    }
+    if (payload && typeof payload === 'object') {
+      const obj = payload as Record<string, unknown>;
+      if (Array.isArray(obj.items)) {
+        const total = typeof obj.total === 'number' ? obj.total : obj.items.length;
+        return ` [items=${obj.items.length}/${total}]`;
+      }
+    }
+    return '';
   }
 }
