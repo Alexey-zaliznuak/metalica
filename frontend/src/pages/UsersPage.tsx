@@ -45,10 +45,14 @@ import {
   scopeLabel,
 } from '../utils'
 
-const ROLE_CHIP_COLOR: Record<string, 'default' | 'primary' | 'secondary' | 'warning'> = {
+const ROLE_CHIP_COLOR: Record<
+  string,
+  'default' | 'primary' | 'secondary' | 'info' | 'warning'
+> = {
   ADMIN: 'warning',
   MANAGER: 'primary',
-  DESIGNER: 'secondary',
+  SKETCH_DESIGNER: 'secondary',
+  REVISION_DESIGNER: 'info',
 }
 
 export default function UsersPage() {

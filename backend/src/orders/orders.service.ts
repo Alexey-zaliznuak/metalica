@@ -419,7 +419,7 @@ export class OrdersService {
     if (dto.sketchDesignerId !== undefined) {
       const next = await this.validateAssigneeRole(
         dto.sketchDesignerId,
-        Role.DESIGNER,
+        Role.SKETCH_DESIGNER,
         'Художник эскиза',
       );
       const nextId = next?.id ?? null;
@@ -438,7 +438,7 @@ export class OrdersService {
     if (dto.revisionDesignerId !== undefined) {
       const next = await this.validateAssigneeRole(
         dto.revisionDesignerId,
-        Role.DESIGNER,
+        Role.REVISION_DESIGNER,
         'Художник правок',
       );
       const nextId = next?.id ?? null;
@@ -464,13 +464,20 @@ export class OrdersService {
 
   async getAssignees() {
     const users = await this.prisma.user.findMany({
-      where: { role: { in: [Role.MANAGER, Role.DESIGNER] } },
+      where: {
+        role: {
+          in: [Role.MANAGER, Role.SKETCH_DESIGNER, Role.REVISION_DESIGNER],
+        },
+      },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
       select: this.userSelect,
     });
     return {
       managers: users.filter((user) => user.role === Role.MANAGER),
-      designers: users.filter((user) => user.role === Role.DESIGNER),
+      sketchDesigners: users.filter((user) => user.role === Role.SKETCH_DESIGNER),
+      revisionDesigners: users.filter(
+        (user) => user.role === Role.REVISION_DESIGNER,
+      ),
     };
   }
 

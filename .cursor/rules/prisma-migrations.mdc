@@ -1,9 +1,6 @@
 ---
-description: Правила работы с Prisma-схемой и миграциями
-globs: backend/prisma/schema.prisma
-alwaysApply: false
+alwaysApply: true
 ---
-
 # Prisma: схема и миграции
 
 При изменении `schema.prisma` агент:

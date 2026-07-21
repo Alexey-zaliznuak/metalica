@@ -85,7 +85,8 @@ export default function RevisionAnalyticsPage() {
             Аналитика правок
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Среднее рабочее время закрытия правки по дизайнерам (нерабочие часы вычитаются)
+            Среднее рабочее время закрытия правки по художникам правок (нерабочие часы
+            вычитаются)
           </Typography>
         </Box>
       </Stack>
@@ -216,14 +217,14 @@ export default function RevisionAnalyticsPage() {
           </Grid>
 
           <Typography variant="h6" sx={{ mb: 1.5 }}>
-            По дизайнерам (кто закрыл правку)
+            По художникам правок (кто закрыл правку)
           </Typography>
           <Paper variant="outlined" sx={{ borderRadius: 1.5, overflow: 'hidden' }}>
             <TableContainer>
               <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ fontWeight: 700 }}>Дизайнер</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Художник правок</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Закрыто правок</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Среднее рабочее время</TableCell>
                   </TableRow>

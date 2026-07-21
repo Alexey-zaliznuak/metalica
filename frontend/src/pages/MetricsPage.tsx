@@ -123,7 +123,7 @@ export default function MetricsPage() {
           Метрики
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Сводка по заказам, правкам и работе дизайнеров
+          Сводка по заказам, эскизам, правкам и работе художников
         </Typography>
       </Box>
 

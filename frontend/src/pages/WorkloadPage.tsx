@@ -36,20 +36,20 @@ const TAB_CONFIG: Record<
   WorkloadTab,
   {
     label: string
-    role: 'DESIGNER' | 'MANAGER'
+    role: 'SKETCH_DESIGNER' | 'REVISION_DESIGNER' | 'MANAGER'
     metric: WorkloadMetricKey
     columnLabel: string
   }
 > = {
   sketch: {
     label: 'Художники · Эскизы',
-    role: 'DESIGNER',
+    role: 'SKETCH_DESIGNER',
     metric: 'sketchOrders',
     columnLabel: 'Эскизы',
   },
   revision: {
     label: 'Художники · Правки',
-    role: 'DESIGNER',
+    role: 'REVISION_DESIGNER',
     metric: 'revisionOrders',
     columnLabel: 'Правки',
   },
@@ -278,7 +278,7 @@ export default function WorkloadPage() {
           Нагрузка
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Текущая загрузка менеджеров и дизайнеров по назначенным заказам
+          Текущая загрузка менеджеров и художников по назначенным заказам
         </Typography>
       </Box>
 

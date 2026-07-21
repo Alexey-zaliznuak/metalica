@@ -381,7 +381,12 @@ export default function OrdersPage() {
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [disableDesignerFilterForSketch, setDisableDesignerFilterForSketch] = useState(false)
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
-  const [designers, setDesigners] = useState<OrderAssigneesResponse['designers']>([])
+  const [sketchDesigners, setSketchDesigners] = useState<
+    OrderAssigneesResponse['sketchDesigners']
+  >([])
+  const [revisionDesigners, setRevisionDesigners] = useState<
+    OrderAssigneesResponse['revisionDesigners']
+  >([])
   const [managerOptions, setManagerOptions] = useState<OrderFilterOptions>({
     deliveryManagers: [],
     onboardingManagers: [],
@@ -437,7 +442,8 @@ export default function OrdersPage() {
       .get<OrderAssigneesResponse>('/orders/assignees')
       .then((res) => {
         if (!active) return
-        setDesigners(res.data.designers)
+        setSketchDesigners(res.data.sketchDesigners)
+        setRevisionDesigners(res.data.revisionDesigners)
       })
       .catch(() => {
         // Художников в фильтре просто не покажем, если запрос упал.
@@ -533,17 +539,23 @@ export default function OrdersPage() {
   const deliveryManagerOptions = managerOptions.deliveryManagers
   const onboardingManagerOptions = managerOptions.onboardingManagers
 
-  const designerNameOptions = useMemo(() => {
+  const sketchDesignerOptions = useMemo(() => {
     const set = new Set<string>()
-    for (const designer of designers) {
+    for (const designer of sketchDesigners) {
       const name = designer.name?.trim()
       if (name) set.add(name)
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
-  }, [designers])
+  }, [sketchDesigners])
 
-  const sketchDesignerOptions = designerNameOptions
-  const revisionDesignerOptions = designerNameOptions
+  const revisionDesignerOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const designer of revisionDesigners) {
+      const name = designer.name?.trim()
+      if (name) set.add(name)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
+  }, [revisionDesigners])
 
   const activePeopleFilterCount = useMemo(
     () =>

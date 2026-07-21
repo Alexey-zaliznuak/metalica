@@ -7,7 +7,8 @@ export const MESSAGE_KIND_LABELS: Record<MessageKind, string> = {
 }
 
 export const ROLE_LABELS: Record<string, string> = {
-  DESIGNER: 'Дизайнер',
+  SKETCH_DESIGNER: 'Художник эскиза',
+  REVISION_DESIGNER: 'Художник правок',
   MANAGER: 'Менеджер',
   ADMIN: 'Администратор',
 }
@@ -19,7 +20,8 @@ export function roleLabel(role: UserRole): string {
 // Roles an admin can assign when creating an account.
 export const ASSIGNABLE_ROLES: { value: string; label: string }[] = [
   { value: 'MANAGER', label: ROLE_LABELS.MANAGER },
-  { value: 'DESIGNER', label: ROLE_LABELS.DESIGNER },
+  { value: 'SKETCH_DESIGNER', label: ROLE_LABELS.SKETCH_DESIGNER },
+  { value: 'REVISION_DESIGNER', label: ROLE_LABELS.REVISION_DESIGNER },
   { value: 'ADMIN', label: ROLE_LABELS.ADMIN },
 ]
 

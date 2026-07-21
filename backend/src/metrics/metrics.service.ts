@@ -106,7 +106,7 @@ export class MetricsService {
 
   async byDesigner() {
     const designers = await this.prisma.user.findMany({
-      where: { role: 'DESIGNER' },
+      where: { role: Role.REVISION_DESIGNER },
       select: { id: true, name: true },
     });
 
@@ -151,6 +151,7 @@ export class MetricsService {
       : DEFAULT_TZ_OFFSET_MINUTES;
 
     const closures = await this.prisma.revisionClosure.findMany({
+      where: { closedBy: { role: Role.REVISION_DESIGNER } },
       select: {
         closedById: true,
         openedAt: true,
@@ -233,6 +234,10 @@ export class MetricsService {
       where: {
         sketchStartedAt: { not: null },
         sketchReadyAt: { not: null },
+        OR: [
+          { sketchDesignerId: null },
+          { sketchDesigner: { is: { role: Role.SKETCH_DESIGNER } } },
+        ],
       },
       select: {
         sketchDesignerId: true,
@@ -325,12 +330,14 @@ export class MetricsService {
     const deliveryWhere = { deliveryManagerName: { not: null }, ...statusWhere };
     const onboardingWhere = { onboardingManagerName: { not: null }, ...statusWhere };
 
-    const [designers, sketchCounts, revisionCounts, deliveryCounts, onboardingCounts] =
+    const [artists, sketchCounts, revisionCounts, deliveryCounts, onboardingCounts] =
       await Promise.all([
         this.prisma.user.findMany({
-          where: { role: Role.DESIGNER },
+          where: {
+            role: { in: [Role.SKETCH_DESIGNER, Role.REVISION_DESIGNER] },
+          },
           select: { id: true, name: true, username: true, role: true },
-          orderBy: [{ name: 'asc' }],
+          orderBy: [{ role: 'asc' }, { name: 'asc' }],
         }),
         this.prisma.order.groupBy({
           by: ['sketchDesignerId'],
@@ -358,17 +365,22 @@ export class MetricsService {
     const revisionByUser = this.toCountMap(revisionCounts, 'revisionDesignerId');
     const openRevisionByUser = await this.fetchOpenRevisionByUser(orderStatusIds);
 
-    // Дизайнеры — локальные пользователи (по FK-назначениям).
-    const designerData: WorkloadEntry[] = designers.map((user) => ({
+    // Художники — локальные пользователи, разделённые по типу работы.
+    const artistData: WorkloadEntry[] = artists.map((user) => ({
       userId: user.id,
       name: user.name,
       username: user.username,
       role: user.role,
       deliveryOrders: 0,
       onboardingOrders: 0,
-      sketchOrders: sketchByUser.get(user.id) ?? 0,
-      revisionOrders: revisionByUser.get(user.id) ?? 0,
-      revisionOrdersWithOpenRequest: openRevisionByUser.get(user.id) ?? 0,
+      sketchOrders:
+        user.role === Role.SKETCH_DESIGNER ? (sketchByUser.get(user.id) ?? 0) : 0,
+      revisionOrders:
+        user.role === Role.REVISION_DESIGNER ? (revisionByUser.get(user.id) ?? 0) : 0,
+      revisionOrdersWithOpenRequest:
+        user.role === Role.REVISION_DESIGNER
+          ? (openRevisionByUser.get(user.id) ?? 0)
+          : 0,
     }));
 
     // Менеджеры — из имён BlueSales (нет локального userId/username).
@@ -389,7 +401,7 @@ export class MetricsService {
       revisionOrdersWithOpenRequest: 0,
     }));
 
-    const data: WorkloadEntry[] = [...managerData, ...designerData];
+    const data: WorkloadEntry[] = [...managerData, ...artistData];
 
     this.workloadCache.set(cacheKey, {
       data,

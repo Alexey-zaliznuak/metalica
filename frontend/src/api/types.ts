@@ -1,4 +1,9 @@
-export type UserRole = 'DESIGNER' | 'MANAGER' | 'ADMIN' | string
+export type UserRole =
+  | 'SKETCH_DESIGNER'
+  | 'REVISION_DESIGNER'
+  | 'MANAGER'
+  | 'ADMIN'
+  | string
 export type UserScope =
   | 'ORDERS_CHANGE_RESPONSIBLE'
   | 'METRICS_VIEW'
@@ -86,7 +91,8 @@ export interface OrderAssignee {
 
 export interface OrderAssigneesResponse {
   managers: OrderAssignee[]
-  designers: OrderAssignee[]
+  sketchDesigners: OrderAssignee[]
+  revisionDesigners: OrderAssignee[]
 }
 
 export interface OrderArticle {

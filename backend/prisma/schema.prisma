@@ -9,7 +9,8 @@ datasource db {
 
 enum Role {
   MANAGER
-  DESIGNER
+  SKETCH_DESIGNER
+  REVISION_DESIGNER
   ADMIN
 }
 
@@ -298,7 +299,7 @@ model RevisionClosure {
   // 1-к-1 с сообщением-ответом (может отсутствовать, если сообщение удалят)
   message    Message? @relation("RevisionClosureMessage", fields: [messageId], references: [id], onDelete: SetNull)
   messageId  Int?     @unique
-  // Денормализовано: дизайнер, закрывший правку
+  // Денормализовано: художник правок, закрывший правку
   closedBy   User     @relation("RevisionClosedBy", fields: [closedById], references: [id])
   closedById Int
   // Денормализовано под аналитику: время открытия (дублирует Revision.openedAt) и закрытия

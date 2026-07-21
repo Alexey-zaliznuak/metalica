@@ -81,12 +81,14 @@ interface PendingImage {
 
 interface AssigneesResponse {
   managers: OrderAssignee[]
-  designers: OrderAssignee[]
+  sketchDesigners: OrderAssignee[]
+  revisionDesigners: OrderAssignee[]
 }
 
 const EMPTY_ASSIGNEES: AssigneesResponse = {
   managers: [],
-  designers: [],
+  sketchDesigners: [],
+  revisionDesigners: [],
 }
 
 function plural(n: number, one: string, few: string, many: string): string {
@@ -460,7 +462,8 @@ function SectionTitle({
 function OrderInfoPanel({
   order,
   orderStatusOptions,
-  designerAssignees,
+  sketchDesignerAssignees,
+  revisionDesignerAssignees,
   canReassignResponsible,
   updatingOrderStatus,
   updatingResponsible,
@@ -472,7 +475,8 @@ function OrderInfoPanel({
 }: {
   order: Order
   orderStatusOptions: BluesalesStatusOption[]
-  designerAssignees: OrderAssignee[]
+  sketchDesignerAssignees: OrderAssignee[]
+  revisionDesignerAssignees: OrderAssignee[]
   canReassignResponsible: boolean
   updatingOrderStatus: boolean
   updatingResponsible: boolean
@@ -551,8 +555,8 @@ function OrderInfoPanel({
             fullWidth
             disabled={!canReassignResponsible || updatingResponsible}
             helperText={
-              designerAssignees.length === 0
-                ? 'Нет пользователей с ролью художника'
+              sketchDesignerAssignees.length === 0
+                ? 'Нет пользователей с ролью художника эскиза'
                 : !canReassignResponsible
                   ? 'Только просмотр: нужен скоуп на изменение ответственных'
                   : undefined
@@ -560,12 +564,14 @@ function OrderInfoPanel({
           >
             <MenuItem value="">Не назначен</MenuItem>
             {order.sketchDesigner &&
-              !designerAssignees.some((assignee) => assignee.id === order.sketchDesigner!.id) && (
+              !sketchDesignerAssignees.some(
+                (assignee) => assignee.id === order.sketchDesigner!.id,
+              ) && (
                 <MenuItem value={String(order.sketchDesigner.id)}>
                   {order.sketchDesigner.name}
                 </MenuItem>
               )}
-            {designerAssignees.map((assignee) => (
+            {sketchDesignerAssignees.map((assignee) => (
               <MenuItem key={assignee.id} value={String(assignee.id)}>
                 {assignee.name}
               </MenuItem>
@@ -587,8 +593,8 @@ function OrderInfoPanel({
             fullWidth
             disabled={!canReassignResponsible || updatingResponsible}
             helperText={
-              designerAssignees.length === 0
-                ? 'Нет пользователей с ролью художника'
+              revisionDesignerAssignees.length === 0
+                ? 'Нет пользователей с ролью художника правок'
                 : !canReassignResponsible
                   ? 'Только просмотр: нужен скоуп на изменение ответственных'
                   : undefined
@@ -596,14 +602,14 @@ function OrderInfoPanel({
           >
             <MenuItem value="">Не назначен</MenuItem>
             {order.revisionDesigner &&
-              !designerAssignees.some(
+              !revisionDesignerAssignees.some(
                 (assignee) => assignee.id === order.revisionDesigner!.id,
               ) && (
                 <MenuItem value={String(order.revisionDesigner.id)}>
                   {order.revisionDesigner.name}
                 </MenuItem>
               )}
-            {designerAssignees.map((assignee) => (
+            {revisionDesignerAssignees.map((assignee) => (
               <MenuItem key={assignee.id} value={String(assignee.id)}>
                 {assignee.name}
               </MenuItem>
@@ -901,7 +907,8 @@ export default function OrderThreadPage() {
 
   const [order, setOrder] = useState<Order | null>(null)
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
-  const [designerAssignees, setDesignerAssignees] = useState<OrderAssignee[]>([])
+  const [sketchDesignerAssignees, setSketchDesignerAssignees] = useState<OrderAssignee[]>([])
+  const [revisionDesignerAssignees, setRevisionDesignerAssignees] = useState<OrderAssignee[]>([])
   const [metrics, setMetrics] = useState<OrderMetrics | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [events, setEvents] = useState<OrderEvent[]>([])
@@ -964,7 +971,8 @@ export default function OrderThreadPage() {
       setHasMore(messagesRes.data.hasMore)
       pendingScrollBottomRef.current = true
       setOrderStatuses(statusesRes.data)
-      setDesignerAssignees(assigneesRes.data.designers)
+      setSketchDesignerAssignees(assigneesRes.data.sketchDesigners)
+      setRevisionDesignerAssignees(assigneesRes.data.revisionDesigners)
     } catch {
       setError('Не удалось загрузить заказ')
     } finally {
@@ -1736,7 +1744,8 @@ export default function OrderThreadPage() {
       <OrderInfoPanel
         order={order}
         orderStatusOptions={orderStatusOptions}
-        designerAssignees={designerAssignees}
+        sketchDesignerAssignees={sketchDesignerAssignees}
+        revisionDesignerAssignees={revisionDesignerAssignees}
         canReassignResponsible={canReassignResponsible}
         updatingOrderStatus={updatingOrderStatus}
         updatingResponsible={updatingResponsible}
@@ -1767,7 +1776,8 @@ export default function OrderThreadPage() {
           inDrawer
           order={order}
           orderStatusOptions={orderStatusOptions}
-          designerAssignees={designerAssignees}
+          sketchDesignerAssignees={sketchDesignerAssignees}
+          revisionDesignerAssignees={revisionDesignerAssignees}
           canReassignResponsible={canReassignResponsible}
           updatingOrderStatus={updatingOrderStatus}
           updatingResponsible={updatingResponsible}
@@ -1829,12 +1839,14 @@ export default function OrderThreadPage() {
             >
               <MenuItem value="">Не назначен</MenuItem>
               {editSketchDesignerId !== '' &&
-                !designerAssignees.some((assignee) => assignee.id === editSketchDesignerId) && (
+                !sketchDesignerAssignees.some(
+                  (assignee) => assignee.id === editSketchDesignerId,
+                ) && (
                   <MenuItem value={String(editSketchDesignerId)}>
                     {order.sketchDesigner?.name ?? `Пользователь #${editSketchDesignerId}`}
                   </MenuItem>
                 )}
-              {designerAssignees.map((assignee) => (
+              {sketchDesignerAssignees.map((assignee) => (
                 <MenuItem key={assignee.id} value={String(assignee.id)}>
                   {assignee.name}
                 </MenuItem>
@@ -1857,12 +1869,14 @@ export default function OrderThreadPage() {
             >
               <MenuItem value="">Не назначен</MenuItem>
               {editRevisionDesignerId !== '' &&
-                !designerAssignees.some((assignee) => assignee.id === editRevisionDesignerId) && (
+                !revisionDesignerAssignees.some(
+                  (assignee) => assignee.id === editRevisionDesignerId,
+                ) && (
                   <MenuItem value={String(editRevisionDesignerId)}>
                     {order.revisionDesigner?.name ?? `Пользователь #${editRevisionDesignerId}`}
                   </MenuItem>
                 )}
-              {designerAssignees.map((assignee) => (
+              {revisionDesignerAssignees.map((assignee) => (
                 <MenuItem key={assignee.id} value={String(assignee.id)}>
                   {assignee.name}
                 </MenuItem>
