@@ -112,6 +112,15 @@ export class OrdersService {
         include: {
           sketchDesigner: { select: this.userSelect },
           revisionDesigner: { select: this.userSelect },
+          lead: {
+            select: {
+              tags: {
+                where: { name: { equals: 'Срочно', mode: 'insensitive' } },
+                select: { bsTagId: true },
+                take: 1,
+              },
+            },
+          },
           bluesalesInfo: {
             select: {
               orderStatusId: true,
@@ -831,6 +840,7 @@ export class OrdersService {
       onboardingManagerName: order.onboardingManagerName ?? null,
       sketchDesigner: order.sketchDesigner ?? null,
       revisionDesigner: order.revisionDesigner ?? null,
+      hasUrgentTag: (order.lead?.tags.length ?? 0) > 0,
       orderStatusId: order.bluesalesInfo?.orderStatusId ?? null,
       orderStatus: order.bluesalesInfo?.orderStatus ?? null,
       orderStatusSync: this.serializeOrderStatusSync(order.statusChanges?.[0] ?? null),
@@ -1032,6 +1042,9 @@ type OrderForView = {
     name: string;
     username: string;
     role: Role;
+  } | null;
+  lead?: {
+    tags: Array<{ bsTagId: string }>;
   } | null;
   bluesalesInfo?: {
     orderStatusId: number | null;

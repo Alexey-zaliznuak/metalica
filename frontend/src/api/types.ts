@@ -123,6 +123,7 @@ export interface Order {
     attempts: number
     lastError: string | null
   } | null
+  hasUrgentTag?: boolean
   crmStatusId?: number | null
   crmStatus?: string | null
   revisionCount: number

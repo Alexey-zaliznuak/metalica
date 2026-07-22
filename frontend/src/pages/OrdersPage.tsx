@@ -200,9 +200,18 @@ const OrderCard = memo(function OrderCard({
         '&:hover': { borderColor: 'primary.main', boxShadow: 1 },
       }}
     >
-      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        {order.orderNumber}
-      </Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+          {order.orderNumber}
+        </Typography>
+        {order.hasUrgentTag && (
+          <Chip
+            size="small"
+            label="Срочно"
+            sx={{ bgcolor: 'error.main', color: '#fff', fontWeight: 700 }}
+          />
+        )}
+      </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1, minHeight: 20 }}>
         {order.title || 'Без названия'}
       </Typography>
