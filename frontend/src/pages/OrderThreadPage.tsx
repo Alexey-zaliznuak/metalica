@@ -130,23 +130,6 @@ function initials(name: string): string {
     .join('')
 }
 
-function tagTextColor(color: string | null): string {
-  if (!color) return BRAND.deep
-  const hex = color.replace(/^#/, '')
-  const normalized =
-    hex.length === 3
-      ? hex
-          .split('')
-          .map((part) => part + part)
-          .join('')
-      : hex
-  if (!/^[0-9a-f]{6}$/i.test(normalized)) return '#fff'
-  const red = Number.parseInt(normalized.slice(0, 2), 16)
-  const green = Number.parseInt(normalized.slice(2, 4), 16)
-  const blue = Number.parseInt(normalized.slice(4, 6), 16)
-  return red * 0.299 + green * 0.587 + blue * 0.114 > 160 ? '#17212b' : '#fff'
-}
-
 function canEditOrderResponsibles(role: string | undefined, scopes: string[] | undefined): boolean {
   if ((role ?? '').toUpperCase() === 'ADMIN') return true
   const normalizedScopes = (scopes ?? []).map((scope) => scope.toUpperCase())
@@ -949,10 +932,12 @@ function OrderArticlesPanel({
               label={tag.name}
               title={`BlueSales tag ID: ${tag.id}`}
               sx={{
-                bgcolor: tag.color || BRAND.pale,
-                color: tagTextColor(tag.color),
+                bgcolor:
+                  tag.name.trim().toLocaleLowerCase('ru-RU') === 'срочно'
+                    ? 'error.main'
+                    : 'primary.main',
+                color: '#fff',
                 fontWeight: 700,
-                border: tag.color ? 'none' : `1px solid ${BRAND.light}`,
               }}
             />
           ))}
