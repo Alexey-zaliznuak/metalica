@@ -67,6 +67,11 @@ export class OrdersController {
     return this.orders.getOrderStatuses();
   }
 
+  @Get('tags')
+  getTags() {
+    return this.orders.getTags();
+  }
+
   @Get('crm-statuses')
   getCrmStatuses() {
     return this.orders.getCrmStatuses();

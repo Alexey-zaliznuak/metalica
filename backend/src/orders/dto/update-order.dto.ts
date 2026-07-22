@@ -21,6 +21,11 @@ export class UpdateOrderDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
+  note?: string | null;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(500)
   dialogLink?: string | null;
 

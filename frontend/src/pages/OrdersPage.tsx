@@ -932,6 +932,14 @@ export default function OrdersPage() {
     () => boardColumns.reduce((sum, c) => sum + (columnData[c.id]?.total ?? 0), 0),
     [boardColumns, columnData],
   )
+  const visibleBoardColumns = useMemo(() => {
+    if (!search.trim()) return boardColumns
+
+    return boardColumns.filter((column) => {
+      const state = columnData[column.id]
+      return state?.loading || (state?.total ?? 0) > 0
+    })
+  }, [boardColumns, columnData, search])
   const anyLoaded = useMemo(
     () => boardColumns.some((c) => columnData[c.id]?.loaded),
     [boardColumns, columnData],
@@ -1030,7 +1038,7 @@ export default function OrdersPage() {
           </Box>
         ) : (
           <Stack direction="row" spacing={1.5} alignItems="flex-start">
-            {boardColumns.map((column) => (
+            {visibleBoardColumns.map((column) => (
               <BoardColumnView
                 key={column.id}
                 column={column}

@@ -30,6 +30,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import GroupIcon from '@mui/icons-material/Group'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
+import ImageLightbox, { type LightboxImage } from '../components/ImageLightbox'
 import type {
   ChatListItem,
   ChatMemberUser,
@@ -76,7 +77,7 @@ export default function ChatThreadPage() {
   const [body, setBody] = useState('')
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [dragOver, setDragOver] = useState(false)
-  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [lightbox, setLightbox] = useState<LightboxImage | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [editingText, setEditingText] = useState('')
   const [editing, setEditing] = useState(false)
@@ -519,7 +520,12 @@ export default function ChatThreadPage() {
                             alt={attachment.filename}
                             loading="lazy"
                             decoding="async"
-                            onClick={() => setLightbox(attachment.url)}
+                            onClick={() =>
+                              setLightbox({
+                                url: attachment.url,
+                                filename: attachment.filename,
+                              })
+                            }
                             sx={{
                               width: 120,
                               height: 120,
@@ -671,24 +677,7 @@ export default function ChatThreadPage() {
       </Paper>
 
       {lightbox && (
-        <Box
-          onClick={() => setLightbox(null)}
-          sx={{
-            position: 'fixed',
-            inset: 0,
-            bgcolor: 'rgba(0,0,0,0.85)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1400,
-            p: 2,
-          }}
-        >
-          <IconButton onClick={() => setLightbox(null)} sx={{ position: 'absolute', top: 16, right: 16, color: '#fff' }}>
-            <CloseIcon />
-          </IconButton>
-          <Box component="img" src={lightbox} alt="attachment" sx={{ maxWidth: '95%', maxHeight: '95%', objectFit: 'contain', borderRadius: 1 }} />
-        </Box>
+        <ImageLightbox image={lightbox} onClose={() => setLightbox(null)} />
       )}
 
       <Dialog

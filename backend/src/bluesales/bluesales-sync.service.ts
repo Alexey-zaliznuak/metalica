@@ -94,6 +94,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    // После перехода с массива ID на relation восстанавливаем связи из уже
+    // накопленной колонки Lead.tags, даже если внешний синк временно отключён.
+    setTimeout(() => void this.backfillLeadTagRelations(), 2000);
+
     if (!this.enabled) {
       this.logger.warn('BlueSales sync отключён (BLUESALES_ENABLED=false)');
       return;
@@ -135,6 +139,51 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const raw = this.config.get<string>(key);
     if (raw == null || raw === '') return def;
     return raw === 'true' || raw === '1';
+  }
+
+  private async backfillLeadTagRelations(): Promise<void> {
+    let restored = 0;
+    try {
+      while (true) {
+        const leads = await this.prisma.lead.findMany({
+          where: {
+            tagIds: { isEmpty: false },
+            tags: { none: {} },
+          },
+          orderBy: { id: 'asc' },
+          take: 200,
+          select: { id: true, tagIds: true },
+        });
+        if (leads.length === 0) break;
+
+        const tagIds = [...new Set(leads.flatMap((lead) => lead.tagIds))];
+        await this.prisma.$transaction([
+          ...tagIds.map((bsTagId) =>
+            this.prisma.bluesalesTag.upsert({
+              where: { bsTagId },
+              create: { bsTagId, name: `Тег #${bsTagId}` },
+              update: {},
+            }),
+          ),
+          ...leads.map((lead) =>
+            this.prisma.lead.update({
+              where: { id: lead.id },
+              data: {
+                tags: {
+                  set: lead.tagIds.map((bsTagId) => ({ bsTagId })),
+                },
+              },
+            }),
+          ),
+        ]);
+        restored += leads.length;
+      }
+      if (restored > 0) {
+        this.logger.log(`Восстановлены связи тегов для ${restored} лидов из данных БД`);
+      }
+    } catch (err) {
+      this.logger.error(`Не удалось восстановить связи тегов: ${(err as Error).message}`);
+    }
   }
 
   // ─── Быстрый инкрементальный синк (каждые 5 минут) ────────────────────────
@@ -695,8 +744,16 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const source = sourcePair?.bsSourceId ?? null;
     const salesChannel = salesChannelPair?.bsSalesChannelId ?? null;
     const marks = this.extractCustomerMarks(customer);
-    const tags = this.extractCustomerTagIds(customer);
-    const tagPairs = this.extractCustomerTagPairs(customer);
+    const tagReferences = this.extractCustomerTagReferences(customer);
+
+    // При одиночном upsert сначала создаём записи справочника: relation connect
+    // ниже должен ссылаться только на уже существующие теги.
+    if (syncReferences) {
+      await this.upsertTags(tagReferences);
+      await this.upsertSourceName(sourcePair);
+      await this.upsertSalesChannelName(salesChannelPair);
+    }
+    const tagConnections = tagReferences.map(({ bsTagId }) => ({ bsTagId }));
 
     const lead = await this.prisma.lead.upsert({
       where: { bsCustomerId: customer.id },
@@ -713,7 +770,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         source,
         salesChannel,
         marks,
-        tags,
+        tagIds: tagConnections.map(({ bsTagId }) => bsTagId),
+        tags: { connect: tagConnections },
         crmStatus,
         lastSyncedAt: new Date(),
       },
@@ -729,19 +787,12 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         source,
         salesChannel,
         marks,
-        tags,
+        tagIds: tagConnections.map(({ bsTagId }) => bsTagId),
+        tags: { set: tagConnections },
         crmStatus,
         lastSyncedAt: new Date(),
       },
     });
-
-    // Актуализируем справочники имён (id -> name). В батч-обработке это делается
-    // один раз на весь батч (syncReferences=false), см. syncReferenceDictionaries.
-    if (syncReferences) {
-      await this.upsertTagNames(tagPairs);
-      await this.upsertSourceName(sourcePair);
-      await this.upsertSalesChannelName(salesChannelPair);
-    }
 
     return lead.id;
   }
@@ -757,7 +808,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     const sources = new Map<string, string>();
     const salesChannels = new Map<string, string>();
-    const tags = new Map<string, string>();
+    const tags = new Map<string, TagReference>();
 
     for (const customer of customers) {
       if (!customer) continue;
@@ -765,8 +816,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       if (sourcePair) sources.set(sourcePair.bsSourceId, sourcePair.name);
       const salesChannelPair = this.extractCustomerSalesChannelPair(customer);
       if (salesChannelPair) salesChannels.set(salesChannelPair.bsSalesChannelId, salesChannelPair.name);
-      for (const { bsTagId, name } of this.extractCustomerTagPairs(customer)) {
-        tags.set(bsTagId, name);
+      for (const tag of this.extractCustomerTagReferences(customer)) {
+        const previous = tags.get(tag.bsTagId);
+        tags.set(tag.bsTagId, {
+          bsTagId: tag.bsTagId,
+          name: tag.name ?? previous?.name ?? null,
+          color: tag.color ?? previous?.color ?? null,
+        });
       }
     }
 
@@ -776,9 +832,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     for (const [bsSalesChannelId, name] of salesChannels) {
       await this.upsertSalesChannelName({ bsSalesChannelId, name });
     }
-    await this.upsertTagNames(
-      [...tags.entries()].map(([bsTagId, name]) => ({ bsTagId, name })),
-    );
+    await this.upsertTags([...tags.values()]);
   }
 
   /** Актуализирует справочник имён источников BlueSales (bsSourceId -> name). */
@@ -805,13 +859,20 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Актуализирует справочник имён тегов BlueSales (bsTagId -> name). */
-  private async upsertTagNames(pairs: Array<{ bsTagId: string; name: string }>): Promise<void> {
-    for (const { bsTagId, name } of pairs) {
+  /** Актуализирует накопительный справочник тегов BlueSales. */
+  private async upsertTags(tags: TagReference[]): Promise<void> {
+    for (const { bsTagId, name, color } of tags) {
       await this.prisma.bluesalesTag.upsert({
         where: { bsTagId },
-        create: { bsTagId, name },
-        update: { name },
+        create: {
+          bsTagId,
+          name: name ?? `Тег #${bsTagId}`,
+          color,
+        },
+        update: {
+          ...(name ? { name } : {}),
+          ...(color ? { color } : {}),
+        },
       });
     }
   }
@@ -1077,30 +1138,26 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     return null;
   }
 
-  /** «Теги» клиента в BlueSales — список ID (tags[].id). */
-  private extractCustomerTagIds(customer: BsCustomer): string[] {
+  /** Полные данные тегов клиента для справочника и связи Lead.tags. */
+  private extractCustomerTagReferences(customer: BsCustomer): TagReference[] {
     const tags = customer.tags;
     if (!Array.isArray(tags)) return [];
-    const ids = tags
-      .map((tag) => (tag && typeof tag === 'object' && tag.id != null ? String(tag.id) : ''))
-      .filter((id) => id.length > 0);
-    return [...new Set(ids)];
-  }
-
-  /** Пары {bsTagId, name} для справочника BluesalesTag. */
-  private extractCustomerTagPairs(
-    customer: BsCustomer,
-  ): Array<{ bsTagId: string; name: string }> {
-    const tags = customer.tags;
-    if (!Array.isArray(tags)) return [];
-    const pairs: Array<{ bsTagId: string; name: string }> = [];
+    const references = new Map<string, TagReference>();
     for (const tag of tags) {
       if (!tag || typeof tag !== 'object' || tag.id == null) continue;
-      const name = (tag.name ?? '').trim();
-      if (!name) continue;
-      pairs.push({ bsTagId: String(tag.id), name });
+      const bsTagId = String(tag.id);
+      const name = (tag.name ?? '').trim() || null;
+      const color = this.pickString(
+        tag.color,
+        tag.colour,
+        tag.hexColor,
+        tag.backgroundColor,
+        tag.backColor,
+        tag['background'],
+      );
+      references.set(bsTagId, { bsTagId, name, color });
     }
-    return pairs;
+    return [...references.values()];
   }
 
   private extractPrepaymentSum(bsOrder: BsOrder): number | null {
@@ -1185,3 +1242,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     return `${seconds}с`;
   }
 }
+
+type TagReference = {
+  bsTagId: string;
+  name: string | null;
+  color: string | null;
+};

@@ -72,6 +72,12 @@ export interface BsCustomField {
 export interface BsTag {
   id?: number;
   name?: string;
+  color?: string | null;
+  colour?: string | null;
+  hexColor?: string | null;
+  backgroundColor?: string | null;
+  backColor?: string | null;
+  [key: string]: unknown;
 }
 
 export interface BsCustomer {
@@ -86,7 +92,7 @@ export interface BsCustomer {
   manager?: BsManager | null;
   // «Отметки» клиента в BlueSales — простая строка.
   shortNotes?: string | null;
-  // «Теги» клиента в BlueSales — список объектов { id, name }.
+  // «Теги» клиента в BlueSales — список объектов { id, name, color }.
   tags?: BsTag[] | null;
   [key: string]: unknown;
 }

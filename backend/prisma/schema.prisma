@@ -71,6 +71,7 @@ model Order {
   id                    Int                 @id @default(autoincrement())
   orderNumber           String              @unique
   title                 String?
+  note                  String?
   source                OrderSource         @default(MANUAL)
   messages              Message[]
   revisions             Revision[]
@@ -193,8 +194,10 @@ model Lead {
   salesChannel   String?
   // Отметки клиента в BlueSales (поле shortNotes — простая строка)
   marks          String?
-  // Теги клиента в BlueSales — список ID (tags[].id). Имена — в модели BluesalesTag.
-  tags           String[]  @default([])
+  // tagIds сохраняет совместимость с уже накопленными ID в колонке "tags".
+  // Полноценная many-to-many связь используется приложением и бэкфиллится из tagIds.
+  tagIds         String[]       @default([]) @map("tags")
+  tags           BluesalesTag[]
   crmStatus      String?
   orders         Order[]
   lastSyncedAt   DateTime  @default(now())
@@ -206,14 +209,18 @@ model Lead {
   @@index([managerId])
 }
 
-// Справочник тегов BlueSales: сопоставление ID тега -> имя.
-// Намеренно без FK на Lead — это денормализованный lookup для отображения имён.
+// Накопительный справочник тегов BlueSales. Пополняется из клиентов,
+// встреченных при синке лидов и заказов; связь с лидами хранится many-to-many.
 model BluesalesTag {
   // id тега в BlueSales (tags[].id)
   bsTagId   String   @id
   name      String
+  color     String?
+  leads     Lead[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([name])
 }
 
 // Справочник источников BlueSales: сопоставление ID источника -> имя (напр. "avito").

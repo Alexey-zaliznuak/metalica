@@ -99,7 +99,14 @@ export class OrdersService {
       this.prisma.order.count({ where }),
       this.prisma.order.findMany({
         where,
-        orderBy: { updatedAt: 'desc' },
+        orderBy: [
+          {
+            bluesalesInfo: {
+              bsCreatedAt: { sort: 'desc', nulls: 'last' },
+            },
+          },
+          { id: 'desc' },
+        ],
         skip,
         take: limit,
         include: {
@@ -213,6 +220,14 @@ export class OrdersService {
             vkDialogUrl: true,
             vkUserId: true,
             crmStatus: true,
+            tags: {
+              select: {
+                bsTagId: true,
+                name: true,
+                color: true,
+              },
+              orderBy: { name: 'asc' },
+            },
             lastSyncedAt: true,
           },
         },
@@ -254,7 +269,16 @@ export class OrdersService {
       onboardingManagerName: order.onboardingManagerName,
       sketchDesigner: order.sketchDesigner,
       revisionDesigner: order.revisionDesigner,
-      lead: order.lead,
+      lead: order.lead
+        ? {
+            ...order.lead,
+            tags: order.lead.tags.map((tag) => ({
+              id: tag.bsTagId,
+              name: tag.name,
+              color: tag.color,
+            })),
+          }
+        : null,
       bluesalesInfo: order.bluesalesInfo ? bluesalesInfo : null,
       articles,
     };
@@ -436,6 +460,15 @@ export class OrdersService {
       data.title = nextTitle;
     }
 
+    if (dto.note !== undefined) {
+      const note = (dto.note ?? '').trim();
+      const nextNote = note.length > 0 ? note : null;
+      if (nextNote !== existing.note) {
+        changes.push({ field: 'note', oldValue: existing.note, newValue: nextNote });
+      }
+      data.note = nextNote;
+    }
+
     if (dto.dialogLink !== undefined) {
       const dialogLink = (dto.dialogLink ?? '').trim();
       const nextDialogLink = dialogLink.length > 0 ? dialogLink : null;
@@ -554,6 +587,23 @@ export class OrdersService {
     });
 
     return dictionary.map((s) => ({ id: s.bsOrderStatusId, name: s.name }));
+  }
+
+  async getTags() {
+    const tags = await this.prisma.bluesalesTag.findMany({
+      orderBy: [{ name: 'asc' }],
+      select: {
+        bsTagId: true,
+        name: true,
+        color: true,
+      },
+    });
+
+    return tags.map((tag) => ({
+      id: tag.bsTagId,
+      name: tag.name,
+      color: tag.color,
+    }));
   }
 
   async getCrmStatuses() {
@@ -790,6 +840,7 @@ export class OrdersService {
       openRevisions: stats.openRevisions,
       avgRevisionSeconds: stats.avgRevisionSeconds,
       lastMessageAt,
+      note: order.note ?? null,
       createdAt: order.createdAt,
     };
   }
@@ -964,6 +1015,7 @@ type OrderForView = {
   id: number;
   orderNumber: string;
   title: string | null;
+  note: string | null;
   source: OrderSource;
   createdAt: Date;
   dialogLink?: string | null;

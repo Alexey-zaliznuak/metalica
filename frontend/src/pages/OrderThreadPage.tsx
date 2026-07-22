@@ -45,12 +45,15 @@ import PersonIcon from '@mui/icons-material/Person'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
+import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined'
 import HistoryIcon from '@mui/icons-material/History'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
+import ImageLightbox, { type LightboxImage } from '../components/ImageLightbox'
 import type {
   BluesalesStatusOption,
+  BluesalesTag,
   Message,
   MessageKind,
   MessagesPage,
@@ -124,6 +127,23 @@ function initials(name: string): string {
     .join('')
 }
 
+function tagTextColor(color: string | null): string {
+  if (!color) return BRAND.deep
+  const hex = color.replace(/^#/, '')
+  const normalized =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((part) => part + part)
+          .join('')
+      : hex
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return '#fff'
+  const red = Number.parseInt(normalized.slice(0, 2), 16)
+  const green = Number.parseInt(normalized.slice(2, 4), 16)
+  const blue = Number.parseInt(normalized.slice(4, 6), 16)
+  return red * 0.299 + green * 0.587 + blue * 0.114 > 160 ? '#17212b' : '#fff'
+}
+
 function canEditOrderResponsibles(role: string | undefined, scopes: string[] | undefined): boolean {
   if ((role ?? '').toUpperCase() === 'ADMIN') return true
   const normalizedScopes = (scopes ?? []).map((scope) => scope.toUpperCase())
@@ -147,7 +167,7 @@ function MessageBubble({
 }: {
   message: Message
   ownSide: boolean
-  onOpenImage: (url: string) => void
+  onOpenImage: (image: LightboxImage) => void
   resolvedSeconds?: number | null
 }) {
   const isRequest = message.kind === 'REVISION_REQUEST'
@@ -302,7 +322,9 @@ function MessageBubble({
                     alt={att.filename}
                     loading="lazy"
                     decoding="async"
-                    onClick={() => onOpenImage(att.url)}
+                    onClick={() =>
+                      onOpenImage({ url: att.url, filename: att.filename })
+                    }
                     sx={{
                       width: 120,
                       height: 120,
@@ -363,6 +385,7 @@ const EVENT_FIELD_LABELS: Record<string, string> = {
   crmStatus: 'CRM-статус',
   orderNumber: 'номер заказа',
   title: 'название',
+  note: 'примечание',
   dialogLink: 'ссылку на диалог',
 }
 
@@ -835,9 +858,19 @@ function OrderInfoPanel({
 
 function OrderArticlesPanel({
   articles,
+  tags,
+  noteDraft,
+  savingNote,
+  onNoteDraftChange,
+  onSaveNote,
   inDrawer = false,
 }: {
   articles: OrderArticle[]
+  tags: BluesalesTag[]
+  noteDraft: string
+  savingNote: boolean
+  onNoteDraftChange: (value: string) => void
+  onSaveNote: () => void
   inDrawer?: boolean
 }) {
   return (
@@ -908,6 +941,56 @@ function OrderArticlesPanel({
           ))}
         </Stack>
       )}
+      <Divider sx={{ my: 2 }} />
+      <SectionTitle icon={<LocalOfferOutlinedIcon fontSize="small" />}>
+        Теги клиента
+      </SectionTitle>
+      {tags.length === 0 ? (
+        <Typography variant="body2" color="text.secondary">
+          Теги не найдены
+        </Typography>
+      ) : (
+        <Stack direction="row" useFlexGap flexWrap="wrap" gap={0.75}>
+          {tags.map((tag) => (
+            <Chip
+              key={tag.id}
+              size="small"
+              label={tag.name}
+              title={`BlueSales tag ID: ${tag.id}`}
+              sx={{
+                bgcolor: tag.color || BRAND.pale,
+                color: tagTextColor(tag.color),
+                fontWeight: 700,
+                border: tag.color ? 'none' : `1px solid ${BRAND.light}`,
+              }}
+            />
+          ))}
+        </Stack>
+      )}
+      <Divider sx={{ my: 2 }} />
+      <SectionTitle icon={<EditNoteIcon fontSize="small" />}>Примечание</SectionTitle>
+      <TextField
+        value={noteDraft}
+        onChange={(event) => onNoteDraftChange(event.target.value)}
+        placeholder="Добавьте примечание к заказу"
+        multiline
+        minRows={3}
+        maxRows={8}
+        fullWidth
+        size="small"
+        disabled={savingNote}
+        inputProps={{ maxLength: 5000 }}
+      />
+      <Button
+        variant="contained"
+        size="small"
+        fullWidth
+        onClick={onSaveNote}
+        disabled={savingNote}
+        sx={{ mt: 1 }}
+      >
+        {savingNote ? 'Сохранение…' : 'Сохранить примечание'}
+      </Button>
     </Paper>
   )
 }
@@ -937,7 +1020,7 @@ export default function OrderThreadPage() {
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
-  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [lightbox, setLightbox] = useState<LightboxImage | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
 
   const [editOpen, setEditOpen] = useState(false)
@@ -951,6 +1034,8 @@ export default function OrderThreadPage() {
   const [updatingOrderStatus, setUpdatingOrderStatus] = useState(false)
   const [updatingResponsible, setUpdatingResponsible] = useState(false)
   const [updatingDialogLink, setUpdatingDialogLink] = useState(false)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -977,6 +1062,7 @@ export default function OrderThreadPage() {
             : Promise.resolve({ data: EMPTY_ASSIGNEES }),
         ])
       setOrder(orderRes.data)
+      setNoteDraft(orderRes.data.note ?? '')
       setMetrics(metricsRes.data)
       setMessages(messagesRes.data.items)
       setEvents(eventsRes.data)
@@ -1163,6 +1249,23 @@ export default function OrderThreadPage() {
       setSendError('Не удалось сохранить поле "Даилог BS"')
     } finally {
       setUpdatingDialogLink(false)
+    }
+  }
+
+  const handleSaveNote = async () => {
+    if (!order) return
+    setSavingNote(true)
+    try {
+      const { data } = await client.patch<Order>(`/orders/${orderId}`, {
+        note: noteDraft.trim() ? noteDraft.trim() : null,
+      } satisfies UpdateOrderPayload)
+      setOrder(data)
+      setNoteDraft(data.note ?? '')
+      void refreshEvents()
+    } catch {
+      setSendError('Не удалось сохранить примечание')
+    } finally {
+      setSavingNote(false)
     }
   }
 
@@ -1795,7 +1898,16 @@ export default function OrderThreadPage() {
       />
 
       {/* Right articles panel (desktop) */}
-      <OrderArticlesPanel articles={order.articles ?? []} />
+      <OrderArticlesPanel
+        articles={order.articles ?? []}
+        tags={order.lead?.tags ?? []}
+        noteDraft={noteDraft}
+        savingNote={savingNote}
+        onNoteDraftChange={setNoteDraft}
+        onSaveNote={() => {
+          void handleSaveNote()
+        }}
+      />
 
       {/* Info + articles panels as a drawer (mobile / tablet) */}
       <Drawer
@@ -1826,7 +1938,17 @@ export default function OrderThreadPage() {
           }}
         />
         <Divider />
-        <OrderArticlesPanel inDrawer articles={order.articles ?? []} />
+        <OrderArticlesPanel
+          inDrawer
+          articles={order.articles ?? []}
+          tags={order.lead?.tags ?? []}
+          noteDraft={noteDraft}
+          savingNote={savingNote}
+          onNoteDraftChange={setNoteDraft}
+          onSaveNote={() => {
+            void handleSaveNote()
+          }}
+        />
       </Drawer>
 
       {/* Edit order dialog */}
@@ -1936,38 +2058,7 @@ export default function OrderThreadPage() {
 
       {/* Lightbox */}
       {lightbox && (
-        <Box
-          onClick={() => setLightbox(null)}
-          sx={{
-            position: 'fixed',
-            inset: 0,
-            bgcolor: 'rgba(0,0,0,0.85)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1400,
-            p: 2,
-          }}
-        >
-          <IconButton
-            onClick={() => setLightbox(null)}
-            sx={{ position: 'absolute', top: 16, right: 16, color: '#fff' }}
-          >
-            <CloseIcon />
-          </IconButton>
-          <Box
-            component="img"
-            src={lightbox}
-            alt="attachment"
-            onClick={(e) => e.stopPropagation()}
-            sx={{
-              maxWidth: '95%',
-              maxHeight: '95%',
-              objectFit: 'contain',
-              borderRadius: 1,
-            }}
-          />
-        </Box>
+        <ImageLightbox image={lightbox} onClose={() => setLightbox(null)} />
       )}
     </Box>
   )

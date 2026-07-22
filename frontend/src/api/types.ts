@@ -47,6 +47,7 @@ export interface UpdateUserPayload {
 export interface UpdateOrderPayload {
   orderNumber?: string
   title?: string
+  note?: string | null
   dialogLink?: string | null
   sketchDesignerId?: number | null
   revisionDesignerId?: number | null
@@ -59,6 +60,12 @@ export interface BluesalesStatusOption {
   name: string
 }
 
+export interface BluesalesTag {
+  id: string
+  name: string
+  color: string | null
+}
+
 export interface OrderLead {
   id: number
   bsCustomerId: number | null
@@ -67,6 +74,7 @@ export interface OrderLead {
   vkDialogUrl: string | null
   vkUserId: string | null
   crmStatus: string | null
+  tags: BluesalesTag[]
   lastSyncedAt: string | null
 }
 
@@ -105,6 +113,7 @@ export interface Order {
   id: number
   orderNumber: string
   title: string | null
+  note: string | null
   source: OrderSource
   dialogLink?: string | null
   orderStatusId: number | null
