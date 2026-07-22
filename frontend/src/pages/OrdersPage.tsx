@@ -47,6 +47,7 @@ import type {
   Order,
   OrderAssigneesResponse,
   OrderFilterOptions,
+  OrderStatusSyncResponse,
   OrdersBoardSettings,
   OrdersColumnResponse,
 } from '../api/types'
@@ -235,10 +236,32 @@ const OrderCard = memo(function OrderCard({
         </Tooltip>
       </Stack>
       <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.8 }}>
-        <SyncAltIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
-        <Typography variant="caption" color="text.secondary">
-          {canMoveCard ? 'Можно перетаскивать' : 'Ручной заказ: статус не переносится'}
-        </Typography>
+        {order.orderStatusSync ? (
+          <>
+            {order.orderStatusSync.state === 'pending' ? (
+              <CircularProgress size={12} />
+            ) : (
+              <SyncAltIcon sx={{ fontSize: 13, color: 'warning.main' }} />
+            )}
+            <Tooltip title={order.orderStatusSync.lastError ?? ''}>
+              <Typography
+                variant="caption"
+                color={order.orderStatusSync.state === 'retrying' ? 'warning.main' : 'text.secondary'}
+              >
+                {order.orderStatusSync.state === 'retrying'
+                  ? `Повтор отправки в BlueSales (${order.orderStatusSync.attempts})`
+                  : 'Отправляется в BlueSales'}
+              </Typography>
+            </Tooltip>
+          </>
+        ) : (
+          <>
+            <SyncAltIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
+            <Typography variant="caption" color="text.secondary">
+              {canMoveCard ? 'Можно перетаскивать' : 'Ручной заказ: статус не переносится'}
+            </Typography>
+          </>
+        )}
       </Stack>
       <Typography variant="caption" color="text.secondary" sx={{ mt: 0.4 }}>
         {formatLastActivity(order.lastMessageAt)}
@@ -663,6 +686,57 @@ export default function OrdersPage() {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
   }, [initialized, reloadAll])
+
+  const pendingSyncOrderIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          Object.values(columnData)
+            .flatMap((state) => state.items)
+            .filter((order) => order.orderStatusSync)
+            .map((order) => order.id),
+        ),
+      ),
+    [columnData],
+  )
+
+  useEffect(() => {
+    if (pendingSyncOrderIds.length === 0) return
+    let cancelled = false
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const { data } = await client.get<OrderStatusSyncResponse[]>('/orders/status-sync', {
+          params: { ids: pendingSyncOrderIds.join(',') },
+        })
+        if (cancelled) return
+        const byId = new Map(data.map((item) => [item.orderId, item.orderStatusSync]))
+        setColumnData((prev) =>
+          Object.fromEntries(
+            Object.entries(prev).map(([columnId, state]) => [
+              columnId,
+              {
+                ...state,
+                items: state.items.map((order) =>
+                  byId.has(order.id)
+                    ? { ...order, orderStatusSync: byId.get(order.id) ?? null }
+                    : order,
+                ),
+              },
+            ]),
+          ),
+        )
+      } catch {
+        // Очередь durable; временная ошибка polling не должна менять карточки.
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 2000)
+    }
+    timer = window.setTimeout(poll, 2000)
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [pendingSyncOrderIds])
 
   const handleColumnNearBottom = useCallback(
     (columnId: number) => {

@@ -109,6 +109,11 @@ export interface Order {
   dialogLink?: string | null
   orderStatusId: number | null
   orderStatus: string | null
+  orderStatusSync: {
+    state: 'pending' | 'retrying'
+    attempts: number
+    lastError: string | null
+  } | null
   crmStatusId?: number | null
   crmStatus?: string | null
   revisionCount: number
@@ -122,6 +127,11 @@ export interface Order {
   lead?: OrderLead | null
   bluesalesInfo?: BluesalesOrderInfo | null
   articles?: OrderArticle[]
+}
+
+export interface OrderStatusSyncResponse {
+  orderId: number
+  orderStatusSync: Order['orderStatusSync']
 }
 
 export interface OrdersBoardSettings {

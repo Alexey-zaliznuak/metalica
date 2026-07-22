@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
-import { OrderSource, Prisma } from '@prisma/client';
+import { OrderSource, OrderStatusChangeState, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BluesalesApiService, BsCustomer, BsOrder } from './bluesales-api.service';
 import {
@@ -167,6 +167,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const dateFrom = new Date(now.getTime() - this.fastSyncOverlapMinutes * 60 * 1000);
 
     const bsOrders = await this.api.getOrders(dateFrom, now);
+    const statusObservedAt = new Date();
 
     const leadIds = new Set<number>();
     let synced = 0;
@@ -183,7 +184,12 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       try {
         const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
         if (leadId) leadIds.add(leadId);
-        await this.upsertOrder(bsOrder, leadId, existingByBsId.get(bsOrder.id) ?? null);
+        await this.upsertOrder(
+          bsOrder,
+          leadId,
+          existingByBsId.get(bsOrder.id) ?? null,
+          statusObservedAt,
+        );
         synced++;
       } catch (err) {
         this.logger.error(
@@ -331,6 +337,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // Отдельно засекаем время самого запроса к BS (без учёта upsert в нашу БД).
     const apiStartedAt = Date.now();
     const bsOrders = await this.api.getOrdersByIds(ids);
+    const statusObservedAt = new Date();
     const apiMs = Date.now() - apiStartedAt;
 
     // Нужно понять, какие id BlueSales вернул. Если какого-то id нет в ответе,
@@ -354,7 +361,12 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         // В ответе заказа лежит customer, поэтому обновляем лида и сам заказ вместе.
         // upsertOrder также обновит BluesalesOrderInfo.lastSyncedAt.
         const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
-        await this.upsertOrder(bsOrder, leadId, existingByBsId.get(bsOrder.id) ?? null);
+        await this.upsertOrder(
+          bsOrder,
+          leadId,
+          existingByBsId.get(bsOrder.id) ?? null,
+          statusObservedAt,
+        );
         synced++;
       } catch (err) {
         this.logger.error(
@@ -506,6 +518,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   /** Синк всех заказов за окно [from, to] (вместе с их лидами). */
   private async syncOrdersWindow(from: Date, to: Date): Promise<number> {
     const bsOrders = await this.api.getOrders(from, to);
+    const statusObservedAt = new Date();
     let synced = 0;
 
     const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
@@ -519,7 +532,12 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     for (const bsOrder of bsOrders) {
       try {
         const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
-        await this.upsertOrder(bsOrder, leadId, existingByBsId.get(bsOrder.id) ?? null);
+        await this.upsertOrder(
+          bsOrder,
+          leadId,
+          existingByBsId.get(bsOrder.id) ?? null,
+          statusObservedAt,
+        );
         synced++;
       } catch (err) {
         this.logger.error(
@@ -807,6 +825,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     bsOrder: BsOrder,
     leadId: number | null,
     existing?: { orderId: number } | null,
+    statusObservedAt: Date = new Date(),
   ): Promise<void> {
     const orderNumber = this.resolveOrderNumber(bsOrder);
     const title = `Заказ номер ${orderNumber}`;
@@ -818,11 +837,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // Менеджер оформления — кастомное поле заказа «Оформление».
     const onboardingManagerName = this.resolveOnboardingManagerName(bsOrder);
 
+    const statusData = {
+      orderStatusId: bsOrder.orderStatus?.id ?? null,
+      orderStatus: bsOrder.orderStatus?.name ?? null,
+      orderStatusObservedAt: statusObservedAt,
+    };
     const infoData = {
       bsCustomerId: bsOrder.customer?.id ?? null,
       bsNumber: orderNumber,
-      orderStatusId: bsOrder.orderStatus?.id ?? null,
-      orderStatus: bsOrder.orderStatus?.name ?? null,
       crmStatusId: crm?.id ?? null,
       crmStatus: crm?.name ?? null,
       totalSum: bsOrder.totalSumMinusDiscount ?? null,
@@ -850,16 +872,49 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         existingInfo.orderId,
         statusName,
       );
-      await this.prisma.$transaction([
-        this.prisma.bluesalesOrderInfo.update({
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT "orderId"
+          FROM "BluesalesOrderInfo"
+          WHERE "orderId" = ${existingInfo.orderId}
+          FOR UPDATE
+        `;
+        const [currentInfo, pendingChanges] = await Promise.all([
+          tx.bluesalesOrderInfo.findUnique({
+            where: { bsOrderId: bsOrder.id },
+            select: { orderStatusObservedAt: true },
+          }),
+          tx.orderStatusChange.count({
+            where: {
+              orderId: existingInfo.orderId,
+              state: {
+                in: [
+                  OrderStatusChangeState.PENDING,
+                  OrderStatusChangeState.PROCESSING,
+                  OrderStatusChangeState.RETRY,
+                ],
+              },
+            },
+          }),
+        ]);
+        const canApplyStatus =
+          pendingChanges === 0 &&
+          (!currentInfo?.orderStatusObservedAt ||
+            currentInfo.orderStatusObservedAt.getTime() < statusObservedAt.getTime());
+
+        await tx.bluesalesOrderInfo.update({
           where: { bsOrderId: bsOrder.id },
-          data: infoData,
-        }),
-        this.prisma.order.update({
+          data: { ...infoData, ...(canApplyStatus ? statusData : {}) },
+        });
+        await tx.order.update({
           where: { id: existingInfo.orderId },
-          data: { ...managerData, ...sketchData, ...(leadId ? { leadId } : {}) },
-        }),
-      ]);
+          data: {
+            ...managerData,
+            ...(canApplyStatus ? sketchData : {}),
+            ...(leadId ? { leadId } : {}),
+          },
+        });
+      });
       return;
     }
 
@@ -867,7 +922,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     if (sameNumber) {
       const sketchData = await this.resolveSketchTimestampUpdate(sameNumber.id, statusName);
       await this.prisma.bluesalesOrderInfo.create({
-        data: { ...infoData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
+        data: { ...infoData, ...statusData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
       });
       await this.prisma.order.update({
         where: { id: sameNumber.id },
@@ -893,7 +948,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         leadId: leadId ?? undefined,
         ...managerData,
         ...newSketchData,
-        bluesalesInfo: { create: { ...infoData, bsOrderId: bsOrder.id } },
+        bluesalesInfo: { create: { ...infoData, ...statusData, bsOrderId: bsOrder.id } },
       },
     });
   }

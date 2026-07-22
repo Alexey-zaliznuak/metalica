@@ -77,6 +77,16 @@ export class OrdersController {
     return this.orders.getAssignees();
   }
 
+  @Get('status-sync')
+  getOrderStatusSync(@Query('ids') ids?: string) {
+    return this.orders.getOrderStatusSync(
+      (ids ?? '')
+        .split(',')
+        .map((id) => Number(id))
+        .filter(Number.isInteger),
+    );
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.orders.findOne(id);

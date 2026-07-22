@@ -1,5 +1,4 @@
 import {
-  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -9,7 +8,6 @@ import {
 import { OrderSource, Prisma, Role, UserScope } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { AuthUser } from '../auth/current-user.decorator';
 import { OrderEventChange, OrderEventsService } from './order-events.service';
 import { computeSketchTimestampUpdate } from './sketch-status';
@@ -18,7 +16,6 @@ import { computeSketchTimestampUpdate } from './sketch-status';
 export class OrdersService {
   constructor(
     private prisma: PrismaService,
-    private bluesalesApi: BluesalesApiService,
     private orderEvents: OrderEventsService,
   ) {}
 
@@ -116,6 +113,12 @@ export class OrdersService {
               crmStatus: true,
             },
           },
+          statusChanges: {
+            where: { state: { not: 'SUCCEEDED' } },
+            orderBy: { id: 'asc' },
+            take: 1,
+            select: { state: true, attempts: true, lastError: true },
+          },
         },
       }),
     ]);
@@ -171,6 +174,30 @@ export class OrdersService {
     };
   }
 
+  async getOrderStatusSync(ids: number[]) {
+    const normalized = Array.from(
+      new Set(ids.filter((id) => Number.isInteger(id) && id > 0)),
+    ).slice(0, 200);
+    if (normalized.length === 0) return [];
+
+    const orders = await this.prisma.order.findMany({
+      where: { id: { in: normalized } },
+      select: {
+        id: true,
+        statusChanges: {
+          where: { state: { not: 'SUCCEEDED' } },
+          orderBy: { id: 'asc' },
+          take: 1,
+          select: { state: true, attempts: true, lastError: true },
+        },
+      },
+    });
+    return orders.map((order) => ({
+      orderId: order.id,
+      orderStatusSync: this.serializeOrderStatusSync(order.statusChanges[0] ?? null),
+    }));
+  }
+
   async findOne(id: number) {
     const order = await this.prisma.order.findUnique({
       where: { id },
@@ -202,6 +229,12 @@ export class OrdersService {
             lastSyncedAt: true,
             rawPayload: true,
           },
+        },
+        statusChanges: {
+          where: { state: { not: 'SUCCEEDED' } },
+          orderBy: { id: 'asc' },
+          take: 1,
+          select: { state: true, attempts: true, lastError: true },
         },
       },
     });
@@ -542,82 +575,96 @@ export class OrdersService {
   }
 
   async updateOrderStatus(id: number, statusId: number, actor?: AuthUser) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        source: true,
-        sketchStartedAt: true,
-        sketchReadyAt: true,
-        bluesalesInfo: {
-          select: {
-            bsOrderId: true,
-            orderStatusId: true,
-            orderStatus: true,
-          },
+    const [order, targetStatus] = await Promise.all([
+      this.prisma.order.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          source: true,
+          bluesalesInfo: { select: { orderId: true } },
         },
-      },
-    });
+      }),
+      this.prisma.bluesalesOrderStatus.findUnique({
+        where: { bsOrderStatusId: statusId },
+        select: { name: true },
+      }),
+    ]);
+
     if (!order) {
       throw new NotFoundException('Заказ не найден');
     }
     if (!order.bluesalesInfo || order.source !== OrderSource.BLUESALES) {
       throw new BadRequestException('Для этого заказа недоступно изменение статуса заказа');
     }
-    const prevStatusId = order.bluesalesInfo.orderStatusId;
-    const prevStatusName = order.bluesalesInfo.orderStatus;
-
-    try {
-      await this.bluesalesApi.setOrderStatus(order.bluesalesInfo.bsOrderId, statusId);
-    } catch (err) {
-      throw new BadGatewayException(
-        `Не удалось обновить статус в BlueSales: ${(err as Error).message}`,
-      );
+    if (!targetStatus) {
+      throw new BadRequestException('Неизвестный статус заказа BlueSales');
     }
 
-    let nextStatusId: number | null = statusId;
-    let nextStatusName: string | null = null;
-    try {
-      const [actual] = await this.bluesalesApi.getOrdersByIds(
-        [order.bluesalesInfo.bsOrderId],
-        'interactive',
-      );
-      if (actual) {
-        nextStatusId = actual.orderStatus?.id ?? statusId;
-        nextStatusName = actual.orderStatus?.name ?? null;
+    await this.prisma.$transaction(async (tx) => {
+      // Сериализуем быстрые изменения одного заказа, чтобы delta всегда содержала
+      // фактический предыдущий локальный статус.
+      await tx.$queryRaw`
+        SELECT "orderId"
+        FROM "BluesalesOrderInfo"
+        WHERE "orderId" = ${id}
+        FOR UPDATE
+      `;
+
+      const current = await tx.order.findUnique({
+        where: { id },
+        select: {
+          sketchStartedAt: true,
+          sketchReadyAt: true,
+          bluesalesInfo: {
+            select: { orderStatusId: true, orderStatus: true },
+          },
+        },
+      });
+      if (!current?.bluesalesInfo) {
+        throw new BadRequestException('Для этого заказа недоступно изменение статуса заказа');
       }
-    } catch {
-      // Некритично: даже если не смогли перечитать BS, сохраним хотя бы id.
-    }
 
-    await this.prisma.bluesalesOrderInfo.update({
-      where: { orderId: id },
-      data: {
-        orderStatusId: nextStatusId,
-        orderStatus: nextStatusName,
-        lastSyncedAt: new Date(),
-      },
-    });
+      const prevStatusId = current.bluesalesInfo.orderStatusId;
+      const prevStatusName = current.bluesalesInfo.orderStatus;
+      if (prevStatusId === statusId) return;
 
-    // Замер времени эскиза по смене статуса заказа (метки одноразовые).
-    const sketchUpdate = computeSketchTimestampUpdate(nextStatusName, {
-      sketchStartedAt: order.sketchStartedAt,
-      sketchReadyAt: order.sketchReadyAt,
-    });
-    if (Object.keys(sketchUpdate).length > 0) {
-      await this.prisma.order.update({ where: { id }, data: sketchUpdate });
-    }
-
-    if (nextStatusId !== prevStatusId) {
-      await this.orderEvents.record(id, actor?.id ?? null, [
+      const sketchUpdate = computeSketchTimestampUpdate(targetStatus.name, current);
+      const eventData = this.orderEvents.buildCreateManyData(id, actor?.id ?? null, [
         {
           field: 'orderStatus',
           oldValue: prevStatusName,
-          newValue: nextStatusName ?? (nextStatusId != null ? `Статус #${nextStatusId}` : null),
-          meta: { oldId: prevStatusId, newId: nextStatusId },
+          newValue: targetStatus.name,
+          meta: { oldId: prevStatusId, newId: statusId },
         },
       ]);
-    }
+
+      await tx.bluesalesOrderInfo.update({
+        where: { orderId: id },
+        data: {
+          orderStatusId: statusId,
+          orderStatus: targetStatus.name,
+        },
+      });
+      // Даже если метки не меняются, update поднимает Order.updatedAt и карточку
+      // с новым статусом наверх доски.
+      await tx.order.update({
+        where: { id },
+        data: { ...sketchUpdate, updatedAt: new Date() },
+      });
+      await tx.orderStatusChange.create({
+        data: {
+          orderId: id,
+          actorId: actor?.id ?? null,
+          fromStatusId: prevStatusId,
+          fromStatusName: prevStatusName,
+          toStatusId: statusId,
+          toStatusName: targetStatus.name,
+        },
+      });
+      if (eventData.length > 0) {
+        await tx.orderEvent.createMany({ data: eventData });
+      }
+    });
 
     return this.findOne(id);
   }
@@ -736,6 +783,7 @@ export class OrdersService {
       revisionDesigner: order.revisionDesigner ?? null,
       orderStatusId: order.bluesalesInfo?.orderStatusId ?? null,
       orderStatus: order.bluesalesInfo?.orderStatus ?? null,
+      orderStatusSync: this.serializeOrderStatusSync(order.statusChanges?.[0] ?? null),
       crmStatusId: order.bluesalesInfo?.crmStatusId ?? null,
       crmStatus: order.bluesalesInfo?.crmStatus ?? null,
       revisionCount: stats.revisionCount,
@@ -744,6 +792,24 @@ export class OrdersService {
       lastMessageAt,
       createdAt: order.createdAt,
     };
+  }
+
+  private serializeOrderStatusSync(
+    change:
+      | {
+          state: 'PENDING' | 'PROCESSING' | 'RETRY' | 'SUCCEEDED';
+          attempts: number;
+          lastError: string | null;
+        }
+      | null,
+  ) {
+    return change
+      ? {
+          state: change.state === 'RETRY' ? ('retrying' as const) : ('pending' as const),
+          attempts: change.attempts,
+          lastError: change.lastError,
+        }
+      : null;
   }
 
   private canChangeResponsible(actor: AuthUser) {
@@ -921,4 +987,9 @@ type OrderForView = {
     crmStatusId: number | null;
     crmStatus: string | null;
   } | null;
+  statusChanges?: Array<{
+    state: 'PENDING' | 'PROCESSING' | 'RETRY' | 'SUCCEEDED';
+    attempts: number;
+    lastError: string | null;
+  }>;
 };

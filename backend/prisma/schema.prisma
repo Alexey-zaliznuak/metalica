@@ -25,6 +25,13 @@ enum OrderSource {
   BLUESALES
 }
 
+enum OrderStatusChangeState {
+  PENDING
+  PROCESSING
+  RETRY
+  SUCCEEDED
+}
+
 enum ChatType {
   PUBLIC
   PRIVATE
@@ -36,59 +43,61 @@ enum ChatMemberRole {
 }
 
 model User {
-  id                          Int       @id @default(autoincrement())
-  username                    String    @unique
-  name                        String
-  role                        Role      @default(MANAGER)
-  scopes                      UserScope[] @default([])
-  passwordHash                String
-  frontendSettings            Json?
-  messages                    Message[]
-  chatMemberships             ChatMember[]
-  chatMessages                ChatMessage[]
-  createdChats                Chat[]    @relation("ChatCreatedBy")
-  ordersAsSketchDesigner      Order[]   @relation("OrderSketchDesigner")
-  ordersAsRevisionDesigner    Order[]   @relation("OrderRevisionDesigner")
+  id                       Int                 @id @default(autoincrement())
+  username                 String              @unique
+  name                     String
+  role                     Role                @default(MANAGER)
+  scopes                   UserScope[]         @default([])
+  passwordHash             String
+  frontendSettings         Json?
+  messages                 Message[]
+  chatMemberships          ChatMember[]
+  chatMessages             ChatMessage[]
+  createdChats             Chat[]              @relation("ChatCreatedBy")
+  ordersAsSketchDesigner   Order[]             @relation("OrderSketchDesigner")
+  ordersAsRevisionDesigner Order[]             @relation("OrderRevisionDesigner")
   // Правки, которые пользователь ЗАКРЫЛ (денормализованный closedById в RevisionClosure)
-  closedRevisions             RevisionClosure[] @relation("RevisionClosedBy")
+  closedRevisions          RevisionClosure[]   @relation("RevisionClosedBy")
   // События лога заказов, автором которых является пользователь
-  orderEvents                 OrderEvent[] @relation("OrderEventActor")
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  orderEvents              OrderEvent[]        @relation("OrderEventActor")
+  orderStatusChanges       OrderStatusChange[] @relation("OrderStatusChangeActor")
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
 
   @@index([role])
 }
 
 model Order {
-  id                  Int                 @id @default(autoincrement())
-  orderNumber         String              @unique
-  title               String?
-  source              OrderSource         @default(MANUAL)
-  messages            Message[]
-  revisions           Revision[]
-  events              OrderEvent[]
+  id                    Int                 @id @default(autoincrement())
+  orderNumber           String              @unique
+  title                 String?
+  source                OrderSource         @default(MANUAL)
+  messages              Message[]
+  revisions             Revision[]
+  events                OrderEvent[]
+  statusChanges         OrderStatusChange[]
   // Имена менеджеров подтягиваются из BlueSales (не FK):
   //  - deliveryManagerName  — менеджер ведения (customer.manager из BS)
   //  - onboardingManagerName — менеджер оформления (custom-поле «Оформление» из BS)
   deliveryManagerName   String?
   onboardingManagerName String?
-  sketchDesigner      User?               @relation("OrderSketchDesigner", fields: [sketchDesignerId], references: [id])
-  sketchDesignerId    Int?
-  revisionDesigner    User?               @relation("OrderRevisionDesigner", fields: [revisionDesignerId], references: [id])
-  revisionDesignerId  Int?
+  sketchDesigner        User?               @relation("OrderSketchDesigner", fields: [sketchDesignerId], references: [id])
+  sketchDesignerId      Int?
+  revisionDesigner      User?               @relation("OrderRevisionDesigner", fields: [revisionDesignerId], references: [id])
+  revisionDesignerId    Int?
   // Замер времени эскиза по статусам заказа BlueSales:
   //  - sketchStartedAt — момент ПЕРВОГО входа в статус «Готовим эскиз» (ставится один раз)
   //  - sketchReadyAt   — момент ПЕРВОГО перехода в статус «Эскиз готов» (ставится один раз)
-  sketchStartedAt     DateTime?
-  sketchReadyAt       DateTime?
+  sketchStartedAt       DateTime?
+  sketchReadyAt         DateTime?
   // Лид (клиент из BlueSales), создавший заказ
-  lead                Lead?               @relation(fields: [leadId], references: [id])
-  leadId              Int?
+  lead                  Lead?               @relation(fields: [leadId], references: [id])
+  leadId                Int?
   // Подмодель с «сырыми» данными заказа из BlueSales (1-к-1)
-  bluesalesInfo       BluesalesOrderInfo?
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-  dialogLink          String?
+  bluesalesInfo         BluesalesOrderInfo?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  dialogLink            String?
 
   @@index([source])
   @@index([leadId])
@@ -100,29 +109,32 @@ model Order {
 
 // Данные заказа, специфичные для BlueSales (1-к-1 с Order)
 model BluesalesOrderInfo {
-  id            Int       @id @default(autoincrement())
-  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  orderId       Int       @unique
+  id                    Int       @id @default(autoincrement())
+  order                 Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId               Int       @unique
   // id заказа в BlueSales — ключ идемпотентности импорта
-  bsOrderId     Int       @unique
+  bsOrderId             Int       @unique
   // id клиента (customer.id) в BlueSales на момент синка заказа
-  bsCustomerId  Int?
-  bsNumber      String?
+  bsCustomerId          Int?
+  bsNumber              String?
   // Статус заказа в BS (order.orderStatus)
-  orderStatusId Int?
-  orderStatus   String?
+  orderStatusId         Int?
+  orderStatus           String?
+  // Момент получения статуса от BlueSales. Защищает от применения устаревшего
+  // ответа фонового синка после более нового пользовательского изменения.
+  orderStatusObservedAt DateTime?
   // CRM-статус клиента/воронки (order.crmStatus), если есть
-  crmStatusId   Int?
-  crmStatus     String?
-  totalSum      Float?
-  prepaymentSum Float?
+  crmStatusId           Int?
+  crmStatus             String?
+  totalSum              Float?
+  prepaymentSum         Float?
   // Когда заказ создан в BlueSales (order.date)
-  bsCreatedAt   DateTime?
+  bsCreatedAt           DateTime?
   // Полный ответ BS на случай будущих полей / отладки
-  rawPayload    Json?
-  lastSyncedAt  DateTime  @default(now())
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  rawPayload            Json?
+  lastSyncedAt          DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@index([orderStatusId])
   @@index([crmStatusId])
@@ -130,38 +142,64 @@ model BluesalesOrderInfo {
   @@index([bsCreatedAt])
 }
 
+// Durable outbox исходящих изменений статуса. Одна строка содержит только
+// конкретный переход, а не snapshot/полное тело заказа.
+model OrderStatusChange {
+  id             Int                    @id @default(autoincrement())
+  order          Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId        Int
+  actor          User?                  @relation("OrderStatusChangeActor", fields: [actorId], references: [id])
+  actorId        Int?
+  fromStatusId   Int?
+  fromStatusName String?
+  toStatusId     Int
+  toStatusName   String
+  state          OrderStatusChangeState @default(PENDING)
+  attempts       Int                    @default(0)
+  nextAttemptAt  DateTime               @default(now())
+  lockedAt       DateTime?
+  leaseToken     String?
+  lastError      String?
+  createdAt      DateTime               @default(now())
+  completedAt    DateTime?
+
+  @@index([state, nextAttemptAt])
+  @@index([orderId, state, id])
+  @@index([actorId])
+}
+
 // Лид (клиент из BlueSales)
 model Lead {
-  id           Int      @id @default(autoincrement())
+  id             Int       @id @default(autoincrement())
   // id клиента в BlueSales — ключ идемпотентности синка
-  bsCustomerId Int?     @unique
-  name         String?
-  fullName     String?
+  bsCustomerId   Int?      @unique
+  name           String?
+  fullName       String?
   // Менеджер клиента в BlueSales (customer.manager): имя и BS-id.
   // Денормализовано (не FK), т.к. это менеджер BlueSales, а не User системы.
-  managerName  String?
-  managerId    Int?
+  managerName    String?
+  managerId      Int?
   // Ссылка на диалог в ВК-группе (переписка сообщество <-> лид)
-  vkDialogUrl  String?
-  vkUserId     String?
+  vkDialogUrl    String?
+  vkUserId       String?
   // Дата первого контакта клиента в BlueSales
   firstContactAt DateTime?
   // Дата последнего контакта клиента в BlueSales — по ней refresh-loop лидов
   // отбирает «живых» лидов (аналог bsCreatedAt у заказов).
-  lastContactAt DateTime?
+  lastContactAt  DateTime?
   // Источник клиента в BlueSales — ID (customer.source.id). Имя — в модели BluesalesSource.
-  source       String?
+  source         String?
   // Канал продаж клиента в BlueSales — ID (customer.salesChannel.id). Имя — в модели BluesalesSalesChannel.
-  salesChannel String?
+  salesChannel   String?
   // Отметки клиента в BlueSales (поле shortNotes — простая строка)
-  marks        String?
+  marks          String?
   // Теги клиента в BlueSales — список ID (tags[].id). Имена — в модели BluesalesTag.
-  tags         String[]  @default([])
-  crmStatus    String?
-  orders       Order[]
-  lastSyncedAt DateTime @default(now())
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  tags           String[]  @default([])
+  crmStatus      String?
+  orders         Order[]
+  lastSyncedAt   DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([crmStatus])
   @@index([lastContactAt])
@@ -255,20 +293,20 @@ model ChatMessage {
 }
 
 model Message {
-  id          Int          @id @default(autoincrement())
-  order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  orderId     Int
-  author      User         @relation(fields: [authorId], references: [id])
-  authorId    Int
-  body        String?
+  id              Int              @id @default(autoincrement())
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId         Int
+  author          User             @relation(fields: [authorId], references: [id])
+  authorId        Int
+  body            String?
   // Тип сообщения теперь выводится из связей, а не хранится в колонке kind:
   //  - есть revision            -> это ЗАПРОС правки (REVISION_REQUEST)
   //  - есть revisionClosure     -> это ОТВЕТ/закрытие правки (REVISION_ANSWER)
   //  - нет ни того ни другого   -> обычное сообщение (NORMAL)
   revision        Revision?        @relation("RevisionRequestMessage")
   revisionClosure RevisionClosure? @relation("RevisionClosureMessage")
-  attachments Attachment[]
-  createdAt   DateTime     @default(now())
+  attachments     Attachment[]
+  createdAt       DateTime         @default(now())
 
   @@index([orderId, createdAt])
 }

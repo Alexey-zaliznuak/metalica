@@ -27,6 +27,23 @@ export class OrderEventsService {
 
   constructor(private prisma: PrismaService) {}
 
+  buildCreateManyData(
+    orderId: number,
+    actorId: number | null,
+    changes: OrderEventChange[],
+  ): Prisma.OrderEventCreateManyInput[] {
+    return changes
+      .filter((change) => change.oldValue !== change.newValue)
+      .map((change) => ({
+        orderId,
+        actorId,
+        field: change.field,
+        oldValue: change.oldValue,
+        newValue: change.newValue,
+        meta: change.meta ?? Prisma.JsonNull,
+      }));
+  }
+
   /**
    * Пишет пачку событий об изменениях полей заказа. Записи, где значение не
    * изменилось, отбрасываются. Ошибка записи лога не должна ронять основную
@@ -37,18 +54,11 @@ export class OrderEventsService {
     actorId: number | null,
     changes: OrderEventChange[],
   ): Promise<void> {
-    const meaningful = changes.filter((c) => c.oldValue !== c.newValue);
-    if (meaningful.length === 0) return;
+    const data = this.buildCreateManyData(orderId, actorId, changes);
+    if (data.length === 0) return;
     try {
       await this.prisma.orderEvent.createMany({
-        data: meaningful.map((c) => ({
-          orderId,
-          actorId,
-          field: c.field,
-          oldValue: c.oldValue,
-          newValue: c.newValue,
-          meta: c.meta ?? Prisma.JsonNull,
-        })),
+        data,
       });
     } catch (err) {
       this.logger.error(

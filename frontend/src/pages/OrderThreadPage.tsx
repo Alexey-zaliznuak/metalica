@@ -757,6 +757,19 @@ function OrderInfoPanel({
                   </MenuItem>
                 ))}
               </TextField>
+              {order.orderStatusSync && (
+                <Alert
+                  severity={order.orderStatusSync.state === 'retrying' ? 'warning' : 'info'}
+                  sx={{ mt: 1 }}
+                >
+                  {order.orderStatusSync.state === 'retrying'
+                    ? `BlueSales пока не принял статус. Автоматический повтор №${order.orderStatusSync.attempts}.`
+                    : 'Статус сохранён. Отправляется в BlueSales.'}
+                  {order.orderStatusSync.lastError
+                    ? ` ${order.orderStatusSync.lastError}`
+                    : ''}
+                </Alert>
+              )}
             </Box>
             <InfoRow label="CRM-статус" value={bs.crmStatus ?? dash} />
             <InfoRow
@@ -1059,6 +1072,21 @@ export default function OrderThreadPage() {
     }
   }, [orderId])
 
+  useEffect(() => {
+    if (!order?.orderStatusSync) return
+    let cancelled = false
+    let timer: number | undefined
+    const poll = async () => {
+      await refreshOrderMeta()
+      if (!cancelled) timer = window.setTimeout(poll, 2000)
+    }
+    timer = window.setTimeout(poll, 2000)
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [order?.orderStatusSync, refreshOrderMeta])
+
   const orderStatusOptions = useMemo(() => {
     const map = new Map<number, string>()
     for (const s of orderStatuses) {
@@ -1082,6 +1110,11 @@ export default function OrderThreadPage() {
       ...order,
       orderStatusId: statusId,
       orderStatus: nextName ?? null,
+      orderStatusSync: {
+        state: 'pending',
+        attempts: 0,
+        lastError: null,
+      },
     })
     try {
       const { data } = await client.patch<Order>(`/orders/${orderId}/order-status`, {
