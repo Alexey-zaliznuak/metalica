@@ -50,7 +50,10 @@ import HistoryIcon from '@mui/icons-material/History'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
-import ImageLightbox, { type LightboxImage } from '../components/ImageLightbox'
+import ImageLightbox, {
+  ImageAttachmentPreview,
+  type LightboxImage,
+} from '../components/ImageLightbox'
 import type {
   BluesalesStatusOption,
   BluesalesTag,
@@ -315,24 +318,12 @@ function MessageBubble({
                 }}
               >
                 {message.attachments.map((att) => (
-                  <Box
+                  <ImageAttachmentPreview
                     key={att.id}
-                    component="img"
-                    src={att.url}
-                    alt={att.filename}
-                    loading="lazy"
-                    decoding="async"
-                    onClick={() =>
+                    image={{ url: att.url, filename: att.filename }}
+                    onOpen={() =>
                       onOpenImage({ url: att.url, filename: att.filename })
                     }
-                    sx={{
-                      width: 120,
-                      height: 120,
-                      objectFit: 'cover',
-                      borderRadius: 1,
-                      cursor: 'pointer',
-                      border: '1px solid rgba(0,0,0,0.12)',
-                    }}
                   />
                 ))}
               </Box>
@@ -563,7 +554,7 @@ function OrderInfoPanel({
           label="Менеджер оформления"
           value={order.onboardingManagerName?.trim() ? order.onboardingManagerName : dash}
         />
-        <Box sx={{ py: 0.6 }}>
+        <Box sx={{ pt: 1.4, pb: 0.6 }}>
           <TextField
             select
             label="Художник эскиза"

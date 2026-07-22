@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import CloseIcon from '@mui/icons-material/Close'
 import DownloadIcon from '@mui/icons-material/Download'
-import { Box, CircularProgress, IconButton, Tooltip } from '@mui/material'
+import { Box, Button, CircularProgress, IconButton, Tooltip } from '@mui/material'
 
 export interface LightboxImage {
   url: string
@@ -13,6 +13,84 @@ interface ImageLightboxProps {
   onClose: () => void
 }
 
+interface ImageAttachmentPreviewProps {
+  image: LightboxImage
+  onOpen: () => void
+}
+
+async function downloadImage(image: LightboxImage) {
+  const response = await fetch(image.url)
+  if (!response.ok) {
+    throw new Error(`Не удалось скачать изображение: ${response.status}`)
+  }
+
+  const objectUrl = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = image.filename || 'image'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
+export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreviewProps) {
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    if (downloading) return
+    setDownloading(true)
+    try {
+      await downloadImage(image)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <Box sx={{ width: 120 }}>
+      <Box
+        component="img"
+        src={image.url}
+        alt={image.filename}
+        loading="lazy"
+        decoding="async"
+        onClick={onOpen}
+        sx={{
+          display: 'block',
+          width: 120,
+          height: 120,
+          objectFit: 'cover',
+          borderRadius: '4px 4px 0 0',
+          cursor: 'pointer',
+          border: '1px solid rgba(0,0,0,0.12)',
+          borderBottom: 0,
+        }}
+      />
+      <Button
+        fullWidth
+        size="small"
+        variant="outlined"
+        startIcon={
+          downloading ? <CircularProgress size={14} color="inherit" /> : <DownloadIcon />
+        }
+        disabled={downloading}
+        onClick={() => void handleDownload()}
+        sx={{
+          minWidth: 0,
+          height: 28,
+          borderRadius: '0 0 4px 4px',
+          fontSize: 11,
+          lineHeight: 1,
+          textTransform: 'none',
+        }}
+      >
+        Скачать
+      </Button>
+    </Box>
+  )
+}
+
 export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
   const [downloading, setDownloading] = useState(false)
 
@@ -21,19 +99,7 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
     setDownloading(true)
 
     try {
-      const response = await fetch(image.url)
-      if (!response.ok) {
-        throw new Error(`Не удалось скачать изображение: ${response.status}`)
-      }
-
-      const objectUrl = URL.createObjectURL(await response.blob())
-      const link = document.createElement('a')
-      link.href = objectUrl
-      link.download = image.filename || 'image'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(objectUrl)
+      await downloadImage(image)
     } finally {
       setDownloading(false)
     }

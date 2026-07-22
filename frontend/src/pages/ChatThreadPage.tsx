@@ -30,7 +30,10 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import GroupIcon from '@mui/icons-material/Group'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
-import ImageLightbox, { type LightboxImage } from '../components/ImageLightbox'
+import ImageLightbox, {
+  ImageAttachmentPreview,
+  type LightboxImage,
+} from '../components/ImageLightbox'
 import type {
   ChatListItem,
   ChatMemberUser,
@@ -513,27 +516,18 @@ export default function ChatThreadPage() {
                     {message.attachments.length > 0 && (
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: message.body ? 1 : 0 }}>
                         {message.attachments.map((attachment) => (
-                          <Box
+                          <ImageAttachmentPreview
                             key={attachment.id}
-                            component="img"
-                            src={attachment.url}
-                            alt={attachment.filename}
-                            loading="lazy"
-                            decoding="async"
-                            onClick={() =>
+                            image={{
+                              url: attachment.url,
+                              filename: attachment.filename,
+                            }}
+                            onOpen={() =>
                               setLightbox({
                                 url: attachment.url,
                                 filename: attachment.filename,
                               })
                             }
-                            sx={{
-                              width: 120,
-                              height: 120,
-                              objectFit: 'cover',
-                              borderRadius: 1,
-                              border: '1px solid rgba(0,0,0,0.12)',
-                              cursor: 'pointer',
-                            }}
                           />
                         ))}
                       </Box>
