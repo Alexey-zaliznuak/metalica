@@ -124,12 +124,6 @@ export interface GetCustomersResponse {
   customers: BsCustomer[];
 }
 
-interface SetOrderStatusPayload {
-  orderId?: number;
-  id?: number;
-  status: number;
-}
-
 const MAX_PAGE_SIZE = 500;
 
 @Injectable()
@@ -266,6 +260,31 @@ export class BluesalesApiService {
     return Number.isFinite(seconds) ? seconds : null;
   }
 
+  private describeRequest(method: string, data: unknown): string {
+    if (method === 'orders.updateMany' || method === 'orders.setStatus') {
+      return JSON.stringify(data);
+    }
+    if (method === 'orders.get' && data && typeof data === 'object') {
+      const filters = data as {
+        ids?: unknown;
+        internalNumbers?: unknown;
+        pageSize?: unknown;
+        startRowNumber?: unknown;
+      };
+      return JSON.stringify({
+        ids: filters.ids,
+        internalNumbers: filters.internalNumbers,
+        pageSize: filters.pageSize,
+        startRowNumber: filters.startRowNumber,
+      });
+    }
+    return data == null ? 'null' : `[${typeof data} payload скрыт]`;
+  }
+
+  private truncateLogValue(value: string, maxLength = 1000): string {
+    return value.length <= maxLength ? value : `${value.slice(0, maxLength)}…`;
+  }
+
   private async sendRaw<T>(
     method: string,
     data?: unknown,
@@ -291,6 +310,9 @@ export class BluesalesApiService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     let text: string;
+    let responseStatus = 0;
+    const startedAt = Date.now();
+    const requestDescription = this.describeRequest(method, data);
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -298,6 +320,7 @@ export class BluesalesApiService {
         body: JSON.stringify(data ?? null),
         signal: controller.signal,
       });
+      responseStatus = response.status;
       if (response.status === 404) {
         throw new BluesalesHttpError(`Method ${method} not found!`);
       }
@@ -307,10 +330,18 @@ export class BluesalesApiService {
         throw err;
       }
       if (controller.signal.aborted) {
+        this.logger.error(
+          `BlueSales ${method}: timeout; attempt=${attempt}; ` +
+            `request=${requestDescription}; elapsedMs=${Date.now() - startedAt}`,
+        );
         throw new BluesalesTimeoutError(
           `BlueSales API timeout после ${this.requestTimeoutMs} мс (метод ${method})`,
         );
       }
+      this.logger.error(
+        `BlueSales ${method}: connection error; attempt=${attempt}; ` +
+          `request=${requestDescription}; error=${(err as Error).message}`,
+      );
       throw new BluesalesConnectionError(
         `Error connecting to bluesales.ru API: ${(err as Error).message}`,
       );
@@ -322,17 +353,35 @@ export class BluesalesApiService {
     try {
       parsed = JSON.parse(text);
     } catch {
+      this.logger.error(
+        `BlueSales ${method}: invalid JSON; status=${responseStatus}; attempt=${attempt}; ` +
+          `request=${requestDescription}; response=${this.truncateLogValue(text)}`,
+      );
       throw new BluesalesError(`Invalid JSON from BlueSales: ${text.slice(0, 200)}`);
     }
 
+    const responseError =
+      parsed && typeof parsed === 'object'
+        ? ((parsed as { error?: unknown; errorMessage?: unknown }).error ??
+          (parsed as { errorMessage?: unknown }).errorMessage)
+        : null;
     if (
-      parsed &&
-      typeof parsed === 'object' &&
-      'isValid' in parsed &&
-      (parsed as { isValid?: boolean }).isValid === false
+      responseStatus < 200 ||
+      responseStatus >= 300 ||
+      (parsed &&
+        typeof parsed === 'object' &&
+        'isValid' in parsed &&
+        (parsed as { isValid?: boolean }).isValid === false) ||
+      (typeof responseError === 'string' && responseError.trim().length > 0)
     ) {
-      const errorObj = parsed as { error?: string };
-      const errorText = errorObj.error ?? '';
+      const errorText =
+        typeof responseError === 'string' && responseError.trim()
+          ? responseError
+          : `HTTP ${responseStatus}`;
+      this.logger.error(
+        `BlueSales ${method}: API error; status=${responseStatus}; attempt=${attempt}; ` +
+          `request=${requestDescription}; response=${this.truncateLogValue(text)}`,
+      );
 
       // Транзиентная ошибка = временная конкуренция за org-lock/сессию BlueSales,
       // которую имеет смысл повторить (в т.ч. вернув запрос в очередь).
@@ -386,8 +435,8 @@ export class BluesalesApiService {
       }
 
       throw transient
-        ? new BluesalesBusyError(`${this.login} | ${JSON.stringify(parsed)}`)
-        : new BluesalesError(`${this.login} | ${JSON.stringify(parsed)}`);
+        ? new BluesalesBusyError(`${method}: ${errorText}`)
+        : new BluesalesError(`${method}: ${errorText}`);
     }
 
     return parsed as T;
@@ -639,7 +688,9 @@ export class BluesalesApiService {
 
   /**
    * Изменяет статус заказа в BlueSales.
-   * В API встречаются разные имена ключа id, поэтому пробуем оба варианта.
+   * Для пользовательских статусов используем документированный orders.updateMany:
+   * orders.setStatus принимает старый системный код (0–5), а не id пользовательского
+   * статуса, поэтому мог вернуть успех, не применив нужный статус.
    * Приоритет по умолчанию — interactive: это действие пользователя.
    */
   async setOrderStatus(
@@ -647,21 +698,14 @@ export class BluesalesApiService {
     statusId: number,
     priority: BsRequestPriority = 'interactive',
   ): Promise<void> {
-    const payloads: SetOrderStatusPayload[] = [
-      { orderId, status: statusId },
-      { id: orderId, status: statusId },
-    ];
-
-    const errors: string[] = [];
-    for (const payload of payloads) {
-      try {
-        await this.send<unknown>('orders.setStatus', payload, priority);
-        return;
-      } catch (err) {
-        errors.push((err as Error).message);
-      }
-    }
-
-    throw new BluesalesError(`orders.setStatus failed: ${errors.join(' | ')}`);
+    const payload = {
+      ids: [orderId],
+      orderStatus: { id: statusId },
+    };
+    const response = await this.send<unknown>('orders.updateMany', payload, priority);
+    this.logger.log(
+      `BlueSales orders.updateMany: статус отправлен; orderId=${orderId}; ` +
+        `statusId=${statusId}; response=${this.truncateLogValue(JSON.stringify(response))}`,
+    );
   }
 }

@@ -152,6 +152,11 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       }
       if (leaseLost || !(await this.renewLease(change))) return;
 
+      this.logger.log(
+        `Доставка статуса: queueId=${change.id}; orderId=${change.orderId}; ` +
+          `bsOrderId=${info.bsOrderId}; ${change.fromStatusId ?? 'null'} -> ` +
+          `${change.toStatusId}; attempt=${change.attempts + 1}`,
+      );
       await this.api.setOrderStatus(info.bsOrderId, change.toStatusId);
       if (leaseLost || !(await this.renewLease(change))) return;
       const [actual] = await this.api.getOrdersByIds([info.bsOrderId], 'interactive');
@@ -160,11 +165,13 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       const actualStatusId = actual?.orderStatus?.id ?? null;
       if (!actual || actualStatusId !== change.toStatusId) {
         throw new Error(
-          `BlueSales вернул статус ${actualStatusId ?? 'без id'} вместо ${change.toStatusId}`,
+          `Проверка статуса не прошла: queueId=${change.id}; orderId=${change.orderId}; ` +
+            `bsOrderId=${info.bsOrderId}; expected=${change.toStatusId}; ` +
+            `actual=${actualStatusId ?? 'null'} (${actual?.orderStatus?.name ?? 'без имени'})`,
         );
       }
 
-      await this.prisma.$transaction(async (tx) => {
+      const saved = await this.prisma.$transaction(async (tx) => {
         const completed = await tx.orderStatusChange.updateMany({
           where: {
             id: change.id,
@@ -180,7 +187,7 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
             completedAt: new Date(),
           },
         });
-        if (completed.count === 0) return;
+        if (completed.count === 0) return false;
 
         const newerPending = await tx.orderStatusChange.count({
           where: {
@@ -206,7 +213,14 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
             },
           });
         }
+        return true;
       });
+      if (saved) {
+        this.logger.log(
+          `Статус доставлен: queueId=${change.id}; orderId=${change.orderId}; ` +
+            `bsOrderId=${info.bsOrderId}; statusId=${actualStatusId}`,
+        );
+      }
     } catch (error) {
       await this.scheduleRetry(change, error);
     } finally {
@@ -246,7 +260,9 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       },
     });
     this.logger.warn(
-      `Статус заказа #${change.orderId} не доставлен, повтор ${attempts} через ${delayMs}мс: ${message}`,
+      `Статус не доставлен: queueId=${change.id}; orderId=${change.orderId}; ` +
+        `targetStatusId=${change.toStatusId}; retry=${attempts}; ` +
+        `delayMs=${delayMs}; error=${message}`,
     );
   }
 
