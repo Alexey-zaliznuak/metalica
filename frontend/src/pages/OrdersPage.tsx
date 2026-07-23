@@ -185,6 +185,10 @@ const OrderCard = memo(function OrderCard({
   onDragEnd,
 }: OrderCardProps) {
   const canMoveCard = order.source === 'BLUESALES'
+  const orderStatusLabel =
+    order.orderStatus && order.orderStatus.length > 18
+      ? `${order.orderStatus.slice(0, 18)}...`
+      : (order.orderStatus ?? '—')
   return (
     <Paper
       variant="outlined"
@@ -216,12 +220,14 @@ const OrderCard = memo(function OrderCard({
         {order.title || 'Без названия'}
       </Typography>
       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-        <Chip
-          size="small"
-          label={order.orderStatus ?? '—'}
-          color={order.orderStatus ? 'info' : 'default'}
-          variant={order.orderStatus ? 'filled' : 'outlined'}
-        />
+        <Tooltip title={order.orderStatus ?? ''}>
+          <Chip
+            size="small"
+            label={orderStatusLabel}
+            color={order.orderStatus ? 'info' : 'default'}
+            variant={order.orderStatus ? 'filled' : 'outlined'}
+          />
+        </Tooltip>
         <Tooltip
           title={
             order.openRevisions > 0
