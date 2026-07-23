@@ -954,11 +954,37 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           return;
         }
 
-        const message =
-          `конфликт номера ${orderNumber}: Order#${sameNumber.id} уже связан с ` +
-          `BS#${existingForOrder.bsOrderId}, входящий заказ BS#${bsOrder.id}`;
-        this.logger.error(`Синк BlueSales: ${message}; автоматическая перепривязка запрещена`);
-        throw new Error(message);
+        if (bsOrder.id < existingForOrder.bsOrderId) {
+          this.logger.warn(
+            `Синк BS#${bsOrder.id}: пропущен устаревший дубль номера ${orderNumber}; ` +
+              `Order#${sameNumber.id} уже связан с более новым BS#${existingForOrder.bsOrderId}`,
+          );
+          return;
+        }
+
+        // BlueSales может пересоздать заказ, сохранив его номер. Чтобы два дубля не
+        // переключали связь туда-сюда на каждом синке, приоритет детерминированно
+        // получает запись с большим (более новым) bsOrderId.
+        this.logger.warn(
+          `Синк BS#${bsOrder.id}: найден более новый дубль номера ${orderNumber}; ` +
+            `перепривязываем Order#${sameNumber.id} с BS#${existingForOrder.bsOrderId} ` +
+            `на BS#${bsOrder.id}`,
+        );
+        await this.prisma.bluesalesOrderInfo.update({
+          where: { orderId: sameNumber.id },
+          data: { bsOrderId: bsOrder.id },
+        });
+        await this.upsertOrder(
+          bsOrder,
+          leadId,
+          { orderId: sameNumber.id },
+          statusObservedAt,
+        );
+        this.logger.log(
+          `Синк BS#${bsOrder.id}: Order#${sameNumber.id} (номер ${orderNumber}) ` +
+            `успешно перепривязан; прежний BS#${existingForOrder.bsOrderId} больше не является источником истины`,
+        );
+        return;
       }
 
       const sketchData = await this.resolveSketchTimestampUpdate(sameNumber.id, statusName);
@@ -998,6 +1024,17 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             { orderId: sameNumber.id },
             statusObservedAt,
           );
+          return;
+        }
+
+        // Конкурирующий синк мог успеть создать связь с другим дублем номера.
+        // Повторный проход применит то же детерминированное правило приоритета.
+        if (!byBsOrderId && byOrderId) {
+          this.logger.warn(
+            `Синк BS#${bsOrder.id}: после P2002 у Order#${sameNumber.id} обнаружен ` +
+              `конкурирующий BS#${byOrderId.bsOrderId}; повторно определяем приоритет`,
+          );
+          await this.upsertOrder(bsOrder, leadId, null, statusObservedAt);
           return;
         }
 
