@@ -202,13 +202,26 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       );
       await this.api.setOrderStatus(info.bsOrderId, change.toStatusId);
       if (leaseLost || !(await this.renewLease(change))) return;
-      const [actual] = await this.api.getOrdersByIds([info.bsOrderId], 'interactive');
+      const verificationOrders = await this.api.getOrdersByIds(
+        [info.bsOrderId],
+        'interactive',
+      );
       if (leaseLost || !(await this.renewLease(change))) return;
       const observedAt = new Date();
+      const actual = verificationOrders.find((order) => order.id === info.bsOrderId);
       const actualStatusId = actual?.orderStatus?.id ?? null;
-      if (!actual || actualStatusId !== change.toStatusId) {
+      if (!actual) {
         throw new Error(
-          `Проверка статуса не прошла: queueId=${change.id}; orderId=${change.orderId}; ` +
+          `Проверка статуса не прошла: BlueSales не вернул заказ; ` +
+            `queueId=${change.id}; orderId=${change.orderId}; bsOrderId=${info.bsOrderId}; ` +
+            `expected=${change.toStatusId}; returnedCount=${verificationOrders.length}; ` +
+            `returnedIds=${JSON.stringify(verificationOrders.map((order) => order.id))}`,
+        );
+      }
+      if (actualStatusId !== change.toStatusId) {
+        throw new Error(
+          `Проверка статуса не прошла: статус отличается; ` +
+            `queueId=${change.id}; orderId=${change.orderId}; ` +
             `bsOrderId=${info.bsOrderId}; expected=${change.toStatusId}; ` +
             `actual=${actualStatusId ?? 'null'} (${actual?.orderStatus?.name ?? 'без имени'})`,
         );
