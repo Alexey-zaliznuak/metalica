@@ -100,11 +100,7 @@ export class OrdersService {
       this.prisma.order.findMany({
         where,
         orderBy: [
-          {
-            bluesalesInfo: {
-              bsCreatedAt: { sort: 'desc', nulls: 'last' },
-            },
-          },
+          { orderNumber: 'desc' },
           { id: 'desc' },
         ],
         skip,
