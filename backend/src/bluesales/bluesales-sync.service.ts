@@ -932,10 +932,84 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     const sameNumber = await this.prisma.order.findUnique({ where: { orderNumber } });
     if (sameNumber) {
-      const sketchData = await this.resolveSketchTimestampUpdate(sameNumber.id, statusName);
-      await this.prisma.bluesalesOrderInfo.create({
-        data: { ...infoData, ...statusData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
+      // Поиск по bsOrderId выше мог вернуть null, хотя у локального заказа уже есть
+      // BluesalesOrderInfo: это либо гонка параллельных циклов синка, либо конфликт
+      // разных заказов BlueSales с одинаковым номером.
+      const existingForOrder = await this.prisma.bluesalesOrderInfo.findUnique({
+        where: { orderId: sameNumber.id },
+        select: { orderId: true, bsOrderId: true },
       });
+      if (existingForOrder) {
+        if (existingForOrder.bsOrderId === bsOrder.id) {
+          this.logger.warn(
+            `Синк BS#${bsOrder.id}: связь с Order#${sameNumber.id} (номер ${orderNumber}) ` +
+              'появилась после предварительной выборки; продолжаем как обновление',
+          );
+          await this.upsertOrder(
+            bsOrder,
+            leadId,
+            { orderId: existingForOrder.orderId },
+            statusObservedAt,
+          );
+          return;
+        }
+
+        const message =
+          `конфликт номера ${orderNumber}: Order#${sameNumber.id} уже связан с ` +
+          `BS#${existingForOrder.bsOrderId}, входящий заказ BS#${bsOrder.id}`;
+        this.logger.error(`Синк BlueSales: ${message}; автоматическая перепривязка запрещена`);
+        throw new Error(message);
+      }
+
+      const sketchData = await this.resolveSketchTimestampUpdate(sameNumber.id, statusName);
+      try {
+        await this.prisma.bluesalesOrderInfo.create({
+          data: { ...infoData, ...statusData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
+        });
+      } catch (err) {
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') {
+          throw err;
+        }
+
+        // Между findUnique и create другой цикл/экземпляр мог создать строку.
+        // Перечитываем оба уникальных ключа и продолжаем только при точном совпадении.
+        const [byBsOrderId, byOrderId] = await Promise.all([
+          this.prisma.bluesalesOrderInfo.findUnique({
+            where: { bsOrderId: bsOrder.id },
+            select: { orderId: true, bsOrderId: true },
+          }),
+          this.prisma.bluesalesOrderInfo.findUnique({
+            where: { orderId: sameNumber.id },
+            select: { orderId: true, bsOrderId: true },
+          }),
+        ]);
+
+        const recovered =
+          byBsOrderId?.orderId === sameNumber.id &&
+          byOrderId?.bsOrderId === bsOrder.id;
+        if (recovered) {
+          this.logger.warn(
+            `Синк BS#${bsOrder.id}: обработана гонка создания BluesalesOrderInfo для ` +
+              `Order#${sameNumber.id} (номер ${orderNumber}); продолжаем как обновление`,
+          );
+          await this.upsertOrder(
+            bsOrder,
+            leadId,
+            { orderId: sameNumber.id },
+            statusObservedAt,
+          );
+          return;
+        }
+
+        const target = JSON.stringify(err.meta?.target ?? null);
+        const message =
+          `не удалось безопасно восстановиться после P2002 для BS#${bsOrder.id}, ` +
+          `Order#${sameNumber.id} (номер ${orderNumber}, target=${target}): ` +
+          `по bsOrderId найден Order#${byBsOrderId?.orderId ?? 'нет'}, ` +
+          `по orderId найден BS#${byOrderId?.bsOrderId ?? 'нет'}`;
+        this.logger.error(`Синк BlueSales: ${message}; автоматическая перепривязка запрещена`);
+        throw new Error(message, { cause: err });
+      }
       await this.prisma.order.update({
         where: { id: sameNumber.id },
         data: {
