@@ -756,10 +756,18 @@ function OrderInfoPanel({
               </TextField>
               {order.orderStatusSync && (
                 <Alert
-                  severity={order.orderStatusSync.state === 'retrying' ? 'warning' : 'info'}
+                  severity={
+                    order.orderStatusSync.state === 'failed'
+                      ? 'error'
+                      : order.orderStatusSync.state === 'retrying'
+                        ? 'warning'
+                        : 'info'
+                  }
                   sx={{ mt: 1 }}
                 >
-                  {order.orderStatusSync.state === 'retrying'
+                  {order.orderStatusSync.state === 'failed'
+                    ? 'Отправка прекращена: заказ удалён или недоступен в BlueSales.'
+                    : order.orderStatusSync.state === 'retrying'
                     ? `BlueSales пока не принял статус. Автоматический повтор №${order.orderStatusSync.attempts}.`
                     : 'Статус сохранён. Отправляется в BlueSales.'}
                   {order.orderStatusSync.lastError
@@ -1135,7 +1143,7 @@ export default function OrderThreadPage() {
   }, [orderId])
 
   useEffect(() => {
-    if (!order?.orderStatusSync) return
+    if (!order?.orderStatusSync || order.orderStatusSync.state === 'failed') return
     let cancelled = false
     let timer: number | undefined
     const poll = async () => {

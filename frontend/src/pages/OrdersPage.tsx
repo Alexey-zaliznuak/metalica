@@ -256,14 +256,28 @@ const OrderCard = memo(function OrderCard({
             {order.orderStatusSync.state === 'pending' ? (
               <CircularProgress size={12} />
             ) : (
-              <SyncAltIcon sx={{ fontSize: 13, color: 'warning.main' }} />
+              <SyncAltIcon
+                sx={{
+                  fontSize: 13,
+                  color:
+                    order.orderStatusSync.state === 'failed' ? 'error.main' : 'warning.main',
+                }}
+              />
             )}
             <Tooltip title={order.orderStatusSync.lastError ?? ''}>
               <Typography
                 variant="caption"
-                color={order.orderStatusSync.state === 'retrying' ? 'warning.main' : 'text.secondary'}
+                color={
+                  order.orderStatusSync.state === 'failed'
+                    ? 'error.main'
+                    : order.orderStatusSync.state === 'retrying'
+                      ? 'warning.main'
+                      : 'text.secondary'
+                }
               >
-                {order.orderStatusSync.state === 'retrying'
+                {order.orderStatusSync.state === 'failed'
+                  ? 'Заказ недоступен в BlueSales'
+                  : order.orderStatusSync.state === 'retrying'
                   ? `Повтор отправки в BlueSales (${order.orderStatusSync.attempts})`
                   : 'Отправляется в BlueSales'}
               </Typography>
@@ -708,7 +722,10 @@ export default function OrdersPage() {
         new Set(
           Object.values(columnData)
             .flatMap((state) => state.items)
-            .filter((order) => order.orderStatusSync)
+            .filter(
+              (order) =>
+                order.orderStatusSync && order.orderStatusSync.state !== 'failed',
+            )
             .map((order) => order.id),
         ),
       ),

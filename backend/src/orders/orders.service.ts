@@ -126,8 +126,7 @@ export class OrdersService {
             },
           },
           statusChanges: {
-            where: { state: { not: 'SUCCEEDED' } },
-            orderBy: { id: 'asc' },
+            orderBy: { id: 'desc' },
             take: 1,
             select: { state: true, attempts: true, lastError: true },
           },
@@ -197,8 +196,7 @@ export class OrdersService {
       select: {
         id: true,
         statusChanges: {
-          where: { state: { not: 'SUCCEEDED' } },
-          orderBy: { id: 'asc' },
+          orderBy: { id: 'desc' },
           take: 1,
           select: { state: true, attempts: true, lastError: true },
         },
@@ -251,8 +249,7 @@ export class OrdersService {
           },
         },
         statusChanges: {
-          where: { state: { not: 'SUCCEEDED' } },
-          orderBy: { id: 'asc' },
+          orderBy: { id: 'desc' },
           take: 1,
           select: { state: true, attempts: true, lastError: true },
         },
@@ -864,15 +861,21 @@ export class OrdersService {
   private serializeOrderStatusSync(
     change:
       | {
-          state: 'PENDING' | 'PROCESSING' | 'RETRY' | 'SUCCEEDED';
+          state: 'PENDING' | 'PROCESSING' | 'RETRY' | 'SUCCEEDED' | 'FAILED';
           attempts: number;
           lastError: string | null;
         }
       | null,
   ) {
+    if (!change || change.state === 'SUCCEEDED') return null;
     return change
       ? {
-          state: change.state === 'RETRY' ? ('retrying' as const) : ('pending' as const),
+          state:
+            change.state === 'FAILED'
+              ? ('failed' as const)
+              : change.state === 'RETRY'
+                ? ('retrying' as const)
+                : ('pending' as const),
           attempts: change.attempts,
           lastError: change.lastError,
         }
@@ -1059,7 +1062,7 @@ type OrderForView = {
     crmStatus: string | null;
   } | null;
   statusChanges?: Array<{
-    state: 'PENDING' | 'PROCESSING' | 'RETRY' | 'SUCCEEDED';
+    state: 'PENDING' | 'PROCESSING' | 'RETRY' | 'SUCCEEDED' | 'FAILED';
     attempts: number;
     lastError: string | null;
   }>;

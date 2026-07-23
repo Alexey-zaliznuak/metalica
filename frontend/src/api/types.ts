@@ -119,7 +119,7 @@ export interface Order {
   orderStatusId: number | null
   orderStatus: string | null
   orderStatusSync: {
-    state: 'pending' | 'retrying'
+    state: 'pending' | 'retrying' | 'failed'
     attempts: number
     lastError: string | null
   } | null

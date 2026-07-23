@@ -13,6 +13,8 @@ const ACTIVE_STATES: OrderStatusChangeState[] = [
 
 type ClaimedStatusChange = OrderStatusChange & { leaseToken: string };
 
+class BluesalesOrderNotFoundError extends Error {}
+
 @Injectable()
 export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OrderStatusOutboxProcessor.name);
@@ -211,7 +213,7 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       const actual = verificationOrders.find((order) => order.id === info.bsOrderId);
       const actualStatusId = actual?.orderStatus?.id ?? null;
       if (!actual) {
-        throw new Error(
+        throw new BluesalesOrderNotFoundError(
           `Проверка статуса не прошла: BlueSales не вернул заказ; ` +
             `queueId=${change.id}; orderId=${change.orderId}; bsOrderId=${info.bsOrderId}; ` +
             `expected=${change.toStatusId}; returnedCount=${verificationOrders.length}; ` +
@@ -278,6 +280,10 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
         );
       }
     } catch (error) {
+      if (error instanceof BluesalesOrderNotFoundError && change.attempts >= 1) {
+        await this.failPermanently(change, error);
+        return;
+      }
       await this.scheduleRetry(change, error);
     } finally {
       if (heartbeat) clearInterval(heartbeat);
@@ -320,6 +326,36 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
         `targetStatusId=${change.toStatusId}; retry=${attempts}; ` +
         `delayMs=${delayMs}; error=${message}`,
     );
+  }
+
+  private async failPermanently(
+    change: ClaimedStatusChange,
+    error: BluesalesOrderNotFoundError,
+  ): Promise<void> {
+    const attempts = change.attempts + 1;
+    const message = error.message || String(error);
+    const failed = await this.prisma.orderStatusChange.updateMany({
+      where: {
+        id: change.id,
+        state: OrderStatusChangeState.PROCESSING,
+        leaseToken: change.leaseToken,
+      },
+      data: {
+        state: OrderStatusChangeState.FAILED,
+        attempts,
+        lockedAt: null,
+        leaseToken: null,
+        lastError: message.slice(0, 2000),
+        completedAt: new Date(),
+      },
+    });
+    if (failed.count > 0) {
+      this.logger.error(
+        `Доставка статуса прекращена: заказ удалён или недоступен в BlueSales; ` +
+          `queueId=${change.id}; orderId=${change.orderId}; attempts=${attempts}; ` +
+          `error=${message}`,
+      );
+    }
   }
 
   private sleep(ms: number): Promise<void> {
