@@ -20,6 +20,7 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
   private readonly maxRetryDelayMs: number;
   private readonly leaseMs: number;
   private active = false;
+  private startupRecovered = false;
   private nextLeaseSweepAt = 0;
 
   constructor(
@@ -55,6 +56,10 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
 
     while (this.active) {
       try {
+        if (!this.startupRecovered) {
+          await this.recoverQueueOnStartup();
+          this.startupRecovered = true;
+        }
         if (Date.now() >= this.nextLeaseSweepAt) {
           await this.releaseStaleLeases();
           this.nextLeaseSweepAt = Date.now() + Math.min(this.leaseMs / 2, 60_000);
@@ -69,6 +74,44 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       }
       await this.sleep(this.pollIntervalMs);
     }
+  }
+
+  /**
+   * В текущем deployment backend имеет одну реплику. После рестарта прежнего
+   * владельца lease уже нет, поэтому PROCESSING можно вернуть сразу, не ожидая час.
+   * Заодно снимаем накопившийся backoff: после выкладки исправления очередь должна
+   * проверить старые задачи немедленно.
+   */
+  private async recoverQueueOnStartup(): Promise<void> {
+    const now = new Date();
+    const [processing, delayedRetries] = await this.prisma.$transaction([
+      this.prisma.orderStatusChange.updateMany({
+        where: { state: OrderStatusChangeState.PROCESSING },
+        data: {
+          state: OrderStatusChangeState.RETRY,
+          lockedAt: null,
+          leaseToken: null,
+          nextAttemptAt: now,
+          lastError: 'Предыдущая обработка прервана перезапуском backend',
+        },
+      }),
+      this.prisma.orderStatusChange.updateMany({
+        where: {
+          state: OrderStatusChangeState.RETRY,
+          nextAttemptAt: { gt: now },
+        },
+        data: { nextAttemptAt: now },
+      }),
+    ]);
+    const active = await this.prisma.orderStatusChange.groupBy({
+      by: ['state'],
+      where: { state: { in: ACTIVE_STATES } },
+      _count: { _all: true },
+    });
+    this.logger.log(
+      `Очередь восстановлена: processing=${processing.count}; ` +
+        `retryAwakened=${delayedRetries.count}; active=${JSON.stringify(active)}`,
+    );
   }
 
   private async releaseStaleLeases(): Promise<void> {

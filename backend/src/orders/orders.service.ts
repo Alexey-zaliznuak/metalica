@@ -716,6 +716,16 @@ export class OrdersService {
           toStatusName: targetStatus.name,
         },
       });
+      // Новый пользовательский переход не обгоняет предыдущие (FIFO), но должен
+      // немедленно разбудить старую RETRY-задачу этого заказа, а не ждать backoff.
+      await tx.orderStatusChange.updateMany({
+        where: {
+          orderId: id,
+          state: 'RETRY',
+          nextAttemptAt: { gt: new Date() },
+        },
+        data: { nextAttemptAt: new Date() },
+      });
       if (eventData.length > 0) {
         await tx.orderEvent.createMany({ data: eventData });
       }
