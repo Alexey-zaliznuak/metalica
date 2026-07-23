@@ -94,10 +94,6 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
-    // После перехода с массива ID на relation восстанавливаем связи из уже
-    // накопленной колонки Lead.tags, даже если внешний синк временно отключён.
-    setTimeout(() => void this.backfillLeadTagRelations(), 2000);
-
     if (!this.enabled) {
       this.logger.warn('BlueSales sync отключён (BLUESALES_ENABLED=false)');
       return;
@@ -139,51 +135,6 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const raw = this.config.get<string>(key);
     if (raw == null || raw === '') return def;
     return raw === 'true' || raw === '1';
-  }
-
-  private async backfillLeadTagRelations(): Promise<void> {
-    let restored = 0;
-    try {
-      while (true) {
-        const leads = await this.prisma.lead.findMany({
-          where: {
-            tagIds: { isEmpty: false },
-            tags: { none: {} },
-          },
-          orderBy: { id: 'asc' },
-          take: 200,
-          select: { id: true, tagIds: true },
-        });
-        if (leads.length === 0) break;
-
-        const tagIds = [...new Set(leads.flatMap((lead) => lead.tagIds))];
-        await this.prisma.$transaction([
-          ...tagIds.map((bsTagId) =>
-            this.prisma.bluesalesTag.upsert({
-              where: { bsTagId },
-              create: { bsTagId, name: `Тег #${bsTagId}` },
-              update: {},
-            }),
-          ),
-          ...leads.map((lead) =>
-            this.prisma.lead.update({
-              where: { id: lead.id },
-              data: {
-                tags: {
-                  set: lead.tagIds.map((bsTagId) => ({ bsTagId })),
-                },
-              },
-            }),
-          ),
-        ]);
-        restored += leads.length;
-      }
-      if (restored > 0) {
-        this.logger.log(`Восстановлены связи тегов для ${restored} лидов из данных БД`);
-      }
-    } catch (err) {
-      this.logger.error(`Не удалось восстановить связи тегов: ${(err as Error).message}`);
-    }
   }
 
   // ─── Быстрый инкрементальный синк (каждые 5 минут) ────────────────────────

@@ -6,3 +6,4 @@ dist/
 *.env*
 deploy.sh
 order_raw_payload.json
+scripts/

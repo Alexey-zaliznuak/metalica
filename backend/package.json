@@ -11,6 +11,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
+    "db:load": "node scripts/postgres-load.js",
     "seed": "node prisma/seed.js"
   },
   "dependencies": {
