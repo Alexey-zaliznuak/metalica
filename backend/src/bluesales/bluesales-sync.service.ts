@@ -13,6 +13,9 @@ import {
 } from '../orders/sketch-status';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const NIGHT_START_UTC_HOUR = 21;
+const NIGHT_END_UTC_HOUR = 7;
+const NIGHT_REFRESH_MULTIPLIER = 3;
 
 /**
  * Cron быстрого инкрементального синка. Переопределяется через
@@ -107,6 +110,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `BlueSales sync активен: cron "${FAST_SYNC_CRON}" + refresh-loop заказов + loop лидов` +
         ` + backfill "${BACKFILL_CRON}" за ${this.backfillDays} дн.` +
+        ` + ночные паузы x${NIGHT_REFRESH_MULTIPLIER} (${NIGHT_START_UTC_HOUR}:00–${NIGHT_END_UTC_HOUR}:00 UTC)` +
         (this.fullSyncOnStartup ? ` + полный синк при старте за ${this.fullSyncDays} дн.` : ''),
     );
     this.loopActive = true;
@@ -268,7 +272,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         );
       }
       // Пауза между днями — не монополизируем единственную сессию BlueSales.
-      await this.sleep(this.refreshPauseMs);
+      await this.sleepBeforeNextBsRefresh(this.refreshPauseMs);
     }
 
     this.logger.log(`Добор новых лидов за ${this.backfillDays} дн.: заказов ${orders}, лидов ${leads}`);
@@ -293,7 +297,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Пауза даёт другим запросам к BS API (от менеджеров) попасть в очередь.
-      await this.sleep(this.refreshPauseMs);
+      await this.sleepBeforeNextBsRefresh(this.refreshPauseMs);
     }
 
     this.logger.log('Фоновый refresh-loop остановлен');
@@ -321,7 +325,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     if (batch.length === 0) {
       // Нет заказов для обновления — ждём подольше, чтобы не спамить в БД.
-      await this.sleep(10_000);
+      await this.sleepBeforeNextBsRefresh(10_000);
       return;
     }
 
@@ -509,7 +513,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         );
       }
       windowTo = windowFrom;
-      await this.sleep(this.refreshPauseMs);
+      await this.sleepBeforeNextBsRefresh(this.refreshPauseMs);
     }
 
     this.logger.log(`Полный синк завершён: заказов ${orders}, лидов ${leads}`);
@@ -584,7 +588,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       } catch (err) {
         this.logger.error(`Loop лидов ошибка: ${(err as Error).message}`);
       }
-      await this.sleep(this.leadsPauseMs);
+      await this.sleepBeforeNextBsRefresh(this.leadsPauseMs);
     }
 
     this.logger.log('Loop лидов остановлен');
@@ -609,7 +613,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     if (batch.length === 0) {
       // Нет «живых» лидов для обновления — ждём подольше, чтобы не спамить в БД.
-      await this.sleep(10_000);
+      await this.sleepBeforeNextBsRefresh(10_000);
       return;
     }
 
@@ -1289,6 +1293,17 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * С 21:00 до 07:00 по времени сервера (UTC) фоновые обращения к BlueSales
+   * выполняются в три раза реже. Проверяем время перед каждой паузой, поэтому
+   * переключение режима не требует перезапуска приложения.
+   */
+  private sleepBeforeNextBsRefresh(baseMs: number): Promise<void> {
+    const hour = new Date().getUTCHours();
+    const isNight = hour >= NIGHT_START_UTC_HOUR || hour < NIGHT_END_UTC_HOUR;
+    return this.sleep(baseMs * (isNight ? NIGHT_REFRESH_MULTIPLIER : 1));
   }
 
   private formatDuration(ms: number): string {
