@@ -58,6 +58,7 @@ export type OrderSource = 'MANUAL' | 'BLUESALES'
 export interface BluesalesStatusOption {
   id: number
   name: string
+  sortOrder: number
 }
 
 export interface BluesalesTag {

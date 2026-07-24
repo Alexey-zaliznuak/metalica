@@ -251,8 +251,11 @@ model BluesalesOrderStatus {
   // id статуса заказа в BlueSales (order.orderStatus.id)
   bsOrderStatusId Int      @id
   name            String
+  sortOrder       Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([sortOrder])
 }
 
 model Chat {

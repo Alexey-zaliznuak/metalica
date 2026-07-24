@@ -1158,16 +1158,19 @@ export default function OrderThreadPage() {
   }, [order?.orderStatusSync, refreshOrderMeta])
 
   const orderStatusOptions = useMemo(() => {
-    const map = new Map<number, string>()
-    for (const s of orderStatuses) {
-      map.set(s.id, s.name)
+    const options = [...orderStatuses]
+    if (
+      order?.orderStatusId != null &&
+      order.orderStatus &&
+      !options.some((status) => status.id === order.orderStatusId)
+    ) {
+      options.push({
+        id: order.orderStatusId,
+        name: order.orderStatus,
+        sortOrder: Number.MAX_SAFE_INTEGER,
+      })
     }
-    if (order?.orderStatusId != null && order.orderStatus) {
-      map.set(order.orderStatusId, order.orderStatus)
-    }
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+    return options
   }, [orderStatuses, order?.orderStatusId, order?.orderStatus])
 
   const handleOrderStatusChange = async (statusId: number) => {

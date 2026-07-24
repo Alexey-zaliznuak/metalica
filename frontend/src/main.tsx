@@ -16,6 +16,7 @@ import UsersPage from './pages/UsersPage'
 import WorkloadPage from './pages/WorkloadPage'
 import ChatsPage from './pages/ChatsPage'
 import ChatThreadPage from './pages/ChatThreadPage'
+import OrderStatusesPage from './pages/OrderStatusesPage'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -111,6 +112,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <ProtectedRoute requireAdmin>
                   <AppLayout>
                     <UsersPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/order-statuses"
+              element={
+                <ProtectedRoute requireAdmin>
+                  <AppLayout>
+                    <OrderStatusesPage />
                   </AppLayout>
                 </ProtectedRoute>
               }

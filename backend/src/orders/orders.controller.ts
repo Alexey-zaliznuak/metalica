@@ -8,12 +8,16 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateCrmStatusDto } from './dto/update-crm-status.dto';
+import { ReorderOrderStatusesDto } from './dto/reorder-order-statuses.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthUser, CurrentUser } from '../auth/current-user.decorator';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
@@ -65,6 +69,13 @@ export class OrdersController {
   @Get('order-statuses')
   getOrderStatuses() {
     return this.orders.getOrderStatuses();
+  }
+
+  @Patch('order-statuses/order')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  reorderOrderStatuses(@Body() dto: ReorderOrderStatusesDto) {
+    return this.orders.reorderOrderStatuses(dto.orderedIds);
   }
 
   @Get('tags')

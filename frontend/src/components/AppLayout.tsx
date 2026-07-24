@@ -25,6 +25,7 @@ import GroupIcon from '@mui/icons-material/Group'
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn'
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
 import ForumIcon from '@mui/icons-material/Forum'
+import LowPriorityIcon from '@mui/icons-material/LowPriority'
 import { useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
@@ -56,6 +57,12 @@ const NAV_ITEMS: NavItem[] = [
     requiredScopes: ['WORKLOAD_VIEW'],
   },
   { to: '/users', icon: <GroupIcon />, label: 'Пользователи', adminOnly: true },
+  {
+    to: '/order-statuses',
+    icon: <LowPriorityIcon />,
+    label: 'Статусы заказов',
+    adminOnly: true,
+  },
 ]
 
 function NavButton({

@@ -571,11 +571,20 @@ export class OrdersService {
     // которого ещё нет в справочнике (или у него изменилось имя) — фиксируем его.
     // Благодаря этому статус остаётся в списке даже когда в нём сейчас 0 заказов.
     if (fromOrders.length > 0) {
+      const maxSortOrder = await this.prisma.bluesalesOrderStatus.aggregate({
+        _max: { sortOrder: true },
+      });
+      const nextSortOrder = (maxSortOrder._max.sortOrder ?? -1) + 1;
+
       await this.prisma.$transaction(
-        fromOrders.map((s) =>
+        fromOrders.map((s, index) =>
           this.prisma.bluesalesOrderStatus.upsert({
             where: { bsOrderStatusId: s.id },
-            create: { bsOrderStatusId: s.id, name: s.name },
+            create: {
+              bsOrderStatusId: s.id,
+              name: s.name,
+              sortOrder: nextSortOrder + index,
+            },
             update: { name: s.name },
           }),
         ),
@@ -585,10 +594,49 @@ export class OrdersService {
     // Возвращаем объединение: полный справочник (он уже включает всё, что вернул
     // постгрес, плюс ранее накопленные статусы без активных заказов).
     const dictionary = await this.prisma.bluesalesOrderStatus.findMany({
-      orderBy: [{ name: 'asc' }],
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
 
-    return dictionary.map((s) => ({ id: s.bsOrderStatusId, name: s.name }));
+    return dictionary.map((s) => ({
+      id: s.bsOrderStatusId,
+      name: s.name,
+      sortOrder: s.sortOrder,
+    }));
+  }
+
+  async reorderOrderStatuses(orderedIds: number[]) {
+    const statuses = await this.prisma.bluesalesOrderStatus.findMany({
+      select: { bsOrderStatusId: true },
+    });
+    const existingIds = new Set(statuses.map((status) => status.bsOrderStatusId));
+
+    if (
+      orderedIds.length !== existingIds.size ||
+      orderedIds.some((id) => !existingIds.has(id))
+    ) {
+      throw new BadRequestException(
+        'Список должен содержать все статусы заказов ровно по одному разу',
+      );
+    }
+
+    await this.prisma.$transaction(
+      orderedIds.map((id, sortOrder) =>
+        this.prisma.bluesalesOrderStatus.update({
+          where: { bsOrderStatusId: id },
+          data: { sortOrder },
+        }),
+      ),
+    );
+
+    const dictionary = await this.prisma.bluesalesOrderStatus.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+
+    return dictionary.map((status) => ({
+      id: status.bsOrderStatusId,
+      name: status.name,
+      sortOrder: status.sortOrder,
+    }));
   }
 
   async getTags() {
