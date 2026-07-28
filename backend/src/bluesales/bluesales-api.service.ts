@@ -520,6 +520,25 @@ export class BluesalesApiService {
     };
   }
 
+  /**
+   * Текущее состояние очереди сериализации запросов к BlueSales. Нужно для
+   * диагностики: длинная очередь означает, что фоновый синк и пользовательские
+   * действия конкурируют за единственную сессию BlueSales.
+   */
+  getQueueStats(): {
+    processing: boolean;
+    queued: number;
+    queuedInteractive: number;
+    queuedBackground: number;
+  } {
+    return {
+      processing: this.processing,
+      queued: this.queue.length,
+      queuedInteractive: this.queue.filter((i) => i.priority === 'interactive').length,
+      queuedBackground: this.queue.filter((i) => i.priority === 'background').length,
+    };
+  }
+
   private formatDate(date: Date): string {
     const y = date.getUTCFullYear();
     const m = `${date.getUTCMonth() + 1}`.padStart(2, '0');
@@ -543,6 +562,33 @@ export class BluesalesApiService {
         ids,
         internalNumbers: null,
         pageSize: ids.length,
+        startRowNumber: 0,
+      },
+      priority,
+    );
+    return result.orders ?? [];
+  }
+
+  /**
+   * Получить заказы по внутренним номерам BlueSales (order.internalNumber).
+   * В отличие от ids один номер может вернуть несколько заказов — так видно
+   * дубли, из-за которых наш Order может быть привязан к устаревшему bsOrderId.
+   */
+  async getOrdersByInternalNumbers(
+    internalNumbers: number[],
+    priority: BsRequestPriority = 'background',
+  ): Promise<BsOrder[]> {
+    if (internalNumbers.length === 0) return [];
+    const result = await this.send<GetOrdersResponse>(
+      'orders.get',
+      {
+        dateFrom: null,
+        dateTill: null,
+        orderStatuses: [],
+        customerId: null,
+        ids: null,
+        internalNumbers,
+        pageSize: Math.min(Math.max(internalNumbers.length * 5, 10), MAX_PAGE_SIZE),
         startRowNumber: 0,
       },
       priority,
