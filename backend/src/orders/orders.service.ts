@@ -5,7 +5,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderSource, Prisma, Role, UserScope } from '@prisma/client';
+import {
+  BluesalesOrderStatus,
+  OrderSource,
+  Prisma,
+  Role,
+  UserScope,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { AuthUser } from '../auth/current-user.decorator';
@@ -121,6 +127,7 @@ export class OrdersService {
             select: {
               orderStatusId: true,
               orderStatus: true,
+              orderStatusEnteredAt: true,
               crmStatusId: true,
               crmStatus: true,
             },
@@ -240,6 +247,7 @@ export class OrdersService {
             bsNumber: true,
             orderStatus: true,
             orderStatusId: true,
+            orderStatusEnteredAt: true,
             crmStatus: true,
             crmStatusId: true,
             totalSum: true,
@@ -597,11 +605,7 @@ export class OrdersService {
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
 
-    return dictionary.map((s) => ({
-      id: s.bsOrderStatusId,
-      name: s.name,
-      sortOrder: s.sortOrder,
-    }));
+    return dictionary.map((s) => this.serializeOrderStatus(s));
   }
 
   async reorderOrderStatuses(orderedIds: number[]) {
@@ -632,11 +636,46 @@ export class OrdersService {
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
 
-    return dictionary.map((status) => ({
+    return dictionary.map((status) => this.serializeOrderStatus(status));
+  }
+
+  /**
+   * Настройки таймера «сколько заказ находится в статусе»: галочка отображения
+   * и порог в минутах, после которого таймер на карточке краснеет.
+   * Порог сохраняем даже при выключенной галочке, чтобы его не приходилось
+   * вводить заново после повторного включения.
+   */
+  async updateOrderStatusSettings(
+    id: number,
+    settings: { showTimeInStatus: boolean; alertAfterMinutes: number | null },
+  ) {
+    const status = await this.prisma.bluesalesOrderStatus.findUnique({
+      where: { bsOrderStatusId: id },
+      select: { bsOrderStatusId: true },
+    });
+    if (!status) {
+      throw new NotFoundException('Статус заказа не найден');
+    }
+
+    const updated = await this.prisma.bluesalesOrderStatus.update({
+      where: { bsOrderStatusId: id },
+      data: {
+        showTimeInStatus: settings.showTimeInStatus,
+        alertAfterMinutes: settings.alertAfterMinutes,
+      },
+    });
+
+    return this.serializeOrderStatus(updated);
+  }
+
+  private serializeOrderStatus(status: BluesalesOrderStatus) {
+    return {
       id: status.bsOrderStatusId,
       name: status.name,
       sortOrder: status.sortOrder,
-    }));
+      showTimeInStatus: status.showTimeInStatus,
+      alertAfterMinutes: status.alertAfterMinutes,
+    };
   }
 
   async getTags() {
@@ -743,6 +782,7 @@ export class OrdersService {
         data: {
           orderStatusId: statusId,
           orderStatus: targetStatus.name,
+          orderStatusEnteredAt: new Date(),
         },
       });
       // Даже если метки не меняются, update поднимает Order.updatedAt и карточку
@@ -894,6 +934,7 @@ export class OrdersService {
       hasUrgentTag: (order.lead?.tags.length ?? 0) > 0,
       orderStatusId: order.bluesalesInfo?.orderStatusId ?? null,
       orderStatus: order.bluesalesInfo?.orderStatus ?? null,
+      orderStatusEnteredAt: order.bluesalesInfo?.orderStatusEnteredAt ?? null,
       orderStatusSync: this.serializeOrderStatusSync(order.statusChanges?.[0] ?? null),
       crmStatusId: order.bluesalesInfo?.crmStatusId ?? null,
       crmStatus: order.bluesalesInfo?.crmStatus ?? null,
@@ -1106,6 +1147,7 @@ type OrderForView = {
   bluesalesInfo?: {
     orderStatusId: number | null;
     orderStatus: string | null;
+    orderStatusEnteredAt?: Date | null;
     crmStatusId: number | null;
     crmStatus: string | null;
   } | null;

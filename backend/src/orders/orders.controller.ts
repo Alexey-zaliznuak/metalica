@@ -14,6 +14,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateCrmStatusDto } from './dto/update-crm-status.dto';
 import { ReorderOrderStatusesDto } from './dto/reorder-order-statuses.dto';
+import { UpdateOrderStatusSettingsDto } from './dto/update-order-status-settings.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthUser, CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
@@ -76,6 +77,19 @@ export class OrdersController {
   @Roles(Role.ADMIN)
   reorderOrderStatuses(@Body() dto: ReorderOrderStatusesDto) {
     return this.orders.reorderOrderStatuses(dto.orderedIds);
+  }
+
+  @Patch('order-statuses/:id/settings')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  updateOrderStatusSettings(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateOrderStatusSettingsDto,
+  ) {
+    return this.orders.updateOrderStatusSettings(id, {
+      showTimeInStatus: dto.showTimeInStatus,
+      alertAfterMinutes: dto.alertAfterMinutes ?? null,
+    });
   }
 
   @Get('tags')

@@ -1168,6 +1168,8 @@ export default function OrderThreadPage() {
         id: order.orderStatusId,
         name: order.orderStatus,
         sortOrder: Number.MAX_SAFE_INTEGER,
+        showTimeInStatus: false,
+        alertAfterMinutes: null,
       })
     }
     return options

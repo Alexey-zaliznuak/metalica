@@ -125,6 +125,10 @@ model BluesalesOrderInfo {
   // Момент получения статуса от BlueSales. Защищает от применения устаревшего
   // ответа фонового синка после более нового пользовательского изменения.
   orderStatusObservedAt DateTime?
+  // Когда заказ фактически попал в текущий статус — для таймера на доске.
+  // Пишется только при реальной смене статуса, поэтому у заказов,
+  // синхронизированных до появления таймера, остаётся null.
+  orderStatusEnteredAt  DateTime?
   // CRM-статус клиента/воронки (order.crmStatus), если есть
   crmStatusId           Int?
   crmStatus             String?
@@ -249,11 +253,16 @@ model BluesalesSalesChannel {
 // Без FK на BluesalesOrderInfo — это денормализованный lookup.
 model BluesalesOrderStatus {
   // id статуса заказа в BlueSales (order.orderStatus.id)
-  bsOrderStatusId Int      @id
-  name            String
-  sortOrder       Int      @default(0)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  bsOrderStatusId   Int      @id
+  name              String
+  sortOrder         Int      @default(0)
+  // Показывать на доске, сколько заказ находится в этом статусе
+  showTimeInStatus  Boolean  @default(false)
+  // Порог в минутах: после его превышения таймер на карточке краснеет
+  // и рядом появляется «огонёк». null = порога нет.
+  alertAfterMinutes Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([sortOrder])
 }

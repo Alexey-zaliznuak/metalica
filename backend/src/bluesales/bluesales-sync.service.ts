@@ -898,7 +898,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         const [currentInfo, pendingChanges] = await Promise.all([
           tx.bluesalesOrderInfo.findUnique({
             where: { bsOrderId: bsOrder.id },
-            select: { orderStatusObservedAt: true },
+            select: { orderStatusObservedAt: true, orderStatusId: true },
           }),
           tx.orderStatusChange.count({
             where: {
@@ -917,10 +917,24 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           pendingChanges === 0 &&
           (!currentInfo?.orderStatusObservedAt ||
             currentInfo.orderStatusObservedAt.getTime() < statusObservedAt.getTime());
+        // Таймер «сколько заказ в статусе» перезапускаем только на фактическом
+        // переходе, а не на каждом синке, который подтверждает тот же статус.
+        const statusChanged =
+          currentInfo?.orderStatusId !== statusData.orderStatusId;
 
         await tx.bluesalesOrderInfo.update({
           where: { bsOrderId: bsOrder.id },
-          data: { ...infoData, ...(canApplyStatus ? statusData : {}) },
+          data: {
+            ...infoData,
+            ...(canApplyStatus
+              ? {
+                  ...statusData,
+                  ...(statusChanged
+                    ? { orderStatusEnteredAt: statusObservedAt }
+                    : {}),
+                }
+              : {}),
+          },
         });
         await tx.order.update({
           where: { id: existingInfo.orderId },

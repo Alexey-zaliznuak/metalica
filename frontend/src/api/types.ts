@@ -59,6 +59,8 @@ export interface BluesalesStatusOption {
   id: number
   name: string
   sortOrder: number
+  showTimeInStatus: boolean
+  alertAfterMinutes: number | null
 }
 
 export interface BluesalesTag {
@@ -119,6 +121,7 @@ export interface Order {
   dialogLink?: string | null
   orderStatusId: number | null
   orderStatus: string | null
+  orderStatusEnteredAt: string | null
   orderStatusSync: {
     state: 'pending' | 'retrying' | 'failed'
     attempts: number

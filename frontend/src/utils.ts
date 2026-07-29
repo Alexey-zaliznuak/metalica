@@ -83,6 +83,27 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${s} сек`
 }
 
+// Компактная длительность для таймера на карточке: «12м», «3ч 20м», «2д 5ч».
+// nowTs передаётся снаружи, чтобы все карточки тикали одним состоянием.
+export function formatDurationShort(
+  iso: string | null | undefined,
+  nowTs: number,
+): string {
+  if (!iso) return '—'
+  const started = new Date(iso).getTime()
+  if (Number.isNaN(started)) return '—'
+  const minutes = Math.max(Math.floor((nowTs - started) / 60000), 0)
+  if (minutes < 60) return `${minutes}м`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    const rest = minutes % 60
+    return rest > 0 ? `${hours}ч ${rest}м` : `${hours}ч`
+  }
+  const days = Math.floor(hours / 24)
+  const restHours = hours % 24
+  return restHours > 0 ? `${days}д ${restHours}ч` : `${days}д`
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)

@@ -3,13 +3,17 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   CircularProgress,
+  FormControlLabel,
   IconButton,
+  InputAdornment,
   List,
   ListItem,
   ListItemText,
   Paper,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -20,16 +24,45 @@ import SaveIcon from '@mui/icons-material/Save'
 import client from '../api/client'
 import type { BluesalesStatusOption } from '../api/types'
 
+// Порог «огонька» в UI задаётся часами и минутами, а хранится одним числом минут.
+interface ThresholdDraft {
+  hours: string
+  minutes: string
+}
+
 function idsOf(statuses: BluesalesStatusOption[]) {
   return statuses.map((status) => status.id)
+}
+
+function draftFromMinutes(total: number | null): ThresholdDraft {
+  if (total == null) return { hours: '', minutes: '' }
+  return { hours: String(Math.floor(total / 60)), minutes: String(total % 60) }
+}
+
+function draftsFromStatuses(statuses: BluesalesStatusOption[]) {
+  const drafts: Record<number, ThresholdDraft> = {}
+  statuses.forEach((status) => {
+    drafts[status.id] = draftFromMinutes(status.alertAfterMinutes)
+  })
+  return drafts
+}
+
+function minutesFromDraft(draft: ThresholdDraft | undefined): number | null {
+  if (!draft) return null
+  const hours = Math.max(Number(draft.hours) || 0, 0)
+  const minutes = Math.max(Number(draft.minutes) || 0, 0)
+  const total = Math.round(hours * 60 + minutes)
+  return total > 0 ? total : null
 }
 
 export default function OrderStatusesPage() {
   const [statuses, setStatuses] = useState<BluesalesStatusOption[]>([])
   const [savedIds, setSavedIds] = useState<number[]>([])
+  const [drafts, setDrafts] = useState<Record<number, ThresholdDraft>>({})
   const [draggedId, setDraggedId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [savingSettingsId, setSavingSettingsId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
@@ -41,6 +74,7 @@ export default function OrderStatusesPage() {
         await client.get<BluesalesStatusOption[]>('/orders/order-statuses')
       setStatuses(data)
       setSavedIds(idsOf(data))
+      setDrafts(draftsFromStatuses(data))
     } catch {
       setError('Не удалось загрузить статусы заказов')
     } finally {
@@ -97,6 +131,7 @@ export default function OrderStatusesPage() {
       )
       setStatuses(data)
       setSavedIds(idsOf(data))
+      setDrafts(draftsFromStatuses(data))
       setSuccess(true)
     } catch {
       setError(
@@ -105,6 +140,54 @@ export default function OrderStatusesPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Настройки таймера сохраняются сразу, независимо от несохранённого порядка,
+  // поэтому локальный sortOrder оставляем прежним.
+  const saveSettings = async (
+    status: BluesalesStatusOption,
+    next: { showTimeInStatus: boolean; alertAfterMinutes: number | null },
+  ) => {
+    setSavingSettingsId(status.id)
+    setError(null)
+    try {
+      const { data } = await client.patch<BluesalesStatusOption>(
+        `/orders/order-statuses/${status.id}/settings`,
+        next,
+      )
+      setStatuses((current) =>
+        current.map((item) =>
+          item.id === data.id ? { ...data, sortOrder: item.sortOrder } : item,
+        ),
+      )
+      setDrafts((current) => ({
+        ...current,
+        [data.id]: draftFromMinutes(data.alertAfterMinutes),
+      }))
+    } catch {
+      setError(`Не удалось сохранить настройки статуса «${status.name}»`)
+      setDrafts((current) => ({
+        ...current,
+        [status.id]: draftFromMinutes(status.alertAfterMinutes),
+      }))
+    } finally {
+      setSavingSettingsId(null)
+    }
+  }
+
+  const handleThresholdBlur = (status: BluesalesStatusOption) => {
+    const nextMinutes = minutesFromDraft(drafts[status.id])
+    if (nextMinutes === status.alertAfterMinutes) {
+      setDrafts((current) => ({
+        ...current,
+        [status.id]: draftFromMinutes(nextMinutes),
+      }))
+      return
+    }
+    void saveSettings(status, {
+      showTimeInStatus: status.showTimeInStatus,
+      alertAfterMinutes: nextMinutes,
+    })
   }
 
   return (
@@ -122,7 +205,9 @@ export default function OrderStatusesPage() {
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Перетащите статус или используйте стрелки. Верхние статусы
-            показываются первыми.
+            показываются первыми. Галочка «Таймер на доске» включает на карточках
+            время в статусе, а порог — красный таймер с огоньком при его
+            превышении.
           </Typography>
         </Box>
         <Button
@@ -189,6 +274,100 @@ export default function OrderStatusesPage() {
                   {index + 1}
                 </Typography>
                 <ListItemText primary={status.name} secondary={`ID: ${status.id}`} />
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ flexShrink: 0 }}
+                  // Строка целиком draggable, поэтому выделение текста в полях
+                  // порога иначе превращалось бы в перетаскивание статуса.
+                  onDragStart={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                >
+                  <Tooltip title="Показывать на карточках доски, сколько заказ находится в этом статусе">
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          size="small"
+                          checked={status.showTimeInStatus}
+                          disabled={savingSettingsId === status.id}
+                          onChange={(event) =>
+                            void saveSettings(status, {
+                              showTimeInStatus: event.target.checked,
+                              alertAfterMinutes: minutesFromDraft(
+                                drafts[status.id],
+                              ),
+                            })
+                          }
+                        />
+                      }
+                      label="Таймер на доске"
+                      sx={{ mr: 0 }}
+                    />
+                  </Tooltip>
+                  <Tooltip title="Через сколько времени в статусе таймер краснеет и появляется огонёк. Пусто — без огонька.">
+                    <Stack direction="row" spacing={0.5}>
+                      <TextField
+                        size="small"
+                        type="number"
+                        placeholder="0"
+                        aria-label={`Порог, часы — статус «${status.name}»`}
+                        value={drafts[status.id]?.hours ?? ''}
+                        disabled={
+                          !status.showTimeInStatus ||
+                          savingSettingsId === status.id
+                        }
+                        onChange={(event) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [status.id]: {
+                              hours: event.target.value,
+                              minutes: current[status.id]?.minutes ?? '',
+                            },
+                          }))
+                        }
+                        onBlur={() => handleThresholdBlur(status)}
+                        inputProps={{ min: 0, max: 8760 }}
+                        InputProps={{
+                          endAdornment: (
+                            <InputAdornment position="end">ч</InputAdornment>
+                          ),
+                        }}
+                        sx={{ width: 92 }}
+                      />
+                      <TextField
+                        size="small"
+                        type="number"
+                        placeholder="0"
+                        aria-label={`Порог, минуты — статус «${status.name}»`}
+                        value={drafts[status.id]?.minutes ?? ''}
+                        disabled={
+                          !status.showTimeInStatus ||
+                          savingSettingsId === status.id
+                        }
+                        onChange={(event) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [status.id]: {
+                              hours: current[status.id]?.hours ?? '',
+                              minutes: event.target.value,
+                            },
+                          }))
+                        }
+                        onBlur={() => handleThresholdBlur(status)}
+                        inputProps={{ min: 0, max: 59 }}
+                        InputProps={{
+                          endAdornment: (
+                            <InputAdornment position="end">мин</InputAdornment>
+                          ),
+                        }}
+                        sx={{ width: 104 }}
+                      />
+                    </Stack>
+                  </Tooltip>
+                </Stack>
                 <Stack direction="row">
                   <Tooltip title="Поднять выше">
                     <span>

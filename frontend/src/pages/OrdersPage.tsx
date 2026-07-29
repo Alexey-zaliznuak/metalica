@@ -39,6 +39,8 @@ import EditNoteIcon from '@mui/icons-material/EditNote'
 import ViewWeekIcon from '@mui/icons-material/ViewWeek'
 import SyncAltIcon from '@mui/icons-material/SyncAlt'
 import PeopleAltIcon from '@mui/icons-material/PeopleAlt'
+import AccessTimeIcon from '@mui/icons-material/AccessTime'
+import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -51,7 +53,12 @@ import type {
   OrdersBoardSettings,
   OrdersColumnResponse,
 } from '../api/types'
-import { formatLastActivity } from '../utils'
+import {
+  formatDateTime,
+  formatDuration,
+  formatDurationShort,
+  formatLastActivity,
+} from '../utils'
 
 const NO_ORDER_STATUS_COLUMN_ID = -1
 
@@ -169,9 +176,16 @@ function normalizeColumns(
   return { selectedIds, columnOrder: [...ordered, ...missing] }
 }
 
+// Настройки таймера статуса колонки: null — таймер для статуса выключен.
+interface StatusTimer {
+  alertAfterMinutes: number | null
+}
+
 interface OrderCardProps {
   order: Order
   isMoving: boolean
+  statusTimer: StatusTimer | null
+  nowTs: number
   onOpen: (id: number) => void
   onDragStart: (id: number, canMove: boolean) => void
   onDragEnd: () => void
@@ -180,11 +194,25 @@ interface OrderCardProps {
 const OrderCard = memo(function OrderCard({
   order,
   isMoving,
+  statusTimer,
+  nowTs,
   onOpen,
   onDragStart,
   onDragEnd,
 }: OrderCardProps) {
   const canMoveCard = order.source === 'BLUESALES'
+  const statusEnteredAt = order.orderStatusEnteredAt
+  const showStatusTimer = statusTimer !== null && statusEnteredAt !== null
+  const minutesInStatus = statusEnteredAt
+    ? Math.max(
+        Math.floor((nowTs - new Date(statusEnteredAt).getTime()) / 60000),
+        0,
+      )
+    : 0
+  const isOverdue =
+    showStatusTimer &&
+    statusTimer.alertAfterMinutes != null &&
+    minutesInStatus >= statusTimer.alertAfterMinutes
   const orderStatusLabel =
     order.orderStatus && order.orderStatus.length > 18
       ? `${order.orderStatus.slice(0, 18)}...`
@@ -292,9 +320,49 @@ const OrderCard = memo(function OrderCard({
           </>
         )}
       </Stack>
-      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.4 }}>
-        {formatLastActivity(order.lastMessageAt)}
-      </Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        spacing={1}
+        sx={{ mt: 0.4 }}
+      >
+        <Typography variant="caption" color="text.secondary">
+          {formatLastActivity(order.lastMessageAt)}
+        </Typography>
+        {showStatusTimer && (
+          <Tooltip
+            title={`В статусе с ${formatDateTime(statusEnteredAt)}${
+              statusTimer.alertAfterMinutes != null
+                ? ` · порог ${formatDuration(statusTimer.alertAfterMinutes * 60)}`
+                : ''
+            }`}
+          >
+            <Stack direction="row" alignItems="center" spacing={0.3}>
+              {isOverdue && (
+                <LocalFireDepartmentIcon
+                  sx={{ fontSize: 15, color: 'error.main' }}
+                />
+              )}
+              <AccessTimeIcon
+                sx={{
+                  fontSize: 14,
+                  color: isOverdue ? 'error.main' : 'text.secondary',
+                }}
+              />
+              <Typography
+                variant="caption"
+                sx={{
+                  color: isOverdue ? 'error.main' : 'text.secondary',
+                  fontWeight: isOverdue ? 700 : 400,
+                }}
+              >
+                {formatDurationShort(statusEnteredAt, nowTs)}
+              </Typography>
+            </Stack>
+          </Tooltip>
+        )}
+      </Stack>
     </Paper>
   )
 })
@@ -304,6 +372,8 @@ interface BoardColumnViewProps {
   state: ColumnState
   isColumnDragging: boolean
   movingOrderId: number | null
+  statusTimer: StatusTimer | null
+  nowTs: number
   onColumnDragStart: (id: number) => void
   onColumnDrop: (id: number) => void
   onColumnDragEnd: () => void
@@ -319,6 +389,8 @@ const BoardColumnView = memo(function BoardColumnView({
   state,
   isColumnDragging,
   movingOrderId,
+  statusTimer,
+  nowTs,
   onColumnDragStart,
   onColumnDrop,
   onColumnDragEnd,
@@ -393,6 +465,8 @@ const BoardColumnView = memo(function BoardColumnView({
             key={order.id}
             order={order}
             isMoving={movingOrderId === order.id}
+            statusTimer={statusTimer}
+            nowTs={nowTs}
             onOpen={onOpenOrder}
             onDragStart={onOrderDragStart}
             onDragEnd={onOrderDragEnd}
@@ -452,6 +526,8 @@ export default function OrdersPage() {
   const [movingOrderId, setMovingOrderId] = useState<number | null>(null)
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false)
   const [initialized, setInitialized] = useState(false)
+  // Общее «сейчас» для таймеров статуса: тикает без перезапроса заказов.
+  const [nowTs, setNowTs] = useState(() => Date.now())
 
   // Актуальное состояние колонок для колбэков (скролл/drop), чтобы не тянуть
   // columnData в зависимости и не пересоздавать хендлеры.
@@ -628,6 +704,26 @@ export default function OrdersPage() {
     orderStatuses.forEach((status) => map.set(status.id, status.name))
     return map
   }, [orderStatuses])
+
+  const statusTimerById = useMemo(() => {
+    const map = new Map<number, StatusTimer>()
+    orderStatuses.forEach((status) => {
+      if (status.showTimeInStatus) {
+        map.set(status.id, { alertAfterMinutes: status.alertAfterMinutes })
+      }
+    })
+    return map
+  }, [orderStatuses])
+
+  const hasStatusTimers = statusTimerById.size > 0
+
+  // Тикаем раз в полминуты: точности «минут» на карточке достаточно.
+  useEffect(() => {
+    if (!hasStatusTimers) return
+    setNowTs(Date.now())
+    const timer = window.setInterval(() => setNowTs(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [hasStatusTimers])
 
   const buildFilterParams = useCallback((): Record<string, unknown> => {
     const params: Record<string, unknown> = {}
@@ -1070,23 +1166,29 @@ export default function OrdersPage() {
           </Box>
         ) : (
           <Stack direction="row" spacing={1.5} alignItems="flex-start">
-            {visibleBoardColumns.map((column) => (
-              <BoardColumnView
-                key={column.id}
-                column={column}
-                state={columnData[column.id] ?? EMPTY_COLUMN_STATE}
-                isColumnDragging={draggingColumnId === column.id}
-                movingOrderId={movingOrderId}
-                onColumnDragStart={handleColumnDragStart}
-                onColumnDrop={handleColumnDrop}
-                onColumnDragEnd={handleColumnDragEnd}
-                onOrderDrop={handleOrderDrop}
-                onOpenOrder={handleOpenOrder}
-                onOrderDragStart={handleOrderDragStart}
-                onOrderDragEnd={handleOrderDragEnd}
-                onNearBottom={handleColumnNearBottom}
-              />
-            ))}
+            {visibleBoardColumns.map((column) => {
+              const statusTimer = statusTimerById.get(column.id) ?? null
+              return (
+                <BoardColumnView
+                  key={column.id}
+                  column={column}
+                  state={columnData[column.id] ?? EMPTY_COLUMN_STATE}
+                  isColumnDragging={draggingColumnId === column.id}
+                  movingOrderId={movingOrderId}
+                  statusTimer={statusTimer}
+                  // Колонки без таймера не перерисовываются на каждый тик.
+                  nowTs={statusTimer ? nowTs : 0}
+                  onColumnDragStart={handleColumnDragStart}
+                  onColumnDrop={handleColumnDrop}
+                  onColumnDragEnd={handleColumnDragEnd}
+                  onOrderDrop={handleOrderDrop}
+                  onOpenOrder={handleOpenOrder}
+                  onOrderDragStart={handleOrderDragStart}
+                  onOrderDragEnd={handleOrderDragEnd}
+                  onNearBottom={handleColumnNearBottom}
+                />
+              )
+            })}
           </Stack>
         )}
       </Paper>
