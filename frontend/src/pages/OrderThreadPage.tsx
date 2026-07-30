@@ -47,6 +47,7 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
 import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined'
 import HistoryIcon from '@mui/icons-material/History'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
@@ -1015,6 +1016,9 @@ export default function OrderThreadPage() {
   const [editRevisionDesignerId, setEditRevisionDesignerId] = useState<number | ''>('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [updatingOrderStatus, setUpdatingOrderStatus] = useState(false)
   const [updatingResponsible, setUpdatingResponsible] = useState(false)
   const [updatingDialogLink, setUpdatingDialogLink] = useState(false)
@@ -1299,6 +1303,27 @@ export default function OrderThreadPage() {
       )
     } finally {
       setSavingEdit(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!order) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await client.delete(`/orders/${orderId}`)
+      navigate('/orders', { replace: true })
+    } catch (err) {
+      const status = (err as AxiosError)?.response?.status
+      setDeleteError(
+        status === 409
+          ? 'Заказ ещё существует в BlueSales — удалите его сначала там, иначе синхронизация создаст его заново'
+          : status === 403
+            ? 'Недостаточно прав для удаления заказа'
+            : 'Не удалось удалить заказ',
+      )
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -2029,6 +2054,20 @@ export default function OrderThreadPage() {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
+          {user?.role === 'ADMIN' && (
+            <Button
+              color="error"
+              startIcon={<DeleteOutlineIcon />}
+              onClick={() => {
+                setDeleteError(null)
+                setConfirmDeleteOpen(true)
+              }}
+              disabled={savingEdit}
+              sx={{ mr: 'auto' }}
+            >
+              Удалить заказ
+            </Button>
+          )}
           <Button onClick={() => setEditOpen(false)} disabled={savingEdit}>
             Отмена
           </Button>
@@ -2041,6 +2080,47 @@ export default function OrderThreadPage() {
             }
           >
             Сохранить
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete order confirmation */}
+      <Dialog
+        open={confirmDeleteOpen}
+        onClose={() => !deleting && setConfirmDeleteOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Удалить заказ {order.orderNumber}?</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2}>
+            {deleteError && <Alert severity="error">{deleteError}</Alert>}
+            <Typography variant="body2">
+              Вместе с заказом безвозвратно удалятся переписка со всеми
+              вложениями, правки ({order.revisionCount}) и история изменений.
+              Отменить это будет нельзя.
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Удалять стоит только заказы, которых уже нет в BlueSales. Если
+              заказ там ещё существует, удаление будет отклонено — синхронизация
+              всё равно создала бы его заново.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
+            Отмена
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void handleDelete()}
+            disabled={deleting}
+            startIcon={
+              deleting ? <CircularProgress size={18} color="inherit" /> : null
+            }
+          >
+            Удалить
           </Button>
         </DialogActions>
       </Dialog>

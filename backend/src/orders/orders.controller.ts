@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   ParseIntPipe,
   Param,
@@ -129,6 +130,13 @@ export class OrdersController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.orders.update(id, dto, user);
+  }
+
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    return this.orders.remove(id, user);
   }
 
   @Patch(':id/order-status')

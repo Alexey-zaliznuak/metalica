@@ -75,4 +75,20 @@ export class StorageService implements OnModuleInit {
   async getUrl(objectKey: string, expirySeconds = 60 * 60 * 24): Promise<string> {
     return this.publicClient.presignedGetObject(this.bucket, objectKey, expirySeconds);
   }
+
+  /**
+   * Удаление объектов из бакета. Ошибки только логируются: осиротевший файл в
+   * хранилище безобиднее, чем упавшая операция, которая уже удалила строки в БД.
+   */
+  async removeObjects(objectKeys: string[]): Promise<void> {
+    const keys = [...new Set(objectKeys.filter((key) => key.length > 0))];
+    if (keys.length === 0) return;
+    try {
+      await this.internalClient.removeObjects(this.bucket, keys);
+    } catch (e) {
+      this.logger.error(
+        `Не удалось удалить ${keys.length} объект(ов) из "${this.bucket}": ${(e as Error).message}`,
+      );
+    }
+  }
 }

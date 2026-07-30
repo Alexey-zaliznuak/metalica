@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -17,12 +18,18 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { AuthUser } from '../auth/current-user.decorator';
 import { OrderEventChange, OrderEventsService } from './order-events.service';
 import { computeSketchTimestampUpdate } from './sketch-status';
+import { BluesalesApiService } from '../bluesales/bluesales-api.service';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private prisma: PrismaService,
     private orderEvents: OrderEventsService,
+    private bsApi: BluesalesApiService,
+    private storage: StorageService,
   ) {}
 
   private readonly userSelect = {
@@ -904,6 +911,87 @@ export class OrdersService {
       throw new NotFoundException('Заказ не найден');
     }
     return this.orderEvents.list(id);
+  }
+
+  /**
+   * Безвозвратное удаление заказа. Каскады схемы уносят BluesalesOrderInfo,
+   * сообщения с вложениями, правки, события и записи outbox-очереди статусов;
+   * лид остаётся, т.к. Order.leadId без каскада.
+   *
+   * Осмысленно только для заказов, которых уже нет в BlueSales: если заказ там
+   * ещё есть, синк создаст его заново (ветка order.create в upsertOrder), поэтому
+   * такое удаление отклоняем — иначе заказ через несколько минут вернётся пустым.
+   */
+  async remove(id: number, actor: AuthUser) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        bluesalesInfo: { select: { bsOrderId: true, bsNumber: true } },
+      },
+    });
+    if (!order) {
+      throw new NotFoundException('Заказ не найден');
+    }
+
+    const info = order.bluesalesInfo;
+    if (info && (await this.existsInBluesales(info.bsOrderId, info.bsNumber))) {
+      throw new ConflictException(
+        'Заказ ещё существует в BlueSales. Удалите его сначала там, ' +
+          'иначе синхронизация создаст его заново.',
+      );
+    }
+
+    // Ключи объектов собираем до удаления: каскад унесёт строки Attachment,
+    // и после этого узнать, какие файлы осиротели, будет уже нельзя.
+    const attachments = await this.prisma.attachment.findMany({
+      where: { message: { orderId: id } },
+      select: { objectKey: true },
+    });
+
+    await this.prisma.order.delete({ where: { id } });
+
+    // Единственный след удаления: сам заказ вместе с логом событий стёрт.
+    this.logger.warn(
+      `Заказ ${order.orderNumber} (id=${id}) удалён пользователем ` +
+        `${actor.username} (id=${actor.id}); вложений: ${attachments.length}`,
+    );
+
+    await this.storage.removeObjects(attachments.map((a) => a.objectKey));
+
+    return {
+      id,
+      orderNumber: order.orderNumber,
+      deletedAttachments: attachments.length,
+    };
+  }
+
+  /**
+   * Вернёт true, если BlueSales всё ещё отдаёт этот заказ, то есть синк
+   * пересоздаст его после удаления. Проверяем и по bsOrderId, и по внутреннему
+   * номеру: заказ-дубль с тем же номером, но другим id, синк тоже подхватит.
+   *
+   * Fail-open: при недоступности BlueSales разрешаем удаление, иначе сбой BS
+   * блокировал бы именно тот сценарий, ради которого удаление и нужно.
+   */
+  private async existsInBluesales(bsOrderId: number, bsNumber: string | null) {
+    try {
+      const byId = await this.bsApi.getOrdersByIds([bsOrderId], 'interactive');
+      if (byId.some((o) => o.id === bsOrderId)) return true;
+
+      const internalNumber = Number(bsNumber);
+      if (!Number.isInteger(internalNumber) || internalNumber <= 0) return false;
+      const byNumber = await this.bsApi.getOrdersByInternalNumbers(
+        [internalNumber],
+        'interactive',
+      );
+      return byNumber.length > 0;
+    } catch (e) {
+      this.logger.warn(
+        `Не удалось проверить заказ bsOrderId=${bsOrderId} в BlueSales перед ` +
+          `удалением, удаляю без проверки: ${(e as Error).message}`,
+      );
+      return false;
+    }
   }
 
   private async withStats(order: OrderForView) {
