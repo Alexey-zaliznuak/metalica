@@ -161,7 +161,6 @@ export interface OrdersBoardSettings {
   selectedRevisionDesigners: string[]
   showNoOrderStatusColumn: boolean
   disableDesignerFilterForSketch: boolean
-  onlyOpenSketch: boolean
 }
 
 export interface OrdersColumnResponse {

@@ -54,7 +54,6 @@ export class OrdersService {
     sketchDesigners?: string[];
     revisionDesigners?: string[];
     ignoreDesigners?: boolean;
-    onlyOpenSketch?: boolean;
     page?: number;
     limit?: number;
   }) {
@@ -91,9 +90,6 @@ export class OrdersService {
     }
     if (params.onboardingManagers?.length) {
       and.push({ onboardingManagerName: { in: params.onboardingManagers } });
-    }
-    if (params.onlyOpenSketch) {
-      and.push({ sketchStartedAt: { not: null }, sketchReadyAt: null });
     }
     // Для колонки «Готовим эскиз» фильтр по художникам может быть отключён
     // из настроек доски — тогда игнорируем оба фильтра художников.
