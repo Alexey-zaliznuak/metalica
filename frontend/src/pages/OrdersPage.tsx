@@ -1114,33 +1114,7 @@ export default function OrdersPage() {
         minHeight: 0,
       }}
     >
-      <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        spacing={2}
-        alignItems={{ xs: 'stretch', sm: 'center' }}
-        justifyContent="space-between"
-        sx={{ mb: 3 }}
-      >
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 800 }}>
-            Заказы
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Колонки построены по статусам заказа. Перетаскивайте карточки между ними.
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          <Button
-            variant="outlined"
-            startIcon={<ViewWeekIcon />}
-            onClick={() => setColumnsDialogOpen(true)}
-          >
-            Колонки статусов
-          </Button>
-        </Stack>
-      </Stack>
-
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+      <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
         <TextField
           placeholder="Поиск по номеру или названию"
           value={search}
@@ -1155,12 +1129,20 @@ export default function OrdersPage() {
             ),
           }}
         />
+        <Button
+          variant="outlined"
+          startIcon={<ViewWeekIcon />}
+          onClick={() => setColumnsDialogOpen(true)}
+          sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          Колонки статусов
+        </Button>
         <Badge color="primary" badgeContent={activePeopleFilterCount} overlap="rectangular">
           <Button
             variant="outlined"
             startIcon={<PeopleAltIcon />}
             onClick={() => setPeopleFilterOpen(true)}
-            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', sm: 'auto' } }}
+            sx={{ whiteSpace: 'nowrap' }}
           >
             Фильтры по людям
           </Button>
