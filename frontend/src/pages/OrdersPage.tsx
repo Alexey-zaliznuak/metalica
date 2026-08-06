@@ -1096,10 +1096,6 @@ export default function OrdersPage() {
     })
   }
 
-  const totalShown = useMemo(
-    () => boardColumns.reduce((sum, c) => sum + (columnData[c.id]?.total ?? 0), 0),
-    [boardColumns, columnData],
-  )
   const visibleBoardColumns = useMemo(() => {
     if (!search.trim()) return boardColumns
 
@@ -1108,11 +1104,6 @@ export default function OrdersPage() {
       return state?.loading || (state?.total ?? 0) > 0
     })
   }, [boardColumns, columnData, search])
-  const anyLoaded = useMemo(
-    () => boardColumns.some((c) => columnData[c.id]?.loaded),
-    [boardColumns, columnData],
-  )
-  const isEmpty = anyLoaded && totalShown === 0
 
   return (
     <Box
@@ -1248,13 +1239,6 @@ export default function OrdersPage() {
           </Stack>
         )}
       </Paper>
-
-      {initialized && (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-          Всего заказов по колонкам: {totalShown}
-          {isEmpty ? ' (ничего не найдено по текущим фильтрам)' : ''}
-        </Typography>
-      )}
 
       <Dialog
         open={peopleFilterOpen}
