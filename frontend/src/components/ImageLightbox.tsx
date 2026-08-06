@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import CloseIcon from '@mui/icons-material/Close'
 import DownloadIcon from '@mui/icons-material/Download'
-import { Box, Button, CircularProgress, IconButton, Tooltip } from '@mui/material'
+import ImageIcon from '@mui/icons-material/Image'
+import { Box, Button, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material'
 
 export interface LightboxImage {
   url: string
@@ -16,6 +17,10 @@ interface ImageLightboxProps {
 interface ImageAttachmentPreviewProps {
   image: LightboxImage
   onOpen: () => void
+}
+
+function isHeicImage(filename: string): boolean {
+  return /\.(heic|heif)$/i.test(filename)
 }
 
 async function downloadImage(image: LightboxImage) {
@@ -36,6 +41,7 @@ async function downloadImage(image: LightboxImage) {
 
 export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreviewProps) {
   const [downloading, setDownloading] = useState(false)
+  const isHeic = isHeicImage(image.filename)
 
   const handleDownload = async () => {
     if (downloading) return
@@ -49,24 +55,45 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
 
   return (
     <Box sx={{ width: 120 }}>
-      <Box
-        component="img"
-        src={image.url}
-        alt={image.filename}
-        loading="lazy"
-        decoding="async"
-        onClick={onOpen}
-        sx={{
-          display: 'block',
-          width: 120,
-          height: 120,
-          objectFit: 'cover',
-          borderRadius: '4px 4px 0 0',
-          cursor: 'pointer',
-          border: '1px solid rgba(0,0,0,0.12)',
-          borderBottom: 0,
-        }}
-      />
+      {isHeic ? (
+        <Box
+          sx={{
+            width: 120,
+            height: 120,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 1,
+            borderRadius: '4px 4px 0 0',
+            border: '1px solid rgba(0,0,0,0.12)',
+            borderBottom: 0,
+            bgcolor: 'action.hover',
+          }}
+        >
+          <ImageIcon color="action" fontSize="large" />
+          <Typography variant="caption">Изображение HEIC</Typography>
+        </Box>
+      ) : (
+        <Box
+          component="img"
+          src={image.url}
+          alt={image.filename}
+          loading="lazy"
+          decoding="async"
+          onClick={onOpen}
+          sx={{
+            display: 'block',
+            width: 120,
+            height: 120,
+            objectFit: 'cover',
+            borderRadius: '4px 4px 0 0',
+            cursor: 'pointer',
+            border: '1px solid rgba(0,0,0,0.12)',
+            borderBottom: 0,
+          }}
+        />
+      )}
       <Button
         fullWidth
         size="small"

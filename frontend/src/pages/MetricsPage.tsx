@@ -17,6 +17,7 @@ import PendingActionsIcon from '@mui/icons-material/PendingActions'
 import ReportProblemIcon from '@mui/icons-material/ReportProblem'
 import type { ReactNode } from 'react'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import type { MetricsOverview } from '../api/types'
 import { BRAND, ACCENT } from '../theme'
 
@@ -97,8 +98,9 @@ export default function MetricsPage() {
         )
         if (!active) return
         setOverview(overviewRes.data)
-      } catch {
-        if (active) setError('Не удалось загрузить метрики')
+      } catch (err) {
+        logApiError('загрузка метрик', err)
+        if (active) setError(describeApiError(err, 'Не удалось загрузить метрики'))
       } finally {
         if (active) setLoading(false)
       }

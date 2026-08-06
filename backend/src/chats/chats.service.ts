@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ChatMemberRole, ChatType, Prisma, Role } from '@prisma/client';
@@ -43,6 +44,8 @@ type ChatMessageWithRelations = Prisma.ChatMessageGetPayload<{
 
 @Injectable()
 export class ChatsService {
+  private readonly logger = new Logger(ChatsService.name);
+
   constructor(
     private prisma: PrismaService,
     private storage: StorageService,
@@ -248,6 +251,12 @@ export class ChatsService {
       });
       return created;
     });
+
+    this.logger.log(
+      `Сообщение #${message.id} в чате ${chatId} от user=${authorId}: ` +
+        `текст=${dto.body?.trim().length ?? 0} симв., ` +
+        `вложений=${dto.attachmentKeys?.length ?? 0}`,
+    );
 
     const serialized = await this.serializeMessage(message);
     this.gateway.emitMessageCreated(chatId, serialized);

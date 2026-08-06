@@ -1,6 +1,16 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Client as MinioClient } from 'minio';
 import { randomUUID } from 'crypto';
+import { createReadStream } from 'fs';
+import { formatBytes } from './upload.config';
+
+interface UploadedFile {
+  originalname: string;
+  mimetype: string;
+  size?: number;
+  path?: string;
+  buffer?: Buffer;
+}
 
 @Injectable()
 export class StorageService implements OnModuleInit {
@@ -55,25 +65,58 @@ export class StorageService implements OnModuleInit {
     }
   }
 
-  async upload(file: { buffer: Buffer; originalname: string; mimetype: string }) {
+  /**
+   * Кладёт файл в бакет. Приходит либо путь к временному файлу (обычная
+   * загрузка через multer diskStorage — тогда содержимое стримится и не
+   * попадает в память целиком), либо готовый буфер.
+   */
+  async upload(file: UploadedFile) {
     const ext = file.originalname.includes('.')
       ? file.originalname.substring(file.originalname.lastIndexOf('.'))
       : '';
     const key = `${new Date().toISOString().slice(0, 10)}/${randomUUID()}${ext}`;
+    const size = file.size ?? file.buffer?.length ?? 0;
+    const startedAt = Date.now();
 
-    await this.internalClient.putObject(
-      this.bucket,
-      key,
-      file.buffer,
-      file.buffer.length,
-      { 'Content-Type': file.mimetype || 'application/octet-stream' },
-    );
+    try {
+      const body = file.path ? createReadStream(file.path) : file.buffer;
+      if (!body) {
+        throw new Error('нет ни path, ни buffer — загружать нечего');
+      }
+
+      await this.internalClient.putObject(this.bucket, key, body, size, {
+        'Content-Type': file.mimetype || 'application/octet-stream',
+      });
+
+      this.logger.log(
+        `Сохранён "${key}" (${formatBytes(size)}) за ${Date.now() - startedAt}ms`,
+      );
+    } catch (e) {
+      this.logger.error(
+        `Не удалось сохранить "${file.originalname}" (${formatBytes(size)}) ` +
+          `в бакет "${this.bucket}" как "${key}": ${(e as Error).message}`,
+        (e as Error).stack,
+      );
+      throw e;
+    }
 
     return { key, filename: file.originalname, mimeType: file.mimetype };
   }
 
   async getUrl(objectKey: string, expirySeconds = 60 * 60 * 24): Promise<string> {
-    return this.publicClient.presignedGetObject(this.bucket, objectKey, expirySeconds);
+    try {
+      return await this.publicClient.presignedGetObject(
+        this.bucket,
+        objectKey,
+        expirySeconds,
+      );
+    } catch (e) {
+      this.logger.error(
+        `Не удалось подписать ссылку на "${objectKey}": ${(e as Error).message}`,
+        (e as Error).stack,
+      );
+      throw e;
+    }
   }
 
   /**

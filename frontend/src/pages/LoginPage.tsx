@@ -14,6 +14,7 @@ import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturi
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { BRAND } from '../theme'
+import { describeApiError, logApiError } from '../api/errors'
 import axios from 'axios'
 
 interface LocationState {
@@ -44,10 +45,11 @@ export default function LoginPage() {
       const state = location.state as LocationState | null
       navigate(state?.from?.pathname ?? '/orders', { replace: true })
     } catch (err) {
+      logApiError('вход', err)
       if (axios.isAxiosError(err) && err.response?.status === 401) {
         setError('Неверный логин или пароль')
       } else {
-        setError('Не удалось войти. Попробуйте позже.')
+        setError(describeApiError(err, 'Не удалось войти'))
       }
     } finally {
       setLoading(false)

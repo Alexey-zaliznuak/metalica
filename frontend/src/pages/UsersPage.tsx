@@ -30,6 +30,7 @@ import Visibility from '@mui/icons-material/Visibility'
 import VisibilityOff from '@mui/icons-material/VisibilityOff'
 import { AxiosError } from 'axios'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import type {
   AdminUser,
   CreateUserPayload,
@@ -80,8 +81,9 @@ export default function UsersPage() {
     try {
       const { data } = await client.get<AdminUser[]>('/users')
       setUsers(data)
-    } catch {
-      setError('Не удалось загрузить пользователей')
+    } catch (err) {
+      logApiError('загрузка пользователей', err)
+      setError(describeApiError(err, 'Не удалось загрузить пользователей'))
     } finally {
       setLoading(false)
     }
@@ -159,13 +161,15 @@ export default function UsersPage() {
       }
       setDialogOpen(false)
     } catch (err) {
+      logApiError(isEditing ? 'сохранение пользователя' : 'создание пользователя', err)
       const status = (err as AxiosError)?.response?.status
       setFormError(
         status === 409
           ? 'Пользователь с таким логином уже существует'
-          : isEditing
-            ? 'Не удалось сохранить изменения'
-            : 'Не удалось создать аккаунт',
+          : describeApiError(
+              err,
+              isEditing ? 'Не удалось сохранить изменения' : 'Не удалось создать аккаунт',
+            ),
       )
     } finally {
       setSaving(false)

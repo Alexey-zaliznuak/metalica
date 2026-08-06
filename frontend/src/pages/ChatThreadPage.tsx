@@ -30,6 +30,13 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import GroupIcon from '@mui/icons-material/Group'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
+import {
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MB,
+  describeApiError,
+  formatBytes,
+  logApiError,
+} from '../api/errors'
 import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
@@ -118,8 +125,9 @@ export default function ChatThreadPage() {
       setNextCursor(messagesRes.data.nextCursor)
       setHasMore(messagesRes.data.hasMore)
       pendingScrollBottomRef.current = true
-    } catch {
-      setError('Не удалось загрузить чат')
+    } catch (err) {
+      logApiError('загрузка чата', err)
+      setError(describeApiError(err, 'Не удалось загрузить чат'))
     } finally {
       setLoading(false)
     }
@@ -150,8 +158,9 @@ export default function ChatThreadPage() {
           c.scrollTop = c.scrollHeight - prevHeight + prevTop
         }
       })
-    } catch {
-      /* подгрузка истории не критична */
+    } catch (err) {
+      // Подгрузка истории не критична для отправки, но молчать о ней нельзя.
+      logApiError('подгрузка истории чата', err)
     } finally {
       setLoadingOlder(false)
       loadingOlderRef.current = false
@@ -217,9 +226,22 @@ export default function ChatThreadPage() {
   const addFiles = useCallback((files: FileList | File[]) => {
     const images = Array.from(files).filter((file) => file.type.startsWith('image/'))
     if (images.length === 0) return
+
+    // Отсекаем слишком большие файлы сразу: иначе пользователь ждёт заливку,
+    // которую сервер всё равно отклонит с 413.
+    const tooBig = images.filter((file) => file.size > MAX_UPLOAD_BYTES)
+    const accepted = images.filter((file) => file.size <= MAX_UPLOAD_BYTES)
+    if (tooBig.length > 0) {
+      setSendError(
+        `Лимит ${MAX_UPLOAD_MB} МБ на файл. Не прикреплено: ` +
+          tooBig.map((file) => `${file.name} (${formatBytes(file.size)})`).join(', '),
+      )
+    }
+    if (accepted.length === 0) return
+
     setPendingImages((prev) => [
       ...prev,
-      ...images.map((file) => ({
+      ...accepted.map((file) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
         file,
         previewUrl: URL.createObjectURL(file),
@@ -252,30 +274,52 @@ export default function ChatThreadPage() {
     setSending(true)
     setSendError(null)
     try {
+      // Фото грузятся по одному, поэтому в ошибке важно указать, какое именно
+      // не доехало: иначе непонятно, что переделывать.
       const attachmentKeys: string[] = []
-      for (const image of pendingImages) {
+      for (const [index, image] of pendingImages.entries()) {
         const form = new FormData()
         form.append('file', image.file)
-        const { data } = await client.post<UploadResponse>('/uploads', form)
-        attachmentKeys.push(data.key)
+        try {
+          const { data } = await client.post<UploadResponse>('/uploads', form)
+          attachmentKeys.push(data.key)
+        } catch (err) {
+          logApiError(`загрузка "${image.file.name}"`, err)
+          const position =
+            pendingImages.length > 1 ? ` ${index + 1} из ${pendingImages.length}` : ''
+          setSendError(
+            describeApiError(
+              err,
+              `Не удалось загрузить фото${position} «${image.file.name}» ` +
+                `(${formatBytes(image.file.size)})`,
+            ),
+          )
+          return
+        }
       }
 
-      const { data: createdMessage } = await client.post<ChatMessage>(`/chats/${chatId}/messages`, {
-        body: body.trim() || undefined,
-        attachmentKeys: attachmentKeys.length ? attachmentKeys : undefined,
-      })
-      setMessages((prev) => {
-        if (prev.some((message) => message.id === createdMessage.id)) {
-          return prev
-        }
-        pendingScrollBottomRef.current = true
-        return [...prev, createdMessage]
-      })
-      pendingImages.forEach((pending) => URL.revokeObjectURL(pending.previewUrl))
-      setPendingImages([])
-      setBody('')
-    } catch {
-      setSendError('Не удалось отправить сообщение')
+      try {
+        const { data: createdMessage } = await client.post<ChatMessage>(
+          `/chats/${chatId}/messages`,
+          {
+            body: body.trim() || undefined,
+            attachmentKeys: attachmentKeys.length ? attachmentKeys : undefined,
+          },
+        )
+        setMessages((prev) => {
+          if (prev.some((message) => message.id === createdMessage.id)) {
+            return prev
+          }
+          pendingScrollBottomRef.current = true
+          return [...prev, createdMessage]
+        })
+        pendingImages.forEach((pending) => URL.revokeObjectURL(pending.previewUrl))
+        setPendingImages([])
+        setBody('')
+      } catch (err) {
+        logApiError('отправка сообщения в чат', err)
+        setSendError(describeApiError(err, 'Не удалось отправить сообщение'))
+      }
     } finally {
       setSending(false)
     }
@@ -308,8 +352,9 @@ export default function ChatThreadPage() {
         prev.map((message) => (message.id === data.id ? data : message)),
       )
       cancelEdit()
-    } catch {
-      setSendError('Не удалось сохранить изменения')
+    } catch (err) {
+      logApiError('редактирование сообщения чата', err)
+      setSendError(describeApiError(err, 'Не удалось сохранить изменения'))
     } finally {
       setEditing(false)
     }
@@ -327,8 +372,9 @@ export default function ChatThreadPage() {
       if (editingMessageId === messageId) {
         cancelEdit()
       }
-    } catch {
-      setSendError('Не удалось удалить текст сообщения')
+    } catch (err) {
+      logApiError('удаление текста сообщения', err)
+      setSendError(describeApiError(err, 'Не удалось удалить текст сообщения'))
     }
   }
 
@@ -339,8 +385,9 @@ export default function ChatThreadPage() {
     try {
       const { data } = await client.get<ChatMemberUser[]>('/chats/users')
       setAvailableUsers(data)
-    } catch {
-      setMembersError('Не удалось загрузить список пользователей')
+    } catch (err) {
+      logApiError('загрузка списка пользователей чата', err)
+      setMembersError(describeApiError(err, 'Не удалось загрузить список пользователей'))
     } finally {
       setMembersLoading(false)
     }
@@ -356,8 +403,9 @@ export default function ChatThreadPage() {
       })
       setChat(data)
       setSelectedUserId('')
-    } catch {
-      setMembersError('Не удалось добавить участника')
+    } catch (err) {
+      logApiError('добавление участника чата', err)
+      setMembersError(describeApiError(err, 'Не удалось добавить участника'))
     } finally {
       setMembersSaving(false)
     }
@@ -371,8 +419,9 @@ export default function ChatThreadPage() {
         `/chats/${chatId}/members/${memberUserId}`,
       )
       setChat(data)
-    } catch {
-      setMembersError('Не удалось удалить участника')
+    } catch (err) {
+      logApiError('удаление участника чата', err)
+      setMembersError(describeApiError(err, 'Не удалось удалить участника'))
     } finally {
       setMembersSaving(false)
     }

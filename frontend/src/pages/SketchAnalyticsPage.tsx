@@ -27,6 +27,7 @@ import BrushIcon from '@mui/icons-material/Brush'
 import PendingActionsIcon from '@mui/icons-material/PendingActions'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import type { SketchAnalytics } from '../api/types'
 import { formatDuration } from '../utils'
 import { BRAND } from '../theme'
@@ -56,8 +57,9 @@ export default function SketchAnalyticsPage() {
         },
       })
       setData(res.data)
-    } catch {
-      setError('Не удалось загрузить аналитику эскизов')
+    } catch (err) {
+      logApiError('загрузка аналитики эскизов', err)
+      setError(describeApiError(err, 'Не удалось загрузить аналитику эскизов'))
     } finally {
       setLoading(false)
     }

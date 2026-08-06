@@ -152,6 +152,10 @@ export interface OrdersBoardSettings {
   selectedOrderStatusIds: number[]
   columnOrder: number[]
   searchQuery: string
+  selectedDeliveryManagers: string[]
+  selectedOnboardingManagers: string[]
+  selectedSketchDesigners: string[]
+  selectedRevisionDesigners: string[]
   showNoOrderStatusColumn: boolean
   disableDesignerFilterForSketch: boolean
 }

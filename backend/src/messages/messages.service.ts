@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -34,6 +35,8 @@ type MessageWithRelations = Prisma.MessageGetPayload<{ include: typeof messageIn
 
 @Injectable()
 export class MessagesService {
+  private readonly logger = new Logger(MessagesService.name);
+
   constructor(
     private prisma: PrismaService,
     private storage: StorageService,
@@ -104,6 +107,7 @@ export class MessagesService {
         },
         include: messageInclude,
       });
+      this.logCreated(message, orderId, authorId, dto);
       return this.serialize(message);
     }
 
@@ -141,6 +145,7 @@ export class MessagesService {
         },
         include: messageInclude,
       });
+      this.logCreated(message, orderId, authorId, dto);
       return this.serialize(message);
     }
 
@@ -155,7 +160,22 @@ export class MessagesService {
       include: messageInclude,
     });
 
+    this.logCreated(message, orderId, authorId, dto);
     return this.serialize(message);
+  }
+
+  private logCreated(
+    message: { id: number },
+    orderId: number,
+    authorId: number,
+    dto: CreateMessageDto,
+  ) {
+    this.logger.log(
+      `Сообщение #${message.id} в заказе ${orderId} от user=${authorId}: ` +
+        `тип=${dto.kind ?? MessageKind.NORMAL}, ` +
+        `текст=${dto.body?.trim().length ?? 0} симв., ` +
+        `вложений=${dto.attachmentKeys?.length ?? 0}`,
+    );
   }
 
   async updateText(

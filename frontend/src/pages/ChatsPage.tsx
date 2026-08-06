@@ -23,6 +23,7 @@ import AddIcon from '@mui/icons-material/Add'
 import ForumIcon from '@mui/icons-material/Forum'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import type { ChatListItem, ChatType, MessageAuthor } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useChatSocket } from '../hooks/useChatSocket'
@@ -61,8 +62,9 @@ export default function ChatsPage() {
       ])
       setChats(chatsRes.data)
       setUsers(usersRes.data)
-    } catch {
-      setError('Не удалось загрузить список чатов')
+    } catch (err) {
+      logApiError('загрузка списка чатов', err)
+      setError(describeApiError(err, 'Не удалось загрузить список чатов'))
     } finally {
       setLoading(false)
     }
@@ -106,8 +108,9 @@ export default function ChatsPage() {
       setType('PUBLIC')
       setMemberIds([])
       navigate(`/chats/${data.id}`)
-    } catch {
-      setCreateError('Не удалось создать чат')
+    } catch (err) {
+      logApiError('создание чата', err)
+      setCreateError(describeApiError(err, 'Не удалось создать чат'))
     } finally {
       setCreating(false)
     }

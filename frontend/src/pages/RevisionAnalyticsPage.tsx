@@ -26,6 +26,7 @@ import TimerIcon from '@mui/icons-material/Timer'
 import EditNoteIcon from '@mui/icons-material/EditNote'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import type { RevisionAnalytics } from '../api/types'
 import { formatDuration } from '../utils'
 import { BRAND } from '../theme'
@@ -55,8 +56,9 @@ export default function RevisionAnalyticsPage() {
         },
       })
       setData(res.data)
-    } catch {
-      setError('Не удалось загрузить аналитику правок')
+    } catch (err) {
+      logApiError('загрузка аналитики правок', err)
+      setError(describeApiError(err, 'Не удалось загрузить аналитику правок'))
     } finally {
       setLoading(false)
     }

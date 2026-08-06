@@ -43,6 +43,7 @@ import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment'
 import { useNavigate } from 'react-router-dom'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import { useAuth } from '../auth/AuthContext'
 import type {
   BluesalesStatusOption,
@@ -80,6 +81,10 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedOrderStatusIds: [],
   columnOrder: [],
   searchQuery: '',
+  selectedDeliveryManagers: [],
+  selectedOnboardingManagers: [],
+  selectedSketchDesigners: [],
+  selectedRevisionDesigners: [],
   showNoOrderStatusColumn: true,
   disableDesignerFilterForSketch: false,
 }
@@ -114,6 +119,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
 function parseBoardSettings(raw: unknown): OrdersBoardSettings {
   if (!isRecord(raw)) return DEFAULT_BOARD_SETTINGS
 
@@ -134,6 +145,10 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     : []
 
   const searchQuery = typeof raw.searchQuery === 'string' ? raw.searchQuery : ''
+  const selectedDeliveryManagers = parseStringArray(raw.selectedDeliveryManagers)
+  const selectedOnboardingManagers = parseStringArray(raw.selectedOnboardingManagers)
+  const selectedSketchDesigners = parseStringArray(raw.selectedSketchDesigners)
+  const selectedRevisionDesigners = parseStringArray(raw.selectedRevisionDesigners)
   const showNoOrderStatusColumn =
     typeof raw.showNoOrderStatusColumn === 'boolean'
       ? raw.showNoOrderStatusColumn
@@ -150,6 +165,10 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     selectedOrderStatusIds,
     columnOrder,
     searchQuery,
+    selectedDeliveryManagers,
+    selectedOnboardingManagers,
+    selectedSketchDesigners,
+    selectedRevisionDesigners,
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
   }
@@ -616,6 +635,10 @@ export default function OrdersPage() {
 
     skipSaveRef.current = true
     setSearch(parsed.searchQuery)
+    setSelectedDeliveryManagers(parsed.selectedDeliveryManagers)
+    setSelectedOnboardingManagers(parsed.selectedOnboardingManagers)
+    setSelectedSketchDesigners(parsed.selectedSketchDesigners)
+    setSelectedRevisionDesigners(parsed.selectedRevisionDesigners)
     setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
     setDisableDesignerFilterForSketch(parsed.disableDesignerFilterForSketch)
     setSelectedOrderStatusIds(normalized.selectedIds)
@@ -635,6 +658,10 @@ export default function OrdersPage() {
         selectedOrderStatusIds,
         columnOrder,
         searchQuery: search,
+        selectedDeliveryManagers,
+        selectedOnboardingManagers,
+        selectedSketchDesigners,
+        selectedRevisionDesigners,
         showNoOrderStatusColumn,
         disableDesignerFilterForSketch,
       } satisfies OrdersBoardSettings,
@@ -642,6 +669,10 @@ export default function OrdersPage() {
   }, [
     initialized,
     search,
+    selectedDeliveryManagers,
+    selectedOnboardingManagers,
+    selectedSketchDesigners,
+    selectedRevisionDesigners,
     selectedOrderStatusIds,
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
@@ -786,12 +817,13 @@ export default function OrdersPage() {
             },
           }
         })
-      } catch {
+      } catch (err) {
+        logApiError('загрузка колонки заказов', err)
         setColumnData((prev) => ({
           ...prev,
           [columnId]: { ...(prev[columnId] ?? EMPTY_COLUMN_STATE), loading: false, loaded: true },
         }))
-        setError('Не удалось загрузить заказы')
+        setError(describeApiError(err, 'Не удалось загрузить заказы'))
       }
     },
     [buildFilterParams, disableDesignerFilterForSketch, orderStatusNameById],
@@ -854,8 +886,10 @@ export default function OrdersPage() {
             ]),
           ),
         )
-      } catch {
-        // Очередь durable; временная ошибка polling не должна менять карточки.
+      } catch (err) {
+        // Очередь durable; временная ошибка polling не должна менять карточки,
+        // но в консоли она должна остаться — иначе синк «молча не едет».
+        logApiError('опрос статуса синхронизации заказов', err)
       }
       if (!cancelled) timer = window.setTimeout(poll, 2000)
     }
@@ -956,7 +990,8 @@ export default function OrdersPage() {
             },
           }
         })
-      } catch {
+      } catch (err) {
+        logApiError('перемещение заказа между статусами', err)
         // Откат: возвращаем заказ в исходную колонку.
         setColumnData((prev) => {
           const next = { ...prev }
@@ -977,7 +1012,10 @@ export default function OrdersPage() {
           return next
         })
         setError(
-          'Не удалось переместить заказ. Для ручных заказов статус в BlueSales не меняется.',
+          describeApiError(
+            err,
+            'Не удалось переместить заказ. Для ручных заказов статус в BlueSales не меняется.',
+          ),
         )
       } finally {
         setMovingOrderId(null)

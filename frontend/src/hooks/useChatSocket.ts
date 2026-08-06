@@ -30,6 +30,13 @@ export function useChatSocket({
       auth: { token },
     })
 
+    // Без этого обработчика сорванный WebSocket молчит: сообщения перестают
+    // приходить в реальном времени, а причина нигде не видна.
+    const onConnectError = (err: Error) => {
+      console.error(`[socket] не удалось подключиться: ${err.message}`)
+    }
+    socket.on('connect_error', onConnectError)
+
     socket.on('chat:message_created', onMessageCreated)
     if (onMessageUpdated) socket.on('chat:message_updated', onMessageUpdated)
     if (onChatUpdated) socket.on('chat:updated', onChatUpdated)
@@ -45,6 +52,7 @@ export function useChatSocket({
       if (chatId != null) {
         socket.emit('chat:leave', { chatId })
       }
+      socket.off('connect_error', onConnectError)
       socket.off('chat:message_created', onMessageCreated)
       if (onMessageUpdated) socket.off('chat:message_updated', onMessageUpdated)
       if (onChatUpdated) socket.off('chat:updated', onChatUpdated)

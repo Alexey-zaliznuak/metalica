@@ -51,6 +51,13 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
+import {
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MB,
+  describeApiError,
+  formatBytes,
+  logApiError,
+} from '../api/errors'
 import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
@@ -79,6 +86,16 @@ import {
   formatTime,
   roleLabel,
 } from '../utils'
+
+const HEIC_EXTENSION_PATTERN = /\.(heic|heif)$/i
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || HEIC_EXTENSION_PATTERN.test(file.name)
+}
+
+function isHeicFile(file: File): boolean {
+  return HEIC_EXTENSION_PATTERN.test(file.name)
+}
 
 interface PendingImage {
   id: string
@@ -1060,8 +1077,9 @@ export default function OrderThreadPage() {
       setOrderStatuses(statusesRes.data)
       setSketchDesignerAssignees(assigneesRes.data.sketchDesigners)
       setRevisionDesignerAssignees(assigneesRes.data.revisionDesigners)
-    } catch {
-      setError('Не удалось загрузить заказ')
+    } catch (err) {
+      logApiError('загрузка заказа', err)
+      setError(describeApiError(err, 'Не удалось загрузить заказ'))
     } finally {
       setLoading(false)
     }
@@ -1071,8 +1089,9 @@ export default function OrderThreadPage() {
     try {
       const { data } = await client.get<OrderEvent[]>(`/orders/${orderId}/events`)
       setEvents(data)
-    } catch {
-      /* лог событий не критичен */
+    } catch (err) {
+      // Лог событий не критичен для работы с заказом, но молчать о сбое нельзя.
+      logApiError('загрузка событий заказа', err)
     }
   }, [orderId])
 
@@ -1101,8 +1120,9 @@ export default function OrderThreadPage() {
           c.scrollTop = c.scrollHeight - prevHeight + prevTop
         }
       })
-    } catch {
-      /* подгрузка истории не критична */
+    } catch (err) {
+      // Подгрузка истории не критична, но сбой должен быть виден в консоли.
+      logApiError('подгрузка истории треда', err)
     } finally {
       setLoadingOlder(false)
       loadingOlderRef.current = false
@@ -1141,8 +1161,9 @@ export default function OrderThreadPage() {
       setOrder(orderRes.data)
       setMetrics(metricsRes.data)
       setEvents(eventsRes.data)
-    } catch {
-      /* non-critical */
+    } catch (err) {
+      // Обновление шапки заказа не критично: сообщение уже отправлено.
+      logApiError('обновление данных заказа', err)
     }
   }, [orderId])
 
@@ -1201,9 +1222,10 @@ export default function OrderThreadPage() {
       })
       setOrder(data)
       void refreshEvents()
-    } catch {
+    } catch (err) {
+      logApiError('изменение статуса заказа', err)
       setOrder(prev)
-      setSendError('Не удалось изменить статус заказа')
+      setSendError(describeApiError(err, 'Не удалось изменить статус заказа'))
     } finally {
       setUpdatingOrderStatus(false)
     }
@@ -1222,8 +1244,9 @@ export default function OrderThreadPage() {
       const { data } = await client.patch<Order>(`/orders/${orderId}`, payload)
       setOrder(data)
       void refreshEvents()
-    } catch {
-      setSendError('Не удалось изменить ответственного')
+    } catch (err) {
+      logApiError('изменение ответственного', err)
+      setSendError(describeApiError(err, 'Не удалось изменить ответственного'))
     } finally {
       setUpdatingResponsible(false)
     }
@@ -1238,8 +1261,9 @@ export default function OrderThreadPage() {
       })
       setOrder(data)
       void refreshEvents()
-    } catch {
-      setSendError('Не удалось сохранить поле "Даилог BS"')
+    } catch (err) {
+      logApiError('сохранение ссылки на диалог BS', err)
+      setSendError(describeApiError(err, 'Не удалось сохранить поле "Даилог BS"'))
     } finally {
       setUpdatingDialogLink(false)
     }
@@ -1255,8 +1279,9 @@ export default function OrderThreadPage() {
       setOrder(data)
       setNoteDraft(data.note ?? '')
       void refreshEvents()
-    } catch {
-      setSendError('Не удалось сохранить примечание')
+    } catch (err) {
+      logApiError('сохранение примечания', err)
+      setSendError(describeApiError(err, 'Не удалось сохранить примечание'))
     } finally {
       setSavingNote(false)
     }
@@ -1295,11 +1320,12 @@ export default function OrderThreadPage() {
       void refreshEvents()
       setEditOpen(false)
     } catch (err) {
+      logApiError('сохранение заказа', err)
       const status = (err as AxiosError)?.response?.status
       setEditError(
         status === 409
           ? 'Заказ с таким номером уже существует'
-          : 'Не удалось сохранить изменения',
+          : describeApiError(err, 'Не удалось сохранить изменения'),
       )
     } finally {
       setSavingEdit(false)
@@ -1314,13 +1340,14 @@ export default function OrderThreadPage() {
       await client.delete(`/orders/${orderId}`)
       navigate('/orders', { replace: true })
     } catch (err) {
+      logApiError('удаление заказа', err)
       const status = (err as AxiosError)?.response?.status
       setDeleteError(
         status === 409
           ? 'Заказ ещё существует в BlueSales — удалите его сначала там, иначе синхронизация создаст его заново'
           : status === 403
             ? 'Недостаточно прав для удаления заказа'
-            : 'Не удалось удалить заказ',
+            : describeApiError(err, 'Не удалось удалить заказ'),
       )
     } finally {
       setDeleting(false)
@@ -1328,11 +1355,24 @@ export default function OrderThreadPage() {
   }
 
   const addFiles = useCallback((files: FileList | File[]) => {
-    const images = Array.from(files).filter((f) => f.type.startsWith('image/'))
+    const images = Array.from(files).filter(isImageFile)
     if (images.length === 0) return
+
+    // Отсекаем слишком большие файлы сразу: иначе пользователь ждёт заливку,
+    // которую сервер всё равно отклонит с 413.
+    const tooBig = images.filter((file) => file.size > MAX_UPLOAD_BYTES)
+    const accepted = images.filter((file) => file.size <= MAX_UPLOAD_BYTES)
+    if (tooBig.length > 0) {
+      setSendError(
+        `Лимит ${MAX_UPLOAD_MB} МБ на файл. Не прикреплено: ` +
+          tooBig.map((file) => `${file.name} (${formatBytes(file.size)})`).join(', '),
+      )
+    }
+    if (accepted.length === 0) return
+
     setPendingImages((prev) => [
       ...prev,
-      ...images.map((file) => ({
+      ...accepted.map((file) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
         file,
         previewUrl: URL.createObjectURL(file),
@@ -1359,7 +1399,7 @@ export default function OrderThreadPage() {
   const handlePaste = (e: ClipboardEvent<HTMLDivElement>) => {
     const items = e.clipboardData?.files
     if (items && items.length > 0) {
-      const imgs = Array.from(items).filter((f) => f.type.startsWith('image/'))
+      const imgs = Array.from(items).filter(isImageFile)
       if (imgs.length > 0) {
         e.preventDefault()
         addFiles(imgs)
@@ -1473,43 +1513,53 @@ export default function OrderThreadPage() {
     setSending(true)
     setSendError(null)
     try {
-      // 1) Upload each image, collecting keys.
+      // 1) Upload each image, collecting keys. Файлы идут по одному, поэтому в
+      // ошибке важно указать, какое именно фото не доехало.
       const attachmentKeys: string[] = []
-      for (const img of pendingImages) {
+      for (const [index, img] of pendingImages.entries()) {
         const form = new FormData()
         form.append('file', img.file)
-        const { data } = await client.post<UploadResponse>('/uploads', form)
-        attachmentKeys.push(data.key)
+        try {
+          const { data } = await client.post<UploadResponse>('/uploads', form)
+          attachmentKeys.push(data.key)
+        } catch (err) {
+          logApiError(`загрузка "${img.file.name}"`, err)
+          const position =
+            pendingImages.length > 1 ? ` ${index + 1} из ${pendingImages.length}` : ''
+          setSendError(
+            describeApiError(
+              err,
+              `Не удалось загрузить фото${position} «${img.file.name}» ` +
+                `(${formatBytes(img.file.size)})`,
+            ),
+          )
+          return
+        }
       }
 
       // 2) Post the message.
-      const { data: created } = await client.post<Message>(
-        `/orders/${orderId}/messages`,
-        {
-          body: body.trim() || undefined,
-          kind,
-          attachmentKeys: attachmentKeys.length ? attachmentKeys : undefined,
-        },
-      )
+      try {
+        const { data: created } = await client.post<Message>(
+          `/orders/${orderId}/messages`,
+          {
+            body: body.trim() || undefined,
+            kind,
+            attachmentKeys: attachmentKeys.length ? attachmentKeys : undefined,
+          },
+        )
 
-      pendingScrollBottomRef.current = true
-      setMessages((prev) => [...prev, created])
-      // Reset composer.
-      pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
-      setPendingImages([])
-      setBody('')
-      setKind('NORMAL')
-      refreshOrderMeta()
-    } catch (err) {
-      const axiosErr = err as AxiosError<{ message?: string | string[] }>
-      const serverMessage = axiosErr?.response?.data?.message
-      setSendError(
-        axiosErr?.response?.status === 400 && serverMessage
-          ? Array.isArray(serverMessage)
-            ? serverMessage.join(', ')
-            : serverMessage
-          : 'Не удалось отправить сообщение',
-      )
+        pendingScrollBottomRef.current = true
+        setMessages((prev) => [...prev, created])
+        // Reset composer.
+        pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
+        setPendingImages([])
+        setBody('')
+        setKind('NORMAL')
+        refreshOrderMeta()
+      } catch (err) {
+        logApiError('отправка сообщения в тред заказа', err)
+        setSendError(describeApiError(err, 'Не удалось отправить сообщение'))
+      }
     } finally {
       setSending(false)
     }
@@ -1796,18 +1846,38 @@ export default function OrderThreadPage() {
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 1, gap: 1 }}>
             {pendingImages.map((img) => (
               <Box key={img.id} sx={{ position: 'relative' }}>
-                <Box
-                  component="img"
-                  src={img.previewUrl}
-                  alt={img.file.name}
-                  sx={{
-                    width: 72,
-                    height: 72,
-                    objectFit: 'cover',
-                    borderRadius: 1,
-                    border: '1px solid rgba(0,0,0,0.12)',
-                  }}
-                />
+                {isHeicFile(img.file) ? (
+                  <Box
+                    sx={{
+                      width: 72,
+                      height: 72,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 0.5,
+                      borderRadius: 1,
+                      border: '1px solid rgba(0,0,0,0.12)',
+                      bgcolor: 'action.hover',
+                    }}
+                  >
+                    <ImageIcon color="action" />
+                    <Typography variant="caption">HEIC</Typography>
+                  </Box>
+                ) : (
+                  <Box
+                    component="img"
+                    src={img.previewUrl}
+                    alt={img.file.name}
+                    sx={{
+                      width: 72,
+                      height: 72,
+                      objectFit: 'cover',
+                      borderRadius: 1,
+                      border: '1px solid rgba(0,0,0,0.12)',
+                    }}
+                  />
+                )}
                 <IconButton
                   size="small"
                   onClick={() => removePending(img.id)}
@@ -1836,7 +1906,7 @@ export default function OrderThreadPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,.heic,.heif"
             multiple
             hidden
             onChange={(e) => {

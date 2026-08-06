@@ -22,6 +22,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import SaveIcon from '@mui/icons-material/Save'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import type { BluesalesStatusOption } from '../api/types'
 
 // Порог «огонька» в UI задаётся часами и минутами, а хранится одним числом минут.
@@ -75,8 +76,9 @@ export default function OrderStatusesPage() {
       setStatuses(data)
       setSavedIds(idsOf(data))
       setDrafts(draftsFromStatuses(data))
-    } catch {
-      setError('Не удалось загрузить статусы заказов')
+    } catch (err) {
+      logApiError('загрузка статусов заказов', err)
+      setError(describeApiError(err, 'Не удалось загрузить статусы заказов'))
     } finally {
       setLoading(false)
     }
@@ -133,9 +135,13 @@ export default function OrderStatusesPage() {
       setSavedIds(idsOf(data))
       setDrafts(draftsFromStatuses(data))
       setSuccess(true)
-    } catch {
+    } catch (err) {
+      logApiError('сохранение порядка статусов', err)
       setError(
-        'Не удалось сохранить порядок. Обновите страницу и попробуйте снова.',
+        describeApiError(
+          err,
+          'Не удалось сохранить порядок. Обновите страницу и попробуйте снова.',
+        ),
       )
     } finally {
       setSaving(false)
@@ -164,8 +170,11 @@ export default function OrderStatusesPage() {
         ...current,
         [data.id]: draftFromMinutes(data.alertAfterMinutes),
       }))
-    } catch {
-      setError(`Не удалось сохранить настройки статуса «${status.name}»`)
+    } catch (err) {
+      logApiError(`сохранение настроек статуса «${status.name}»`, err)
+      setError(
+        describeApiError(err, `Не удалось сохранить настройки статуса «${status.name}»`),
+      )
       setDrafts((current) => ({
         ...current,
         [status.id]: draftFromMinutes(status.alertAfterMinutes),

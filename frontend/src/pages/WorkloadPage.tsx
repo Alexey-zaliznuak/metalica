@@ -19,6 +19,7 @@ import {
   Typography,
 } from '@mui/material'
 import client from '../api/client'
+import { describeApiError, logApiError } from '../api/errors'
 import { useAuth } from '../auth/AuthContext'
 import type { BluesalesStatusOption, WorkloadMetric } from '../api/types'
 
@@ -152,9 +153,10 @@ export default function WorkloadPage() {
         if (!active) return
         setOrderStatuses(data)
         setStatusesLoaded(true)
-      } catch {
+      } catch (err) {
+        logApiError('загрузка статусов заказов', err)
         if (!active) return
-        setError('Не удалось загрузить статусы заказов')
+        setError(describeApiError(err, 'Не удалось загрузить статусы заказов'))
         setStatusesLoaded(true)
       } finally {
         if (active) {
@@ -204,9 +206,10 @@ export default function WorkloadPage() {
         })
         if (!active) return
         setItems(data)
-      } catch {
+      } catch (err) {
+        logApiError('загрузка нагрузки пользователей', err)
         if (active) {
-          setError('Не удалось загрузить нагрузку пользователей')
+          setError(describeApiError(err, 'Не удалось загрузить нагрузку пользователей'))
         }
       } finally {
         if (active) {
