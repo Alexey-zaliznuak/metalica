@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import CloseIcon from '@mui/icons-material/Close'
 import DownloadIcon from '@mui/icons-material/Download'
 import ImageIcon from '@mui/icons-material/Image'
@@ -23,6 +23,58 @@ function isHeicImage(filename: string): boolean {
   return /\.(heic|heif)$/i.test(filename)
 }
 
+function useRenderableImageUrl(image: LightboxImage) {
+  const isHeic = isHeicImage(image.filename)
+  const [previewUrl, setPreviewUrl] = useState(isHeic ? '' : image.url)
+  const [loading, setLoading] = useState(isHeic)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    if (!isHeic) {
+      setPreviewUrl(image.url)
+      setLoading(false)
+      setFailed(false)
+      return
+    }
+
+    let active = true
+    let objectUrl: string | null = null
+    setPreviewUrl('')
+    setLoading(true)
+    setFailed(false)
+
+    void (async () => {
+      try {
+        const response = await fetch(image.url)
+        if (!response.ok) throw new Error(`Не удалось загрузить HEIC: ${response.status}`)
+
+        const { default: heic2any } = await import('heic2any')
+        const converted = await heic2any({
+          blob: await response.blob(),
+          toType: 'image/jpeg',
+          quality: 0.9,
+        })
+        const previewBlob = Array.isArray(converted) ? converted[0] : converted
+        objectUrl = URL.createObjectURL(previewBlob)
+
+        if (active) setPreviewUrl(objectUrl)
+        else URL.revokeObjectURL(objectUrl)
+      } catch {
+        if (active) setFailed(true)
+      } finally {
+        if (active) setLoading(false)
+      }
+    })()
+
+    return () => {
+      active = false
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [image.url, isHeic])
+
+  return { previewUrl, loading, failed }
+}
+
 async function downloadImage(image: LightboxImage) {
   const response = await fetch(image.url)
   if (!response.ok) {
@@ -41,7 +93,7 @@ async function downloadImage(image: LightboxImage) {
 
 export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreviewProps) {
   const [downloading, setDownloading] = useState(false)
-  const isHeic = isHeicImage(image.filename)
+  const { previewUrl, loading, failed } = useRenderableImageUrl(image)
 
   const handleDownload = async () => {
     if (downloading) return
@@ -55,7 +107,7 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
 
   return (
     <Box sx={{ width: 120 }}>
-      {isHeic ? (
+      {loading || failed ? (
         <Box
           sx={{
             width: 120,
@@ -71,13 +123,15 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
             bgcolor: 'action.hover',
           }}
         >
-          <ImageIcon color="action" fontSize="large" />
-          <Typography variant="caption">Изображение HEIC</Typography>
+          {loading ? <CircularProgress size={28} /> : <ImageIcon color="action" fontSize="large" />}
+          <Typography variant="caption">
+            {loading ? 'Обработка HEIC…' : 'Не удалось показать HEIC'}
+          </Typography>
         </Box>
       ) : (
         <Box
           component="img"
-          src={image.url}
+          src={previewUrl}
           alt={image.filename}
           loading="lazy"
           decoding="async"
@@ -120,6 +174,7 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
 
 export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
   const [downloading, setDownloading] = useState(false)
+  const { previewUrl, loading, failed } = useRenderableImageUrl(image)
 
   const handleDownload = async () => {
     if (downloading) return
@@ -184,18 +239,24 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
         </Tooltip>
       </Box>
 
-      <Box
-        component="img"
-        src={image.url}
-        alt={image.filename}
-        onClick={(event) => event.stopPropagation()}
-        sx={{
-          maxWidth: '95%',
-          maxHeight: '95%',
-          objectFit: 'contain',
-          borderRadius: 1,
-        }}
-      />
+      {loading ? (
+        <CircularProgress color="inherit" />
+      ) : failed ? (
+        <Typography color="white">Не удалось отобразить HEIC-файл</Typography>
+      ) : (
+        <Box
+          component="img"
+          src={previewUrl}
+          alt={image.filename}
+          onClick={(event) => event.stopPropagation()}
+          sx={{
+            maxWidth: '95%',
+            maxHeight: '95%',
+            objectFit: 'contain',
+            borderRadius: 1,
+          }}
+        />
+      )}
     </Box>
   )
 }
