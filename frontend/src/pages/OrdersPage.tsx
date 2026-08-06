@@ -74,8 +74,6 @@ function isSketchStatusName(name: string | undefined): boolean {
 const PAGE_SIZE = 50
 // Сколько карточек добавляем в DOM за один шаг прокрутки (клиентское окно).
 const RENDER_STEP = 10
-// Высота области прокрутки колонки — чтобы на экране было видно ~4 карточки.
-const COLUMN_MAX_HEIGHT = 520
 
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedOrderStatusIds: [],
@@ -446,6 +444,10 @@ const BoardColumnView = memo(function BoardColumnView({
       sx={{
         width: 320,
         flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
         borderRadius: 1.5,
         borderColor: isColumnDragging ? 'primary.main' : 'divider',
         background: '#fff',
@@ -455,7 +457,7 @@ const BoardColumnView = memo(function BoardColumnView({
         direction="row"
         alignItems="center"
         justifyContent="space-between"
-        sx={{ px: 1.5, py: 1.2 }}
+        sx={{ px: 1.5, py: 1.2, flexShrink: 0 }}
       >
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
           {column.name}
@@ -465,7 +467,7 @@ const BoardColumnView = memo(function BoardColumnView({
       <Divider />
       <Stack
         spacing={1}
-        sx={{ p: 1, maxHeight: COLUMN_MAX_HEIGHT, overflowY: 'auto' }}
+        sx={{ p: 1, flex: 1, minHeight: 0, overflowY: 'auto' }}
         onScroll={handleScroll}
         onDragOver={(event: DragEvent<HTMLDivElement>) => event.preventDefault()}
         onDrop={() => onOrderDrop(column.id)}
@@ -1113,7 +1115,14 @@ export default function OrdersPage() {
   const isEmpty = anyLoaded && totalShown === 0
 
   return (
-    <Box>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        flex: 1,
+        minHeight: 0,
+      }}
+    >
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={2}
@@ -1184,8 +1193,12 @@ export default function OrdersPage() {
         sx={{
           p: 1.5,
           borderRadius: 1.5,
-          minHeight: 440,
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
           overflowX: 'auto',
+          overflowY: 'hidden',
           bgcolor: '#f7f9fc',
         }}
       >
@@ -1203,7 +1216,12 @@ export default function OrdersPage() {
             </Button>
           </Box>
         ) : (
-          <Stack direction="row" spacing={1.5} alignItems="flex-start">
+          <Stack
+            direction="row"
+            spacing={1.5}
+            alignItems="stretch"
+            sx={{ flex: 1, minHeight: 0 }}
+          >
             {visibleBoardColumns.map((column) => {
               const statusTimer = statusTimerById.get(column.id) ?? null
               return (

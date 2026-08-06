@@ -136,7 +136,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   })
 
   return (
-    <Box sx={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
+    <Box
+      sx={{
+        minHeight: '100dvh',
+        height: isOrdersBoardPage ? '100dvh' : 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: isOrdersBoardPage ? 'hidden' : 'visible',
+      }}
+    >
       <AppBar position="sticky" color="primary">
         <Toolbar sx={{ gap: 1 }}>
           <IconButton
@@ -355,6 +363,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           flexGrow: 1,
           display: 'flex',
           flexDirection: 'column',
+          minHeight: 0,
+          overflow: isOrdersBoardPage ? 'hidden' : 'visible',
           py: { xs: 2, sm: 3 },
           px: isWidePage ? { xs: 2, sm: 3 } : undefined,
         }}
