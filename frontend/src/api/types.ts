@@ -134,6 +134,8 @@ export interface Order {
   openRevisions: number
   lastMessageAt: string | null
   createdAt: string
+  sketchStartedAt: string | null
+  sketchReadyAt: string | null
   deliveryManagerName?: string | null
   onboardingManagerName?: string | null
   sketchDesigner?: OrderAssignee | null
@@ -158,6 +160,7 @@ export interface OrdersBoardSettings {
   selectedRevisionDesigners: string[]
   showNoOrderStatusColumn: boolean
   disableDesignerFilterForSketch: boolean
+  onlyOpenSketch: boolean
 }
 
 export interface OrdersColumnResponse {

@@ -860,6 +860,8 @@ function OrderArticlesPanel({
   articles,
   tags,
   noteDraft,
+  sketchStartedAt,
+  sketchReadyAt,
   savingNote,
   onNoteDraftChange,
   onSaveNote,
@@ -868,6 +870,8 @@ function OrderArticlesPanel({
   articles: OrderArticle[]
   tags: BluesalesTag[]
   noteDraft: string
+  sketchStartedAt: string | null
+  sketchReadyAt: string | null
   savingNote: boolean
   onNoteDraftChange: (value: string) => void
   onSaveNote: () => void
@@ -993,6 +997,14 @@ function OrderArticlesPanel({
       >
         {savingNote ? 'Сохранение…' : 'Сохранить примечание'}
       </Button>
+      <Stack spacing={0.5} sx={{ mt: 2 }}>
+        <Typography variant="caption" color="text.secondary">
+          sketchStartedAt: {formatDateTime(sketchStartedAt)}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          sketchReadyAt: {formatDateTime(sketchReadyAt)}
+        </Typography>
+      </Stack>
     </Paper>
   )
 }
@@ -1986,6 +1998,8 @@ export default function OrderThreadPage() {
         articles={order.articles ?? []}
         tags={order.lead?.tags ?? []}
         noteDraft={noteDraft}
+        sketchStartedAt={order.sketchStartedAt}
+        sketchReadyAt={order.sketchReadyAt}
         savingNote={savingNote}
         onNoteDraftChange={setNoteDraft}
         onSaveNote={() => {
@@ -2027,6 +2041,8 @@ export default function OrderThreadPage() {
           articles={order.articles ?? []}
           tags={order.lead?.tags ?? []}
           noteDraft={noteDraft}
+          sketchStartedAt={order.sketchStartedAt}
+          sketchReadyAt={order.sketchReadyAt}
           savingNote={savingNote}
           onNoteDraftChange={setNoteDraft}
           onSaveNote={() => {

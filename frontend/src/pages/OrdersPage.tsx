@@ -85,6 +85,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedRevisionDesigners: [],
   showNoOrderStatusColumn: true,
   disableDesignerFilterForSketch: false,
+  onlyOpenSketch: false,
 }
 
 interface BoardColumn {
@@ -158,6 +159,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     typeof raw.disableDesignerFilterForSketch === 'boolean'
       ? raw.disableDesignerFilterForSketch
       : false
+  const onlyOpenSketch = raw.onlyOpenSketch === true
 
   return {
     selectedOrderStatusIds,
@@ -169,6 +171,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     selectedRevisionDesigners,
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
+    onlyOpenSketch,
   }
 }
 
@@ -527,6 +530,7 @@ export default function OrdersPage() {
   const [selectedSketchDesigners, setSelectedSketchDesigners] = useState<string[]>([])
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [disableDesignerFilterForSketch, setDisableDesignerFilterForSketch] = useState(false)
+  const [onlyOpenSketch, setOnlyOpenSketch] = useState(false)
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [sketchDesigners, setSketchDesigners] = useState<
     OrderAssigneesResponse['sketchDesigners']
@@ -643,6 +647,7 @@ export default function OrdersPage() {
     setSelectedRevisionDesigners(parsed.selectedRevisionDesigners)
     setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
     setDisableDesignerFilterForSketch(parsed.disableDesignerFilterForSketch)
+    setOnlyOpenSketch(parsed.onlyOpenSketch)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -666,6 +671,7 @@ export default function OrdersPage() {
         selectedRevisionDesigners,
         showNoOrderStatusColumn,
         disableDesignerFilterForSketch,
+        onlyOpenSketch,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -678,6 +684,7 @@ export default function OrdersPage() {
     selectedOrderStatusIds,
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
+    onlyOpenSketch,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -768,6 +775,7 @@ export default function OrdersPage() {
     if (selectedSketchDesigners.length) params.sketchDesigners = selectedSketchDesigners
     if (selectedRevisionDesigners.length)
       params.revisionDesigners = selectedRevisionDesigners
+    if (onlyOpenSketch) params.onlyOpenSketch = true
     return params
   }, [
     search,
@@ -775,6 +783,7 @@ export default function OrdersPage() {
     selectedOnboardingManagers,
     selectedSketchDesigners,
     selectedRevisionDesigners,
+    onlyOpenSketch,
   ])
 
   const fetchColumnPage = useCallback(
@@ -1147,6 +1156,17 @@ export default function OrdersPage() {
             Фильтры по людям
           </Button>
         </Badge>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={onlyOpenSketch}
+              onChange={(event) => setOnlyOpenSketch(event.target.checked)}
+              size="small"
+            />
+          }
+          label="Только с открытым эскизом"
+          sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        />
       </Stack>
 
       {error && (
