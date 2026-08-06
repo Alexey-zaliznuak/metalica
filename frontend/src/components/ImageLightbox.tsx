@@ -48,13 +48,12 @@ function useRenderableImageUrl(image: LightboxImage) {
         const response = await fetch(image.url)
         if (!response.ok) throw new Error(`Не удалось загрузить HEIC: ${response.status}`)
 
-        const { default: heic2any } = await import('heic2any')
-        const converted = await heic2any({
+        const { heicTo } = await import('heic-to')
+        const previewBlob = await heicTo({
           blob: await response.blob(),
-          toType: 'image/jpeg',
+          type: 'image/jpeg',
           quality: 0.9,
         })
-        const previewBlob = Array.isArray(converted) ? converted[0] : converted
         objectUrl = URL.createObjectURL(previewBlob)
 
         if (active) setPreviewUrl(objectUrl)
