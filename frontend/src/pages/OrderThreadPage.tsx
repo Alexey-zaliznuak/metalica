@@ -1207,6 +1207,7 @@ export default function OrderThreadPage() {
         sortOrder: Number.MAX_SAFE_INTEGER,
         showTimeInStatus: false,
         alertAfterMinutes: null,
+        closesSketch: false,
       })
     }
     return options

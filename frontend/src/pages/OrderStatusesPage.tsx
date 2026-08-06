@@ -152,7 +152,11 @@ export default function OrderStatusesPage() {
   // поэтому локальный sortOrder оставляем прежним.
   const saveSettings = async (
     status: BluesalesStatusOption,
-    next: { showTimeInStatus: boolean; alertAfterMinutes: number | null },
+    next: {
+      showTimeInStatus: boolean
+      alertAfterMinutes: number | null
+      closesSketch: boolean
+    },
   ) => {
     setSavingSettingsId(status.id)
     setError(null)
@@ -196,6 +200,7 @@ export default function OrderStatusesPage() {
     void saveSettings(status, {
       showTimeInStatus: status.showTimeInStatus,
       alertAfterMinutes: nextMinutes,
+      closesSketch: status.closesSketch,
     })
   }
 
@@ -216,7 +221,8 @@ export default function OrderStatusesPage() {
             Перетащите статус или используйте стрелки. Верхние статусы
             показываются первыми. Галочка «Таймер на доске» включает на карточках
             время в статусе, а порог — красный таймер с огоньком при его
-            превышении.
+            превышении. «Закрывать эскиз» ставит обе метки эскиза при входе заказа
+            в статус.
           </Typography>
         </Box>
         <Button
@@ -295,6 +301,26 @@ export default function OrderStatusesPage() {
                     event.stopPropagation()
                   }}
                 >
+                  <Tooltip title="При входе заказа в этот статус отметить эскиз начатым и готовым">
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          size="small"
+                          checked={status.closesSketch}
+                          disabled={savingSettingsId === status.id}
+                          onChange={(event) =>
+                            void saveSettings(status, {
+                              showTimeInStatus: status.showTimeInStatus,
+                              alertAfterMinutes: minutesFromDraft(drafts[status.id]),
+                              closesSketch: event.target.checked,
+                            })
+                          }
+                        />
+                      }
+                      label="Закрывать эскиз"
+                      sx={{ mr: 0 }}
+                    />
+                  </Tooltip>
                   <Tooltip title="Показывать на карточках доски, сколько заказ находится в этом статусе">
                     <FormControlLabel
                       control={
@@ -308,6 +334,7 @@ export default function OrderStatusesPage() {
                               alertAfterMinutes: minutesFromDraft(
                                 drafts[status.id],
                               ),
+                              closesSketch: status.closesSketch,
                             })
                           }
                         />

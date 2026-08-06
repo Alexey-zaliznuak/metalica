@@ -61,6 +61,7 @@ export interface BluesalesStatusOption {
   sortOrder: number
   showTimeInStatus: boolean
   alertAfterMinutes: number | null
+  closesSketch: boolean
 }
 
 export interface BluesalesTag {
