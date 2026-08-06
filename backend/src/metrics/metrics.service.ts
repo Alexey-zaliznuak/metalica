@@ -314,9 +314,9 @@ export class MetricsService {
     return Math.min(Math.max(Math.trunc(value), 0), 24);
   }
 
-  async workload(orderStatusIdsRaw?: string) {
+  async workload(orderStatusIdsRaw?: string, onlyOpenSketch = false) {
     const orderStatusIds = this.parseStatusIds(orderStatusIdsRaw);
-    const cacheKey = orderStatusIds.join(',');
+    const cacheKey = `${orderStatusIds.join(',')}|openSketch:${onlyOpenSketch}`;
     const now = Date.now();
     const cached = this.workloadCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -324,7 +324,13 @@ export class MetricsService {
     }
 
     const statusWhere = this.buildOrderStatusWhere(orderStatusIds);
-    const sketchWhere = { sketchDesignerId: { not: null }, ...statusWhere };
+    const sketchWhere = {
+      sketchDesignerId: { not: null },
+      ...statusWhere,
+      ...(onlyOpenSketch
+        ? { sketchStartedAt: { not: null }, sketchReadyAt: null }
+        : {}),
+    };
     const revisionWhere = { revisionDesignerId: { not: null }, ...statusWhere };
     // Менеджеры теперь приходят из BlueSales как имена — группируем по ним.
     const deliveryWhere = { deliveryManagerName: { not: null }, ...statusWhere };

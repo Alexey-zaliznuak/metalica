@@ -3,7 +3,9 @@ import {
   Alert,
   Autocomplete,
   Box,
+  Checkbox,
   CircularProgress,
+  FormControlLabel,
   Paper,
   Stack,
   Table,
@@ -81,7 +83,9 @@ interface WorkloadTabSettings {
   selectedOrderStatusIds: number[]
 }
 
-type WorkloadPageSettings = Record<WorkloadTab, WorkloadTabSettings>
+type WorkloadPageSettings = Record<WorkloadTab, WorkloadTabSettings> & {
+  onlyOpenSketch: boolean
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -133,6 +137,7 @@ export default function WorkloadPage() {
   )
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [onlyOpenSketch, setOnlyOpenSketch] = useState(false)
   const [initialized, setInitialized] = useState(false)
 
   // See OrdersPage for the rationale: once the user edits locally we stop
@@ -174,8 +179,11 @@ export default function WorkloadPage() {
     if (dirtyRef.current) return
 
     const settings = user?.frontendSettings
+    const workloadSettings = isRecord(settings) && isRecord(settings.workloadPage)
+      ? settings.workloadPage
+      : undefined
     const parsed = parseWorkloadSettings(
-      isRecord(settings) ? settings.workloadPage : undefined,
+      workloadSettings,
     )
     const allStatusIds = orderStatuses.map((status) => status.id)
 
@@ -188,6 +196,7 @@ export default function WorkloadPage() {
 
     skipSaveRef.current = true
     setStatusSelections(normalized)
+    setOnlyOpenSketch(workloadSettings?.onlyOpenSketch === true)
     setInitialized(true)
   }, [statusesLoaded, orderStatuses, user?.frontendSettings])
 
@@ -202,6 +211,7 @@ export default function WorkloadPage() {
           params: {
             orderStatusIds:
               activeSelection.length > 0 ? activeSelection.join(',') : undefined,
+            onlyOpenSketch: tab === 'sketch' && onlyOpenSketch ? true : undefined,
           },
         })
         if (!active) return
@@ -220,7 +230,7 @@ export default function WorkloadPage() {
     return () => {
       active = false
     }
-  }, [initialized, activeSelection])
+  }, [initialized, activeSelection, tab, onlyOpenSketch])
 
   useEffect(() => {
     if (!initialized) return
@@ -235,9 +245,10 @@ export default function WorkloadPage() {
         revision: { selectedOrderStatusIds: statusSelections.revision },
         delivery: { selectedOrderStatusIds: statusSelections.delivery },
         onboarding: { selectedOrderStatusIds: statusSelections.onboarding },
+        onlyOpenSketch,
       } satisfies WorkloadPageSettings,
     })
-  }, [initialized, statusSelections, updateFrontendSettings])
+  }, [initialized, statusSelections, onlyOpenSketch, updateFrontendSettings])
 
   const config = TAB_CONFIG[tab]
 
@@ -344,6 +355,18 @@ export default function WorkloadPage() {
         <Typography variant="body2" color="text.secondary">
           Показано: {visibleItems.length}
         </Typography>
+        {tab === 'sketch' && (
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={onlyOpenSketch}
+                onChange={(event) => setOnlyOpenSketch(event.target.checked)}
+                size="small"
+              />
+            }
+            label="Только с открытым эскизом"
+          />
+        )}
         {loading && initialized && (
           <Stack direction="row" alignItems="center" spacing={1}>
             <CircularProgress size={16} />

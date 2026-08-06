@@ -24,8 +24,11 @@ export class MetricsController {
 
   @Get('workload')
   @RequireScopes(UserScope.WORKLOAD_VIEW)
-  workload(@Query('orderStatusIds') orderStatusIdsRaw?: string) {
-    return this.metrics.workload(orderStatusIdsRaw);
+  workload(
+    @Query('orderStatusIds') orderStatusIdsRaw?: string,
+    @Query('onlyOpenSketch') onlyOpenSketchRaw?: string,
+  ) {
+    return this.metrics.workload(orderStatusIdsRaw, onlyOpenSketchRaw === 'true');
   }
 
   @Get('revisions/analytics')
