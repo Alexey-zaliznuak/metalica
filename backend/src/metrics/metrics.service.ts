@@ -315,12 +315,22 @@ export class MetricsService {
   }
 
   async workload(orderStatusIdsRaw?: string, onlyOpenSketch = false) {
+    const noStatusesSelected = orderStatusIdsRaw === 'none';
     const orderStatusIds = this.parseStatusIds(orderStatusIdsRaw);
-    const cacheKey = `${orderStatusIds.join(',')}|openSketch:${onlyOpenSketch}`;
+    const cacheKey = `${
+      noStatusesSelected ? 'none' : orderStatusIds.join(',')
+    }|openSketch:${onlyOpenSketch}`;
     const now = Date.now();
     const cached = this.workloadCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       return cached.data;
+    }
+    if (noStatusesSelected) {
+      this.workloadCache.set(cacheKey, {
+        data: [],
+        expiresAt: now + this.workloadCacheTtlMs,
+      });
+      return [];
     }
 
     const statusWhere = this.buildOrderStatusWhere(orderStatusIds);

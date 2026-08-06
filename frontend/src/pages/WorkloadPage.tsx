@@ -3,8 +3,10 @@ import {
   Alert,
   Autocomplete,
   Box,
+  Button,
   Checkbox,
   CircularProgress,
+  Divider,
   FormControlLabel,
   Paper,
   Stack,
@@ -71,6 +73,7 @@ const TAB_CONFIG: Record<
 }
 
 type StatusSelections = Record<WorkloadTab, number[]>
+type ParsedStatusSelections = Record<WorkloadTab, number[] | null>
 
 const DEFAULT_STATUS_SELECTIONS: StatusSelections = {
   sketch: [],
@@ -91,19 +94,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function parseStatusIds(raw: unknown): number[] {
-  if (!Array.isArray(raw)) return []
+function parseStatusIds(raw: unknown): number[] | null {
+  if (!Array.isArray(raw)) return null
   return raw
     .map((value) => Number(value))
     .filter((value, index, arr) => Number.isInteger(value) && value >= 0 && arr.indexOf(value) === index)
 }
 
-function parseWorkloadSettings(raw: unknown): StatusSelections {
-  const result: StatusSelections = {
-    sketch: [],
-    revision: [],
-    delivery: [],
-    onboarding: [],
+function parseWorkloadSettings(raw: unknown): ParsedStatusSelections {
+  const result: ParsedStatusSelections = {
+    sketch: null,
+    revision: null,
+    delivery: null,
+    onboarding: null,
   }
   if (!isRecord(raw)) return result
   for (const tab of WORKLOAD_TABS) {
@@ -115,12 +118,13 @@ function parseWorkloadSettings(raw: unknown): StatusSelections {
   return result
 }
 
-function normalizeStatusSelection(availableStatusIds: number[], selectedRaw: number[]) {
+function normalizeStatusSelection(availableStatusIds: number[], selectedRaw: number[] | null) {
+  if (selectedRaw === null) return availableStatusIds
   const available = new Set(availableStatusIds)
   const normalized = selectedRaw.filter(
     (id, index, arr) => available.has(id) && arr.indexOf(id) === index,
   )
-  return normalized.length > 0 ? normalized : availableStatusIds
+  return normalized
 }
 
 export default function WorkloadPage() {
@@ -210,7 +214,7 @@ export default function WorkloadPage() {
         const { data } = await client.get<WorkloadMetric[]>('/metrics/workload', {
           params: {
             orderStatusIds:
-              activeSelection.length > 0 ? activeSelection.join(',') : undefined,
+              activeSelection.length > 0 ? activeSelection.join(',') : 'none',
             onlyOpenSketch: tab === 'sketch' && onlyOpenSketch ? true : undefined,
           },
         })
@@ -333,13 +337,45 @@ export default function WorkloadPage() {
           getOptionLabel={(option) => option.name}
           isOptionEqualToValue={(option, value) => option.id === value.id}
           onChange={(_, values) => {
-            if (values.length === 0) return
             const ids = values.map((status) => status.id)
             setStatusSelections((prev) => ({ ...prev, [tab]: ids }))
           }}
           size="small"
           sx={{ minWidth: { xs: '100%', sm: 360 } }}
           renderInput={(params) => <TextField {...params} placeholder="Выбрать статусы" />}
+          PaperComponent={({ children, ...paperProps }) => (
+            <Paper {...paperProps}>
+              <Stack direction="row" spacing={1} sx={{ p: 1 }}>
+                <Button
+                  size="small"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() =>
+                    setStatusSelections((prev) => ({
+                      ...prev,
+                      [tab]: orderStatuses.map((status) => status.id),
+                    }))
+                  }
+                >
+                  Выбрать все
+                </Button>
+                <Button
+                  size="small"
+                  color="inherit"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() =>
+                    setStatusSelections((prev) => ({
+                      ...prev,
+                      [tab]: [],
+                    }))
+                  }
+                >
+                  Убрать все
+                </Button>
+              </Stack>
+              <Divider />
+              {children}
+            </Paper>
+          )}
           renderTags={() => null}
           popupIcon={null}
           noOptionsText="Нет статусов"
