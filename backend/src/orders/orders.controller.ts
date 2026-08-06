@@ -92,6 +92,7 @@ export class OrdersController {
     return this.orders.updateOrderStatusSettings(id, {
       showTimeInStatus: dto.showTimeInStatus,
       alertAfterMinutes: dto.alertAfterMinutes ?? null,
+      closesSketch: dto.closesSketch,
     });
   }
 

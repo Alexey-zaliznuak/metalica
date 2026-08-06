@@ -261,6 +261,8 @@ model BluesalesOrderStatus {
   // Порог в минутах: после его превышения таймер на карточке краснеет
   // и рядом появляется «огонёк». null = порога нет.
   alertAfterMinutes Int?
+  // При входе заказа в этот статус помечать эскиз начатым и готовым.
+  closesSketch      Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

@@ -658,7 +658,11 @@ export class OrdersService {
    */
   async updateOrderStatusSettings(
     id: number,
-    settings: { showTimeInStatus: boolean; alertAfterMinutes: number | null },
+    settings: {
+      showTimeInStatus: boolean;
+      alertAfterMinutes: number | null;
+      closesSketch?: boolean;
+    },
   ) {
     const status = await this.prisma.bluesalesOrderStatus.findUnique({
       where: { bsOrderStatusId: id },
@@ -673,6 +677,9 @@ export class OrdersService {
       data: {
         showTimeInStatus: settings.showTimeInStatus,
         alertAfterMinutes: settings.alertAfterMinutes,
+        ...(settings.closesSketch !== undefined
+          ? { closesSketch: settings.closesSketch }
+          : {}),
       },
     });
 
@@ -686,6 +693,7 @@ export class OrdersService {
       sortOrder: status.sortOrder,
       showTimeInStatus: status.showTimeInStatus,
       alertAfterMinutes: status.alertAfterMinutes,
+      closesSketch: status.closesSketch,
     };
   }
 
@@ -736,7 +744,7 @@ export class OrdersService {
       }),
       this.prisma.bluesalesOrderStatus.findUnique({
         where: { bsOrderStatusId: statusId },
-        select: { name: true },
+        select: { name: true, closesSketch: true },
       }),
     ]);
 
@@ -778,7 +786,11 @@ export class OrdersService {
       const prevStatusName = current.bluesalesInfo.orderStatus;
       if (prevStatusId === statusId) return;
 
-      const sketchUpdate = computeSketchTimestampUpdate(targetStatus.name, current);
+      const sketchUpdate = computeSketchTimestampUpdate(
+        targetStatus.name,
+        current,
+        targetStatus.closesSketch,
+      );
       const eventData = this.orderEvents.buildCreateManyData(id, actor?.id ?? null, [
         {
           field: 'orderStatus',
@@ -1036,6 +1048,8 @@ export class OrdersService {
       lastMessageAt,
       note: order.note ?? null,
       createdAt: order.createdAt,
+      sketchStartedAt: order.sketchStartedAt,
+      sketchReadyAt: order.sketchReadyAt,
     };
   }
 
@@ -1218,6 +1232,8 @@ type OrderForView = {
   note: string | null;
   source: OrderSource;
   createdAt: Date;
+  sketchStartedAt: Date | null;
+  sketchReadyAt: Date | null;
   dialogLink?: string | null;
   deliveryManagerName?: string | null;
   onboardingManagerName?: string | null;

@@ -70,6 +70,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private backfillRunning = false;
   /** Флаг остановки фонового цикла (выставляется при shutdown). */
   private loopActive = false;
+  private closesSketchStatusCache: { ids: Set<number>; expiresAt: number } | null = null;
+  private closesSketchStatusLoad: Promise<Set<number>> | null = null;
 
   constructor(
     private readonly api: BluesalesApiService,
@@ -882,11 +884,15 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           });
 
     const statusName = bsOrder.orderStatus?.name ?? null;
+    const closesSketch = await this.isClosesSketchStatus(
+      bsOrder.orderStatus?.id ?? null,
+    );
 
     if (existingInfo) {
       const sketchData = await this.resolveSketchTimestampUpdate(
         existingInfo.orderId,
         statusName,
+        closesSketch,
       );
       await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`
@@ -1005,7 +1011,11 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      const sketchData = await this.resolveSketchTimestampUpdate(sameNumber.id, statusName);
+      const sketchData = await this.resolveSketchTimestampUpdate(
+        sameNumber.id,
+        statusName,
+        closesSketch,
+      );
       try {
         await this.prisma.bluesalesOrderInfo.create({
           data: { ...infoData, ...statusData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
@@ -1077,10 +1087,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Новый заказ: если он сразу приходит в статусе эскиза — проставляем метку.
-    const newSketchData = computeSketchTimestampUpdate(statusName, {
-      sketchStartedAt: null,
-      sketchReadyAt: null,
-    });
+    const newSketchData = computeSketchTimestampUpdate(
+      statusName,
+      {
+        sketchStartedAt: null,
+        sketchReadyAt: null,
+      },
+      closesSketch,
+    );
     await this.prisma.order.create({
       data: {
         orderNumber,
@@ -1102,8 +1116,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private async resolveSketchTimestampUpdate(
     orderId: number,
     statusName: string | null,
+    closesSketch: boolean,
   ): Promise<Partial<SketchTimestamps>> {
-    if (!isSketchTrackedStatus(statusName)) {
+    if (!isSketchTrackedStatus(statusName) && !closesSketch) {
       return {};
     }
     const order = await this.prisma.order.findUnique({
@@ -1113,7 +1128,38 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     if (!order) {
       return {};
     }
-    return computeSketchTimestampUpdate(statusName, order);
+    return computeSketchTimestampUpdate(statusName, order, closesSketch);
+  }
+
+  private async isClosesSketchStatus(statusId: number | null): Promise<boolean> {
+    if (statusId === null) return false;
+
+    const now = Date.now();
+    const cached = this.closesSketchStatusCache;
+    if (cached && cached.expiresAt > now) {
+      return cached.ids.has(statusId);
+    }
+
+    if (!this.closesSketchStatusLoad) {
+      this.closesSketchStatusLoad = this.prisma.bluesalesOrderStatus
+        .findMany({
+          where: { closesSketch: true },
+          select: { bsOrderStatusId: true },
+        })
+        .then((statuses) => {
+          const ids = new Set(statuses.map((status) => status.bsOrderStatusId));
+          this.closesSketchStatusCache = {
+            ids,
+            expiresAt: Date.now() + 5_000,
+          };
+          return ids;
+        })
+        .finally(() => {
+          this.closesSketchStatusLoad = null;
+        });
+    }
+
+    return (await this.closesSketchStatusLoad).has(statusId);
   }
 
   // ─── Вспомогательные методы ───────────────────────────────────────────────

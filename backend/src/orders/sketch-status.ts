@@ -37,13 +37,14 @@ export interface SketchTimestamps {
 export function computeSketchTimestampUpdate(
   newStatusName: string | null | undefined,
   current: SketchTimestamps,
+  closesSketch = false,
   now: Date = new Date(),
 ): Partial<SketchTimestamps> {
   const update: Partial<SketchTimestamps> = {};
-  if (isSketchStartStatus(newStatusName) && !current.sketchStartedAt) {
+  if ((isSketchStartStatus(newStatusName) || closesSketch) && !current.sketchStartedAt) {
     update.sketchStartedAt = now;
   }
-  if (isSketchReadyStatus(newStatusName) && !current.sketchReadyAt) {
+  if ((isSketchReadyStatus(newStatusName) || closesSketch) && !current.sketchReadyAt) {
     update.sketchReadyAt = now;
   }
   return update;
