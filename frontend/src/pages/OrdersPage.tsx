@@ -74,6 +74,9 @@ function isSketchStatusName(name: string | undefined): boolean {
 const PAGE_SIZE = 50
 // Сколько карточек добавляем в DOM за один шаг прокрутки (клиентское окно).
 const RENDER_STEP = 10
+// Колонки обновляются по очереди, но одна и та же колонка — не чаще этого интервала.
+const COLUMN_REFRESH_STEP_MS = 3_000
+const MIN_COLUMN_REFRESH_INTERVAL_MS = 5_000
 
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedOrderStatusIds: [],
@@ -568,6 +571,8 @@ export default function OrdersPage() {
   const draggingColumnIdRef = useRef<number | null>(null)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastColumnRefreshAtRef = useRef<Record<number, number>>({})
+  const columnRequestVersionRef = useRef<Record<number, number>>({})
   const dirtyRef = useRef(false)
   const skipSaveRef = useRef(false)
 
@@ -804,6 +809,11 @@ export default function OrdersPage() {
 
   const fetchColumnPage = useCallback(
     async (columnId: number, page: number, replace: boolean) => {
+      const requestVersion = (columnRequestVersionRef.current[columnId] ?? 0) + 1
+      columnRequestVersionRef.current[columnId] = requestVersion
+      if (replace && page === 1) {
+        lastColumnRefreshAtRef.current[columnId] = Date.now()
+      }
       setColumnData((prev) => ({
         ...prev,
         [columnId]: { ...(prev[columnId] ?? EMPTY_COLUMN_STATE), loading: true },
@@ -827,6 +837,7 @@ export default function OrdersPage() {
       try {
         const { data } = await client.get<OrdersColumnResponse>('/orders', { params })
         setColumnData((prev) => {
+          if (columnRequestVersionRef.current[columnId] !== requestVersion) return prev
           const existing = prev[columnId]
           const items = replace ? data.items : [...(existing?.items ?? []), ...data.items]
           const prevRender = replace ? 0 : existing?.renderCount ?? 0
@@ -845,6 +856,7 @@ export default function OrdersPage() {
           }
         })
       } catch (err) {
+        if (columnRequestVersionRef.current[columnId] !== requestVersion) return
         logApiError('загрузка колонки заказов', err)
         setColumnData((prev) => ({
           ...prev,
@@ -870,6 +882,50 @@ export default function OrdersPage() {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
   }, [initialized, reloadAll])
+
+  useEffect(() => {
+    if (!initialized || columnsToFetch.length === 0) return
+
+    let cancelled = false
+    let timer: number | undefined
+    let nextColumnIndex = 0
+
+    const scheduleNext = (delay: number) => {
+      timer = window.setTimeout(() => void refreshNext(), delay)
+    }
+
+    const refreshNext = async () => {
+      if (cancelled) return
+
+      const column = columnsToFetch[nextColumnIndex]
+      const lastRefreshAt = lastColumnRefreshAtRef.current[column.id] ?? 0
+      const remainingCooldown =
+        MIN_COLUMN_REFRESH_INTERVAL_MS - (Date.now() - lastRefreshAt)
+
+      if (remainingCooldown > 0) {
+        scheduleNext(remainingCooldown)
+        return
+      }
+
+      const state = columnDataRef.current[column.id]
+      if (state?.loading) {
+        scheduleNext(COLUMN_REFRESH_STEP_MS)
+        return
+      }
+
+      nextColumnIndex = (nextColumnIndex + 1) % columnsToFetch.length
+      await fetchColumnPage(column.id, 1, true)
+
+      if (!cancelled) scheduleNext(COLUMN_REFRESH_STEP_MS)
+    }
+
+    scheduleNext(COLUMN_REFRESH_STEP_MS)
+
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [columnsToFetch, fetchColumnPage, initialized])
 
   const pendingSyncOrderIds = useMemo(
     () =>
