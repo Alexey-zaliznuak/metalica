@@ -123,6 +123,12 @@ function parseStringArray(value: unknown): string[] {
     : []
 }
 
+function getActiveOrderSearchQuery(raw: string): string | null {
+  const query = raw.trim()
+  const digitCount = query.match(/\d/g)?.length ?? 0
+  return digitCount >= 4 ? query : null
+}
+
 function parseBoardSettings(raw: unknown): OrdersBoardSettings {
   if (!isRecord(raw)) return DEFAULT_BOARD_SETTINGS
 
@@ -696,6 +702,27 @@ export default function OrdersPage() {
       )
   }, [orderStatuses, columnOrder, selectedOrderStatusIds])
 
+  const activeSearchQuery = useMemo(() => getActiveOrderSearchQuery(search), [search])
+
+  const searchBoardColumns = useMemo<BoardColumn[]>(() => {
+    const orderedIds = [
+      ...columnOrder,
+      ...orderStatuses.map((status) => status.id),
+      NO_ORDER_STATUS_COLUMN_ID,
+    ].filter((id, index, ids) => ids.indexOf(id) === index)
+    const byId = new Map(orderStatuses.map((status) => [status.id, status]))
+
+    return orderedIds
+      .filter((id) => id === NO_ORDER_STATUS_COLUMN_ID || byId.has(id))
+      .map((id) =>
+        id === NO_ORDER_STATUS_COLUMN_ID
+          ? { id, name: 'Без статуса заказа', isNoOrderStatus: true }
+          : { id, name: byId.get(id)!.name, isNoOrderStatus: false },
+      )
+  }, [columnOrder, orderStatuses])
+
+  const columnsToFetch = activeSearchQuery ? searchBoardColumns : boardColumns
+
   const deliveryManagerOptions = managerOptions.deliveryManagers
   const onboardingManagerOptions = managerOptions.onboardingManagers
 
@@ -759,8 +786,7 @@ export default function OrdersPage() {
 
   const buildFilterParams = useCallback((): Record<string, unknown> => {
     const params: Record<string, unknown> = {}
-    const query = search.trim()
-    if (query) params.q = query
+    if (activeSearchQuery) params.q = activeSearchQuery
     if (selectedDeliveryManagers.length) params.deliveryManagers = selectedDeliveryManagers
     if (selectedOnboardingManagers.length)
       params.onboardingManagers = selectedOnboardingManagers
@@ -769,7 +795,7 @@ export default function OrdersPage() {
       params.revisionDesigners = selectedRevisionDesigners
     return params
   }, [
-    search,
+    activeSearchQuery,
     selectedDeliveryManagers,
     selectedOnboardingManagers,
     selectedSketchDesigners,
@@ -831,10 +857,10 @@ export default function OrdersPage() {
   )
 
   const reloadAll = useCallback(() => {
-    boardColumns.forEach((column) => {
+    columnsToFetch.forEach((column) => {
       void fetchColumnPage(column.id, 1, true)
     })
-  }, [boardColumns, fetchColumnPage])
+  }, [columnsToFetch, fetchColumnPage])
 
   useEffect(() => {
     if (!initialized) return
@@ -1096,13 +1122,13 @@ export default function OrdersPage() {
   }
 
   const visibleBoardColumns = useMemo(() => {
-    if (!search.trim()) return boardColumns
+    if (!activeSearchQuery) return boardColumns
 
-    return boardColumns.filter((column) => {
+    return searchBoardColumns.filter((column) => {
       const state = columnData[column.id]
       return state?.loading || (state?.total ?? 0) > 0
     })
-  }, [boardColumns, columnData, search])
+  }, [activeSearchQuery, boardColumns, columnData, searchBoardColumns])
 
   return (
     <Box
@@ -1115,7 +1141,7 @@ export default function OrdersPage() {
     >
       <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
         <TextField
-          placeholder="Поиск по номеру или названию"
+          placeholder="Поиск по номеру (минимум 4 цифры)"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           size="small"
