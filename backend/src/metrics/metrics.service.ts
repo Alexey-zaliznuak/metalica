@@ -143,6 +143,7 @@ export class MetricsService {
     workStartHour?: number;
     workEndHour?: number;
     tzOffsetMinutes?: number;
+    dateRange?: { from: Date; to: Date };
   }) {
     const workStartHour = this.clampHour(params.workStartHour, DEFAULT_WORK_START_HOUR);
     const workEndHour = this.clampHour(params.workEndHour, DEFAULT_WORK_END_HOUR);
@@ -151,7 +152,12 @@ export class MetricsService {
       : DEFAULT_TZ_OFFSET_MINUTES;
 
     const closures = await this.prisma.revisionClosure.findMany({
-      where: { closedBy: { role: Role.REVISION_DESIGNER } },
+      where: {
+        closedBy: { role: Role.REVISION_DESIGNER },
+        ...(params.dateRange
+          ? { closedAt: { gte: params.dateRange.from, lt: params.dateRange.to } }
+          : {}),
+      },
       select: {
         closedById: true,
         openedAt: true,
@@ -223,6 +229,7 @@ export class MetricsService {
     workStartHour?: number;
     workEndHour?: number;
     tzOffsetMinutes?: number;
+    dateRange?: { from: Date; to: Date };
   }) {
     const workStartHour = this.clampHour(params.workStartHour, DEFAULT_WORK_START_HOUR);
     const workEndHour = this.clampHour(params.workEndHour, DEFAULT_WORK_END_HOUR);
@@ -233,7 +240,9 @@ export class MetricsService {
     const orders = await this.prisma.order.findMany({
       where: {
         sketchStartedAt: { not: null },
-        sketchReadyAt: { not: null },
+        sketchReadyAt: params.dateRange
+          ? { gte: params.dateRange.from, lt: params.dateRange.to }
+          : { not: null },
         OR: [
           { sketchDesignerId: null },
           { sketchDesigner: { is: { role: Role.SKETCH_DESIGNER } } },
@@ -249,7 +258,12 @@ export class MetricsService {
 
     // Эскизы «в работе»: старт проставлен, но готовности ещё нет.
     const inProgressCount = await this.prisma.order.count({
-      where: { sketchStartedAt: { not: null }, sketchReadyAt: null },
+      where: {
+        sketchStartedAt: params.dateRange
+          ? { gte: params.dateRange.from, lt: params.dateRange.to }
+          : { not: null },
+        sketchReadyAt: null,
+      },
     });
 
     const UNASSIGNED_ID = 0;

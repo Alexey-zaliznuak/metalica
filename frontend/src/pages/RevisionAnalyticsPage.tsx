@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
@@ -6,6 +6,7 @@ import {
   Card,
   CardContent,
   CircularProgress,
+  Divider,
   Grid,
   IconButton,
   MenuItem,
@@ -30,6 +31,10 @@ import { describeApiError, logApiError } from '../api/errors'
 import type { RevisionAnalytics } from '../api/types'
 import { formatDuration } from '../utils'
 import { BRAND } from '../theme'
+import AnalyticsDateFilter, {
+  createDefaultAnalyticsPeriod,
+  resolveAnalyticsDateRange,
+} from '../components/AnalyticsDateFilter'
 
 // Часовой пояс расчёта — Москва (UTC+3). Даты в БД в UTC.
 const MSK_OFFSET_MINUTES = 180
@@ -40,11 +45,19 @@ export default function RevisionAnalyticsPage() {
   const navigate = useNavigate()
   const [workStartHour, setWorkStartHour] = useState(9)
   const [workEndHour, setWorkEndHour] = useState(21)
+  const [period, setPeriod] = useState(createDefaultAnalyticsPeriod)
   const [data, setData] = useState<RevisionAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const dateRange = useMemo(() => resolveAnalyticsDateRange(period), [period])
+
   const load = useCallback(async () => {
+    if (!dateRange) {
+      setLoading(false)
+      setError('Укажите корректный диапазон дат')
+      return
+    }
     setLoading(true)
     setError(null)
     try {
@@ -53,6 +66,8 @@ export default function RevisionAnalyticsPage() {
           workStartHour,
           workEndHour,
           tzOffsetMinutes: MSK_OFFSET_MINUTES,
+          dateFrom: dateRange.dateFrom,
+          dateTo: dateRange.dateTo,
         },
       })
       setData(res.data)
@@ -62,7 +77,7 @@ export default function RevisionAnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  }, [workStartHour, workEndHour])
+  }, [workStartHour, workEndHour, dateRange])
 
   useEffect(() => {
     load()
@@ -130,10 +145,16 @@ export default function RevisionAnalyticsPage() {
               </MenuItem>
             ))}
           </TextField>
-          <Button variant="outlined" onClick={() => load()} disabled={windowInvalid}>
+          <Button
+            variant="outlined"
+            onClick={() => load()}
+            disabled={windowInvalid || !dateRange}
+          >
             Пересчитать
           </Button>
         </Stack>
+        <Divider sx={{ my: 2 }} />
+        <AnalyticsDateFilter value={period} onChange={setPeriod} />
         {windowInvalid && (
           <Alert severity="warning" sx={{ mt: 2 }}>
             Конец рабочего дня должен быть позже начала.

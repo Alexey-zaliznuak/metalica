@@ -43,11 +43,14 @@ export class MetricsController {
     @Query('workStartHour') workStartHour?: string,
     @Query('workEndHour') workEndHour?: string,
     @Query('tzOffsetMinutes') tzOffsetMinutes?: string,
+    @Query('dateFrom') dateFromRaw?: string,
+    @Query('dateTo') dateToRaw?: string,
   ) {
     return this.metrics.revisionAnalytics({
       workStartHour: this.toNumber(workStartHour),
       workEndHour: this.toNumber(workEndHour),
       tzOffsetMinutes: this.toNumber(tzOffsetMinutes),
+      dateRange: this.toDateRange(dateFromRaw, dateToRaw),
     });
   }
 
@@ -57,11 +60,14 @@ export class MetricsController {
     @Query('workStartHour') workStartHour?: string,
     @Query('workEndHour') workEndHour?: string,
     @Query('tzOffsetMinutes') tzOffsetMinutes?: string,
+    @Query('dateFrom') dateFromRaw?: string,
+    @Query('dateTo') dateToRaw?: string,
   ) {
     return this.metrics.sketchAnalytics({
       workStartHour: this.toNumber(workStartHour),
       workEndHour: this.toNumber(workEndHour),
       tzOffsetMinutes: this.toNumber(tzOffsetMinutes),
+      dateRange: this.toDateRange(dateFromRaw, dateToRaw),
     });
   }
 
