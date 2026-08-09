@@ -104,11 +104,14 @@ export function formatDurationShort(
   return restHours > 0 ? `${days}д ${restHours}ч` : `${days}д`
 }
 
+const MOSCOW_TIME_ZONE = 'Europe/Moscow'
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
   return d.toLocaleString('ru-RU', {
+    timeZone: MOSCOW_TIME_ZONE,
     day: '2-digit',
     month: '2-digit',
     year: '2-digit',
@@ -122,6 +125,7 @@ export function formatTime(iso: string | null | undefined): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleTimeString('ru-RU', {
+    timeZone: MOSCOW_TIME_ZONE,
     hour: '2-digit',
     minute: '2-digit',
   })
@@ -133,10 +137,13 @@ export function formatLastActivity(iso: string | null | undefined): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
   const now = new Date()
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
+  const moscowDateFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MOSCOW_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  const sameDay = moscowDateFormatter.format(d) === moscowDateFormatter.format(now)
   if (sameDay) {
     return `сегодня ${formatTime(iso)}`
   }

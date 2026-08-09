@@ -417,7 +417,7 @@ function SystemEventRow({ event }: { event: OrderEvent }) {
             → <b>{to}</b>
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.6 }}>
-            {formatTime(event.createdAt)}
+            {formatDateTime(event.createdAt)}
           </Typography>
         </Stack>
       </Paper>
