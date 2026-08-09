@@ -18,6 +18,7 @@ export class StorageService implements OnModuleInit {
   private internalClient: MinioClient;
   private bucket: string;
   private publicFilesBaseUrl: string;
+  private publicFilesVersion: string;
 
   constructor() {
     const accessKey = process.env.MINIO_ACCESS_KEY || 'minioadmin';
@@ -28,6 +29,7 @@ export class StorageService implements OnModuleInit {
       .replace(/\/+$/, '');
     const appProtocol = (process.env.APP_PROTOCOL || 'https').replace(/:$/, '');
     this.publicFilesBaseUrl = `${appProtocol}://${appDomain}/files`;
+    this.publicFilesVersion = process.env.FILES_URL_VERSION || '1';
 
     const region = process.env.MINIO_REGION || 'us-east-1';
 
@@ -93,7 +95,7 @@ export class StorageService implements OnModuleInit {
 
   async getUrl(objectKey: string): Promise<string> {
     const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
-    return `${this.publicFilesBaseUrl}/${encodedKey}`;
+    return `${this.publicFilesBaseUrl}/${encodedKey}?v=${encodeURIComponent(this.publicFilesVersion)}`;
   }
 
   /**
