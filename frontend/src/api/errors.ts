@@ -2,7 +2,7 @@ import { AxiosError } from 'axios'
 
 // Лимит из MAX_UPLOAD_MB бэкенда: держим в курсе пользователя ещё до отправки,
 // чтобы он не ждал впустую загрузку файла, который сервер всё равно отклонит.
-export const MAX_UPLOAD_MB = 300
+export const MAX_UPLOAD_MB = 1024
 export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 const STATUS_HINTS: Record<number, string> = {

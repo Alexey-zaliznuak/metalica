@@ -5,7 +5,7 @@
  * внутреннем `nginx/nginx.conf`, и во внешнем nginx на хосте. Если там меньше,
  * запрос срежется с 413 ещё до бэкенда, и в логах контейнера ничего не будет.
  */
-export const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 300;
+export const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB) || 1024;
 export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
 export function formatBytes(bytes: number | undefined): string {
