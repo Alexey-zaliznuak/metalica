@@ -323,6 +323,7 @@ function MessageBubble({
                   <ImageAttachmentPreview
                     key={att.id}
                     image={{ url: att.url, filename: att.filename }}
+                    lightControls={ownSide && !isRequest && !isAnswer}
                     onOpen={() =>
                       onOpenImage({ url: att.url, filename: att.filename })
                     }

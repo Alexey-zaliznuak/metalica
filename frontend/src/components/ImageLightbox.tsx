@@ -18,6 +18,7 @@ interface ImageLightboxProps {
 interface ImageAttachmentPreviewProps {
   image: LightboxImage
   onOpen: () => void
+  lightControls?: boolean
 }
 
 function isHeicImage(filename: string): boolean {
@@ -112,7 +113,11 @@ async function copyImageLink(url: string) {
   if (!copied) throw new Error('Не удалось скопировать ссылку')
 }
 
-export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreviewProps) {
+export function ImageAttachmentPreview({
+  image,
+  onOpen,
+  lightControls = false,
+}: ImageAttachmentPreviewProps) {
   const [downloading, setDownloading] = useState(false)
   const [copied, setCopied] = useState(false)
   const { previewUrl, loading, failed } = useRenderableImageUrl(image)
@@ -196,6 +201,20 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
           fontSize: 11,
           lineHeight: 1,
           textTransform: 'none',
+          ...(lightControls
+            ? {
+                color: '#fff',
+                borderColor: 'rgba(255,255,255,0.72)',
+                '&:hover': {
+                  borderColor: '#fff',
+                  bgcolor: 'rgba(255,255,255,0.12)',
+                },
+                '&.Mui-disabled': {
+                  color: 'rgba(255,255,255,0.65)',
+                  borderColor: 'rgba(255,255,255,0.4)',
+                },
+              }
+            : {}),
         }}
       >
         Скачать
@@ -214,6 +233,16 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
           fontSize: 11,
           lineHeight: 1,
           textTransform: 'none',
+          ...(lightControls
+            ? {
+                color: '#fff',
+                borderColor: 'rgba(255,255,255,0.72)',
+                '&:hover': {
+                  borderColor: '#fff',
+                  bgcolor: 'rgba(255,255,255,0.12)',
+                },
+              }
+            : {}),
         }}
       >
         {copied ? 'Скопировано' : 'Копировать'}
