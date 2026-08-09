@@ -29,6 +29,7 @@ import type { BluesalesStatusOption, WorkloadMetric } from '../api/types'
 
 type WorkloadTab = 'sketch' | 'revision' | 'delivery' | 'onboarding'
 type SortDirection = 'asc' | 'desc'
+type WorkloadPeriodPreset = 'day' | 'week' | 'month' | 'custom'
 type WorkloadMetricKey =
   | 'sketchOrders'
   | 'revisionOrders'
@@ -36,6 +37,15 @@ type WorkloadMetricKey =
   | 'onboardingOrders'
 
 const WORKLOAD_TABS: WorkloadTab[] = ['sketch', 'revision', 'delivery', 'onboarding']
+const WORKLOAD_PERIOD_PRESETS: WorkloadPeriodPreset[] = ['day', 'week', 'month', 'custom']
+const PERIOD_LABELS: Record<WorkloadPeriodPreset, string> = {
+  day: 'Последний день',
+  week: 'Неделя',
+  month: 'Месяц',
+  custom: 'Другая дата',
+}
+const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
 
 const TAB_CONFIG: Record<
   WorkloadTab,
@@ -88,6 +98,11 @@ interface WorkloadTabSettings {
 
 type WorkloadPageSettings = Record<WorkloadTab, WorkloadTabSettings> & {
   onlyOpenSketch: boolean
+  period: {
+    preset: WorkloadPeriodPreset
+    customFrom: string
+    customTo: string
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,6 +142,69 @@ function normalizeStatusSelection(availableStatusIds: number[], selectedRaw: num
   return normalized
 }
 
+function moscowDateKey(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? ''
+  return `${get('year')}-${get('month')}-${get('day')}`
+}
+
+function moscowMidnightUtc(dateKey: string, addDays = 0): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const utc = Date.UTC(year, month - 1, day) - MOSCOW_OFFSET_MS
+  const check = new Date(utc + MOSCOW_OFFSET_MS)
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day
+  ) {
+    return null
+  }
+  return new Date(utc + addDays * DAY_MS)
+}
+
+function resolveDateRange(
+  preset: WorkloadPeriodPreset,
+  customFrom: string,
+  customTo: string,
+): { dateFrom: string; dateTo: string } | null {
+  if (preset === 'custom') {
+    const from = moscowMidnightUtc(customFrom)
+    const to = moscowMidnightUtc(customTo, 1)
+    if (!from || !to || from >= to) return null
+    return { dateFrom: from.toISOString(), dateTo: to.toISOString() }
+  }
+
+  const now = new Date()
+  const days = preset === 'day' ? 1 : preset === 'week' ? 7 : 30
+  return {
+    dateFrom: new Date(now.getTime() - days * DAY_MS).toISOString(),
+    dateTo: now.toISOString(),
+  }
+}
+
+function parsePeriodSettings(raw: unknown) {
+  const today = moscowDateKey()
+  if (!isRecord(raw)) {
+    return { preset: 'day' as WorkloadPeriodPreset, customFrom: today, customTo: today }
+  }
+  const preset = WORKLOAD_PERIOD_PRESETS.includes(raw.preset as WorkloadPeriodPreset)
+    ? (raw.preset as WorkloadPeriodPreset)
+    : 'day'
+  const customFrom = typeof raw.customFrom === 'string' ? raw.customFrom : today
+  const customTo = typeof raw.customTo === 'string' ? raw.customTo : today
+  return { preset, customFrom, customTo }
+}
+
 export default function WorkloadPage() {
   const { user, updateFrontendSettings } = useAuth()
   const [loading, setLoading] = useState(true)
@@ -142,6 +220,9 @@ export default function WorkloadPage() {
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [onlyOpenSketch, setOnlyOpenSketch] = useState(false)
+  const [periodPreset, setPeriodPreset] = useState<WorkloadPeriodPreset>('day')
+  const [customFrom, setCustomFrom] = useState(() => moscowDateKey())
+  const [customTo, setCustomTo] = useState(() => moscowDateKey())
   const [initialized, setInitialized] = useState(false)
 
   // See OrdersPage for the rationale: once the user edits locally we stop
@@ -201,11 +282,26 @@ export default function WorkloadPage() {
     skipSaveRef.current = true
     setStatusSelections(normalized)
     setOnlyOpenSketch(workloadSettings?.onlyOpenSketch === true)
+    const periodSettings = parsePeriodSettings(workloadSettings?.period)
+    setPeriodPreset(periodSettings.preset)
+    setCustomFrom(periodSettings.customFrom)
+    setCustomTo(periodSettings.customTo)
     setInitialized(true)
   }, [statusesLoaded, orderStatuses, user?.frontendSettings])
 
+  const dateRange = useMemo(
+    () => resolveDateRange(periodPreset, customFrom, customTo),
+    [periodPreset, customFrom, customTo],
+  )
+
   useEffect(() => {
     if (!initialized) return
+    const periodApplies = tab === 'sketch' || tab === 'revision'
+    if (periodApplies && !dateRange) {
+      setLoading(false)
+      setError('Укажите корректный диапазон дат')
+      return
+    }
     let active = true
     ;(async () => {
       setLoading(true)
@@ -216,6 +312,8 @@ export default function WorkloadPage() {
             orderStatusIds:
               activeSelection.length > 0 ? activeSelection.join(',') : 'none',
             onlyOpenSketch: tab === 'sketch' && onlyOpenSketch ? true : undefined,
+            dateFrom: periodApplies ? dateRange?.dateFrom : undefined,
+            dateTo: periodApplies ? dateRange?.dateTo : undefined,
           },
         })
         if (!active) return
@@ -234,7 +332,7 @@ export default function WorkloadPage() {
     return () => {
       active = false
     }
-  }, [initialized, activeSelection, tab, onlyOpenSketch])
+  }, [initialized, activeSelection, tab, onlyOpenSketch, dateRange])
 
   useEffect(() => {
     if (!initialized) return
@@ -250,9 +348,22 @@ export default function WorkloadPage() {
         delivery: { selectedOrderStatusIds: statusSelections.delivery },
         onboarding: { selectedOrderStatusIds: statusSelections.onboarding },
         onlyOpenSketch,
+        period: {
+          preset: periodPreset,
+          customFrom,
+          customTo,
+        },
       } satisfies WorkloadPageSettings,
     })
-  }, [initialized, statusSelections, onlyOpenSketch, updateFrontendSettings])
+  }, [
+    initialized,
+    statusSelections,
+    onlyOpenSketch,
+    periodPreset,
+    customFrom,
+    customTo,
+    updateFrontendSettings,
+  ])
 
   const config = TAB_CONFIG[tab]
 
@@ -296,7 +407,7 @@ export default function WorkloadPage() {
           Нагрузка
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Текущая загрузка менеджеров и художников по назначенным заказам
+          Завершённые эскизы и правки за период, текущая загрузка менеджеров
         </Typography>
       </Box>
 
@@ -321,6 +432,49 @@ export default function WorkloadPage() {
           </ToggleButton>
         ))}
       </ToggleButtonGroup>
+
+      {(tab === 'sketch' || tab === 'revision') && (
+        <Stack spacing={1.5} sx={{ mb: 2 }}>
+          <ToggleButtonGroup
+            value={periodPreset}
+            exclusive
+            onChange={(_, value: WorkloadPeriodPreset | null) => {
+              if (value) setPeriodPreset(value)
+            }}
+            size="small"
+            sx={{ flexWrap: 'wrap', alignSelf: 'flex-start' }}
+          >
+            {WORKLOAD_PERIOD_PRESETS.map((preset) => (
+              <ToggleButton key={preset} value={preset}>
+                {PERIOD_LABELS[preset]}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          {periodPreset === 'custom' && (
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+              <TextField
+                type="date"
+                label="С"
+                value={customFrom}
+                onChange={(event) => setCustomFrom(event.target.value)}
+                size="small"
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                type="date"
+                label="По"
+                value={customTo}
+                onChange={(event) => setCustomTo(event.target.value)}
+                size="small"
+                InputLabelProps={{ shrink: true }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
+                Даты считаются по Москве
+              </Typography>
+            </Stack>
+          )}
+        </Stack>
+      )}
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }} alignItems={{ sm: 'center' }}>
         <Autocomplete

@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { UserScope } from '@prisma/client';
 import { MetricsService } from './metrics.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -27,8 +27,14 @@ export class MetricsController {
   workload(
     @Query('orderStatusIds') orderStatusIdsRaw?: string,
     @Query('onlyOpenSketch') onlyOpenSketchRaw?: string,
+    @Query('dateFrom') dateFromRaw?: string,
+    @Query('dateTo') dateToRaw?: string,
   ) {
-    return this.metrics.workload(orderStatusIdsRaw, onlyOpenSketchRaw === 'true');
+    return this.metrics.workload(
+      orderStatusIdsRaw,
+      onlyOpenSketchRaw === 'true',
+      this.toDateRange(dateFromRaw, dateToRaw),
+    );
   }
 
   @Get('revisions/analytics')
@@ -63,5 +69,26 @@ export class MetricsController {
     if (raw === undefined || raw === '') return undefined;
     const n = Number(raw);
     return Number.isFinite(n) ? n : undefined;
+  }
+
+  private toDateRange(
+    dateFromRaw?: string,
+    dateToRaw?: string,
+  ): { from: Date; to: Date } | undefined {
+    if (!dateFromRaw && !dateToRaw) return undefined;
+    if (!dateFromRaw || !dateToRaw) {
+      throw new BadRequestException('Для периода необходимо указать dateFrom и dateTo');
+    }
+
+    const from = new Date(dateFromRaw);
+    const to = new Date(dateToRaw);
+    if (
+      Number.isNaN(from.getTime()) ||
+      Number.isNaN(to.getTime()) ||
+      from.getTime() >= to.getTime()
+    ) {
+      throw new BadRequestException('Указан некорректный период');
+    }
+    return { from, to };
   }
 }

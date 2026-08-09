@@ -314,12 +314,18 @@ export class MetricsService {
     return Math.min(Math.max(Math.trunc(value), 0), 24);
   }
 
-  async workload(orderStatusIdsRaw?: string, onlyOpenSketch = false) {
+  async workload(
+    orderStatusIdsRaw?: string,
+    onlyOpenSketch = false,
+    dateRange?: { from: Date; to: Date },
+  ) {
     const noStatusesSelected = orderStatusIdsRaw === 'none';
     const orderStatusIds = this.parseStatusIds(orderStatusIdsRaw);
     const cacheKey = `${
       noStatusesSelected ? 'none' : orderStatusIds.join(',')
-    }|openSketch:${onlyOpenSketch}`;
+    }|openSketch:${onlyOpenSketch}|from:${dateRange?.from.getTime() ?? 'none'}|to:${
+      dateRange?.to.getTime() ?? 'none'
+    }`;
     const now = Date.now();
     const cached = this.workloadCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -338,15 +344,21 @@ export class MetricsService {
       sketchDesignerId: { not: null },
       ...statusWhere,
       ...(onlyOpenSketch
-        ? { sketchStartedAt: { not: null }, sketchReadyAt: null }
-        : {}),
+        ? {
+            sketchStartedAt: dateRange
+              ? { gte: dateRange.from, lt: dateRange.to }
+              : { not: null },
+            sketchReadyAt: null,
+          }
+        : dateRange
+          ? { sketchReadyAt: { gte: dateRange.from, lt: dateRange.to } }
+          : {}),
     };
-    const revisionWhere = { revisionDesignerId: { not: null }, ...statusWhere };
     // Менеджеры теперь приходят из BlueSales как имена — группируем по ним.
     const deliveryWhere = { deliveryManagerName: { not: null }, ...statusWhere };
     const onboardingWhere = { onboardingManagerName: { not: null }, ...statusWhere };
 
-    const [artists, sketchCounts, revisionCounts, deliveryCounts, onboardingCounts] =
+    const [artists, sketchCounts, deliveryCounts, onboardingCounts, openRevisionByUser] =
       await Promise.all([
         this.prisma.user.findMany({
           where: {
@@ -361,11 +373,6 @@ export class MetricsService {
           _count: { _all: true },
         }),
         this.prisma.order.groupBy({
-          by: ['revisionDesignerId'],
-          where: revisionWhere,
-          _count: { _all: true },
-        }),
-        this.prisma.order.groupBy({
           by: ['deliveryManagerName'],
           where: deliveryWhere,
           _count: { _all: true },
@@ -375,11 +382,13 @@ export class MetricsService {
           where: onboardingWhere,
           _count: { _all: true },
         }),
+        this.fetchOpenRevisionByUser(orderStatusIds),
       ]);
 
     const sketchByUser = this.toCountMap(sketchCounts, 'sketchDesignerId');
-    const revisionByUser = this.toCountMap(revisionCounts, 'revisionDesignerId');
-    const openRevisionByUser = await this.fetchOpenRevisionByUser(orderStatusIds);
+    const revisionByUser = dateRange
+      ? await this.fetchClosedRevisionByUser(orderStatusIds, dateRange)
+      : await this.fetchAssignedRevisionByUser(statusWhere);
 
     // Художники — локальные пользователи, разделённые по типу работы.
     const artistData: WorkloadEntry[] = artists.map((user) => ({
@@ -497,6 +506,45 @@ export class MetricsService {
       .map((part) => Number(part.trim()))
       .filter((value) => Number.isInteger(value) && value >= 0);
     return Array.from(new Set(ids));
+  }
+
+  private async fetchAssignedRevisionByUser(
+    statusWhere: ReturnType<MetricsService['buildOrderStatusWhere']>,
+  ) {
+    const revisionCounts = await this.prisma.order.groupBy({
+      by: ['revisionDesignerId'],
+      where: { revisionDesignerId: { not: null }, ...statusWhere },
+      _count: { _all: true },
+    });
+    return this.toCountMap(revisionCounts, 'revisionDesignerId');
+  }
+
+  private async fetchClosedRevisionByUser(
+    orderStatusIds: number[],
+    dateRange: { from: Date; to: Date },
+  ) {
+    const closures = await this.prisma.revisionClosure.findMany({
+      where: {
+        closedAt: { gte: dateRange.from, lt: dateRange.to },
+        ...(orderStatusIds.length > 0
+          ? {
+              revision: {
+                order: {
+                  bluesalesInfo: {
+                    is: { orderStatusId: { in: orderStatusIds } },
+                  },
+                },
+              },
+            }
+          : {}),
+      },
+      select: { closedById: true },
+    });
+    const map = new Map<number, number>();
+    for (const closure of closures) {
+      map.set(closure.closedById, (map.get(closure.closedById) ?? 0) + 1);
+    }
+    return map;
   }
 
   private async fetchOpenRevisionByUser(orderStatusIds: number[]) {
