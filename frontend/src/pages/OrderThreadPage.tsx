@@ -48,6 +48,7 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
 import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined'
 import HistoryIcon from '@mui/icons-material/History'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import ScheduleIcon from '@mui/icons-material/Schedule'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
@@ -379,6 +380,8 @@ const EVENT_FIELD_LABELS: Record<string, string> = {
   title: 'название',
   note: 'примечание',
   dialogLink: 'ссылку на диалог',
+  sketchStartedAt: 'дату начала эскиза',
+  sketchReadyAt: 'дату готовности эскиза',
 }
 
 // Системная запись лога заказа: по центру ленты, «кто что с чего на что поменял».
@@ -386,8 +389,17 @@ function SystemEventRow({ event }: { event: OrderEvent }) {
   const label = EVENT_FIELD_LABELS[event.field] ?? event.field
   const actorName = event.actor?.name ?? 'Система'
   const dash = '—'
-  const from = event.oldValue?.trim() ? event.oldValue : dash
-  const to = event.newValue?.trim() ? event.newValue : dash
+  const isSketchDate = event.field === 'sketchStartedAt' || event.field === 'sketchReadyAt'
+  const from = event.oldValue?.trim()
+    ? isSketchDate
+      ? formatDateTime(event.oldValue)
+      : event.oldValue
+    : dash
+  const to = event.newValue?.trim()
+    ? isSketchDate
+      ? formatDateTime(event.newValue)
+      : event.newValue
+    : dash
   return (
     <Box sx={{ display: 'flex', justifyContent: 'center', my: 1 }}>
       <Paper
@@ -856,6 +868,116 @@ function OrderInfoPanel({
   )
 }
 
+function toMoscowDateTimeInput(iso: string | null): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? ''
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`
+}
+
+function fromMoscowDateTimeInput(value: string): string | null {
+  if (!value) return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return null
+  const [, year, month, day, hour, minute] = match
+  const utcMs =
+    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)) -
+    3 * 60 * 60 * 1000
+  return new Date(utcMs).toISOString()
+}
+
+function SketchDatesCard({
+  sketchStartedAt,
+  sketchReadyAt,
+  saving,
+  onSave,
+}: {
+  sketchStartedAt: string | null
+  sketchReadyAt: string | null
+  saving: boolean
+  onSave: (startedAt: string | null, readyAt: string | null) => void
+}) {
+  const [startedDraft, setStartedDraft] = useState(() =>
+    toMoscowDateTimeInput(sketchStartedAt),
+  )
+  const [readyDraft, setReadyDraft] = useState(() => toMoscowDateTimeInput(sketchReadyAt))
+
+  useEffect(() => {
+    if (saving) return
+    setStartedDraft(toMoscowDateTimeInput(sketchStartedAt))
+    setReadyDraft(toMoscowDateTimeInput(sketchReadyAt))
+  }, [sketchStartedAt, sketchReadyAt, saving])
+
+  const invalidRange = Boolean(startedDraft && readyDraft && readyDraft < startedDraft)
+  const changed =
+    startedDraft !== toMoscowDateTimeInput(sketchStartedAt) ||
+    readyDraft !== toMoscowDateTimeInput(sketchReadyAt)
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 1.5,
+        borderRadius: 2,
+        bgcolor: `${BRAND.pale}3d`,
+        borderColor: `${BRAND.main}33`,
+      }}
+    >
+      <SectionTitle icon={<ScheduleIcon fontSize="small" />}>Сроки эскиза</SectionTitle>
+      <Stack spacing={1.25} sx={{ mt: 1.25 }}>
+        <TextField
+          type="datetime-local"
+          label="Начало работы"
+          value={startedDraft}
+          onChange={(event) => setStartedDraft(event.target.value)}
+          size="small"
+          fullWidth
+          disabled={saving}
+          InputLabelProps={{ shrink: true }}
+          inputProps={{ step: 60 }}
+        />
+        <TextField
+          type="datetime-local"
+          label="Эскиз готов"
+          value={readyDraft}
+          onChange={(event) => setReadyDraft(event.target.value)}
+          size="small"
+          fullWidth
+          disabled={saving}
+          error={invalidRange}
+          helperText={invalidRange ? 'Готовность не может быть раньше начала' : 'Время по Москве'}
+          InputLabelProps={{ shrink: true }}
+          inputProps={{ step: 60 }}
+        />
+        <Button
+          variant="contained"
+          size="small"
+          disabled={saving || !changed || invalidRange}
+          onClick={() =>
+            onSave(
+              fromMoscowDateTimeInput(startedDraft),
+              fromMoscowDateTimeInput(readyDraft),
+            )
+          }
+        >
+          {saving ? 'Сохранение…' : 'Сохранить даты'}
+        </Button>
+      </Stack>
+    </Paper>
+  )
+}
+
 function OrderArticlesPanel({
   articles,
   tags,
@@ -863,8 +985,10 @@ function OrderArticlesPanel({
   sketchStartedAt,
   sketchReadyAt,
   savingNote,
+  savingSketchDates,
   onNoteDraftChange,
   onSaveNote,
+  onSaveSketchDates,
   inDrawer = false,
 }: {
   articles: OrderArticle[]
@@ -873,8 +997,10 @@ function OrderArticlesPanel({
   sketchStartedAt: string | null
   sketchReadyAt: string | null
   savingNote: boolean
+  savingSketchDates: boolean
   onNoteDraftChange: (value: string) => void
   onSaveNote: () => void
+  onSaveSketchDates: (startedAt: string | null, readyAt: string | null) => void
   inDrawer?: boolean
 }) {
   return (
@@ -888,6 +1014,8 @@ function OrderArticlesPanel({
               p: 2,
               borderRadius: 0,
               overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
             }
           : {
               width: 300,
@@ -895,7 +1023,8 @@ function OrderArticlesPanel({
               p: 2,
               borderRadius: 1.5,
               overflowY: 'auto',
-              display: { xs: 'none', lg: 'block' },
+              display: { xs: 'none', lg: 'flex' },
+              flexDirection: 'column',
             }
       }
     >
@@ -997,14 +1126,14 @@ function OrderArticlesPanel({
       >
         {savingNote ? 'Сохранение…' : 'Сохранить примечание'}
       </Button>
-      <Stack spacing={0.5} sx={{ mt: 2 }}>
-        <Typography variant="caption" color="text.secondary">
-          sketchStartedAt: {formatDateTime(sketchStartedAt)}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          sketchReadyAt: {formatDateTime(sketchReadyAt)}
-        </Typography>
-      </Stack>
+      <Box sx={{ mt: 'auto', pt: 3 }}>
+        <SketchDatesCard
+          sketchStartedAt={sketchStartedAt}
+          sketchReadyAt={sketchReadyAt}
+          saving={savingSketchDates}
+          onSave={onSaveSketchDates}
+        />
+      </Box>
     </Paper>
   )
 }
@@ -1053,6 +1182,7 @@ export default function OrderThreadPage() {
   const [updatingDialogLink, setUpdatingDialogLink] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
   const [savingNote, setSavingNote] = useState(false)
+  const [savingSketchDates, setSavingSketchDates] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -1297,6 +1427,27 @@ export default function OrderThreadPage() {
       setSendError(describeApiError(err, 'Не удалось сохранить примечание'))
     } finally {
       setSavingNote(false)
+    }
+  }
+
+  const handleSaveSketchDates = async (
+    sketchStartedAt: string | null,
+    sketchReadyAt: string | null,
+  ) => {
+    if (!order) return
+    setSavingSketchDates(true)
+    try {
+      const { data } = await client.patch<Order>(`/orders/${orderId}`, {
+        sketchStartedAt,
+        sketchReadyAt,
+      } satisfies UpdateOrderPayload)
+      setOrder(data)
+      void refreshEvents()
+    } catch (err) {
+      logApiError('сохранение сроков эскиза', err)
+      setSendError(describeApiError(err, 'Не удалось сохранить сроки эскиза'))
+    } finally {
+      setSavingSketchDates(false)
     }
   }
 
@@ -2002,9 +2153,13 @@ export default function OrderThreadPage() {
         sketchStartedAt={order.sketchStartedAt}
         sketchReadyAt={order.sketchReadyAt}
         savingNote={savingNote}
+        savingSketchDates={savingSketchDates}
         onNoteDraftChange={setNoteDraft}
         onSaveNote={() => {
           void handleSaveNote()
+        }}
+        onSaveSketchDates={(startedAt, readyAt) => {
+          void handleSaveSketchDates(startedAt, readyAt)
         }}
       />
 
@@ -2045,9 +2200,13 @@ export default function OrderThreadPage() {
           sketchStartedAt={order.sketchStartedAt}
           sketchReadyAt={order.sketchReadyAt}
           savingNote={savingNote}
+          savingSketchDates={savingSketchDates}
           onNoteDraftChange={setNoteDraft}
           onSaveNote={() => {
             void handleSaveNote()
+          }}
+          onSaveSketchDates={(startedAt, readyAt) => {
+            void handleSaveSketchDates(startedAt, readyAt)
           }}
         />
       </Drawer>

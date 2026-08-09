@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import CloseIcon from '@mui/icons-material/Close'
 import DownloadIcon from '@mui/icons-material/Download'
 import ImageIcon from '@mui/icons-material/Image'
+import LinkIcon from '@mui/icons-material/Link'
 import { Box, Button, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material'
 
 export interface LightboxImage {
@@ -90,8 +91,30 @@ async function downloadImage(image: LightboxImage) {
   URL.revokeObjectURL(objectUrl)
 }
 
+async function copyImageLink(url: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(url)
+      return
+    } catch {
+      // В небезопасном контексте или без разрешения используем старый способ.
+    }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = url
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  textarea.remove()
+  if (!copied) throw new Error('Не удалось скопировать ссылку')
+}
+
 export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreviewProps) {
   const [downloading, setDownloading] = useState(false)
+  const [copied, setCopied] = useState(false)
   const { previewUrl, loading, failed } = useRenderableImageUrl(image)
 
   const handleDownload = async () => {
@@ -101,6 +124,16 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
       await downloadImage(image)
     } finally {
       setDownloading(false)
+    }
+  }
+
+  const handleCopyLink = async () => {
+    try {
+      await copyImageLink(image.url)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setCopied(false)
     }
   }
 
@@ -159,13 +192,31 @@ export function ImageAttachmentPreview({ image, onOpen }: ImageAttachmentPreview
         sx={{
           minWidth: 0,
           height: 28,
-          borderRadius: '0 0 4px 4px',
+          borderRadius: 0,
           fontSize: 11,
           lineHeight: 1,
           textTransform: 'none',
         }}
       >
         Скачать
+      </Button>
+      <Button
+        fullWidth
+        size="small"
+        variant="outlined"
+        startIcon={<LinkIcon />}
+        onClick={() => void handleCopyLink()}
+        sx={{
+          minWidth: 0,
+          height: 28,
+          borderTop: 0,
+          borderRadius: '0 0 4px 4px',
+          fontSize: 11,
+          lineHeight: 1,
+          textTransform: 'none',
+        }}
+      >
+        {copied ? 'Скопировано' : 'Копировать'}
       </Button>
     </Box>
   )

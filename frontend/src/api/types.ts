@@ -51,6 +51,8 @@ export interface UpdateOrderPayload {
   dialogLink?: string | null
   sketchDesignerId?: number | null
   revisionDesignerId?: number | null
+  sketchStartedAt?: string | null
+  sketchReadyAt?: string | null
 }
 
 export type OrderSource = 'MANUAL' | 'BLUESALES'

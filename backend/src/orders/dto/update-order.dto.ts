@@ -1,10 +1,12 @@
 import {
+  IsDateString,
   IsInt,
   IsOptional,
   IsString,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateOrderDto {
@@ -38,4 +40,14 @@ export class UpdateOrderDto {
   @IsInt()
   @Min(1)
   revisionDesignerId?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsDateString()
+  sketchStartedAt?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsDateString()
+  sketchReadyAt?: string | null;
 }

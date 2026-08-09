@@ -499,6 +499,47 @@ export class OrdersService {
       data.dialogLink = nextDialogLink;
     }
 
+    if (dto.sketchStartedAt !== undefined || dto.sketchReadyAt !== undefined) {
+      const nextStartedAt =
+        dto.sketchStartedAt !== undefined
+          ? dto.sketchStartedAt === null
+            ? null
+            : new Date(dto.sketchStartedAt)
+          : existing.sketchStartedAt;
+      const nextReadyAt =
+        dto.sketchReadyAt !== undefined
+          ? dto.sketchReadyAt === null
+            ? null
+            : new Date(dto.sketchReadyAt)
+          : existing.sketchReadyAt;
+
+      if (nextStartedAt && nextReadyAt && nextReadyAt < nextStartedAt) {
+        throw new BadRequestException('Дата готовности эскиза не может быть раньше даты начала');
+      }
+
+      if (dto.sketchStartedAt !== undefined) {
+        if (nextStartedAt?.getTime() !== existing.sketchStartedAt?.getTime()) {
+          changes.push({
+            field: 'sketchStartedAt',
+            oldValue: existing.sketchStartedAt?.toISOString() ?? null,
+            newValue: nextStartedAt?.toISOString() ?? null,
+          });
+        }
+        data.sketchStartedAt = nextStartedAt;
+      }
+
+      if (dto.sketchReadyAt !== undefined) {
+        if (nextReadyAt?.getTime() !== existing.sketchReadyAt?.getTime()) {
+          changes.push({
+            field: 'sketchReadyAt',
+            oldValue: existing.sketchReadyAt?.toISOString() ?? null,
+            newValue: nextReadyAt?.toISOString() ?? null,
+          });
+        }
+        data.sketchReadyAt = nextReadyAt;
+      }
+    }
+
     if (dto.sketchDesignerId !== undefined) {
       const next = await this.validateAssigneeRole(
         dto.sketchDesignerId,
