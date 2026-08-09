@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 
 const ARTIST_NAME = process.argv[2] || 'Аня Колесова';
-const DATABASE_URL = "postgresql://metalicaffq9LmgueUjjpuLYsehWLCfr4eyjmc8E:metalicaffq9LmgueUjjpuLYsehWLCfr4eyjmc8E@185.147.27.149:5432/metalica?schema=public";
+const DATABASE_URL = process.env.DATABASE_URL;
 const APP_BASE_URL = (process.env.APP_BASE_URL || 'https://metallity-crm.ru').replace(/\/+$/, '');
 
 const MOSCOW_OFFSET_MINUTES = 180;
