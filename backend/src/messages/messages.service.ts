@@ -8,7 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { AuthUser } from '../auth/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import { StorageService } from '../storage/storage.service';
+import { AttachmentsService } from '../storage/attachments.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { UpdateMessageTextDto } from './dto/update-message-text.dto';
 import { MessageKind } from './message-kind';
@@ -39,7 +39,7 @@ export class MessagesService {
 
   constructor(
     private prisma: PrismaService,
-    private storage: StorageService,
+    private attachments: AttachmentsService,
   ) {}
 
   async list(orderId: number, options: { limit?: number; before?: number } = {}) {
@@ -72,15 +72,7 @@ export class MessagesService {
 
     const body = dto.body?.trim() || null;
     const buildAttachments = (attachmentKind: string) =>
-      dto.attachmentKeys?.length
-        ? {
-            create: dto.attachmentKeys.map((key) => ({
-              objectKey: key,
-              filename: key.substring(key.lastIndexOf('/') + 1),
-              kind: attachmentKind,
-            })),
-          }
-        : undefined;
+      this.attachments.buildCreateInput(dto.attachmentKeys, attachmentKind);
 
     // Запрос правки: сообщение + связанная (пустая) модель Revision.
     if (dto.kind === MessageKind.REVISION_REQUEST) {
@@ -102,7 +94,7 @@ export class MessagesService {
           orderId,
           authorId,
           body,
-          attachments: buildAttachments('attachment'),
+          attachments: await buildAttachments('attachment'),
           revision: { create: { orderId } },
         },
         include: messageInclude,
@@ -134,7 +126,7 @@ export class MessagesService {
           orderId,
           authorId,
           body,
-          attachments: buildAttachments('revision'),
+          attachments: await buildAttachments('revision'),
           revisionClosure: {
             create: {
               revisionId: revision.id,
@@ -155,7 +147,7 @@ export class MessagesService {
         orderId,
         authorId,
         body,
-        attachments: buildAttachments('attachment'),
+        attachments: await buildAttachments('attachment'),
       },
       include: messageInclude,
     });
@@ -228,15 +220,7 @@ export class MessagesService {
   }
 
   private async serialize(m: MessageWithRelations) {
-    const attachments = await Promise.all(
-      m.attachments.map(async (a) => ({
-        id: a.id,
-        url: await this.storage.getUrl(a.objectKey),
-        filename: a.filename,
-        mimeType: a.mimeType,
-        kind: a.kind,
-      })),
-    );
+    const attachments = await this.attachments.serialize(m.attachments);
 
     const kind = m.revision
       ? MessageKind.REVISION_REQUEST

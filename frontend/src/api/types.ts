@@ -198,7 +198,9 @@ export interface Attachment {
   id: number
   url: string
   filename: string
-  mimeType: string
+  mimeType: string | null
+  /** null, если хранилище не отдало метаданные объекта. */
+  size: number | null
   kind: string
 }
 

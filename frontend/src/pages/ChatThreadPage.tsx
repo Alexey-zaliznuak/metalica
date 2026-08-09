@@ -37,6 +37,7 @@ import {
   formatBytes,
   logApiError,
 } from '../api/errors'
+import AttachmentSizeBadge from '../components/AttachmentSizeBadge'
 import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
@@ -570,11 +571,13 @@ export default function ChatThreadPage() {
                             image={{
                               url: attachment.url,
                               filename: attachment.filename,
+                              size: attachment.size,
                             }}
                             onOpen={() =>
                               setLightbox({
                                 url: attachment.url,
                                 filename: attachment.filename,
+                                size: attachment.size,
                               })
                             }
                           />
@@ -655,8 +658,16 @@ export default function ChatThreadPage() {
                   component="img"
                   src={image.previewUrl}
                   alt={image.file.name}
-                  sx={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 1, border: '1px solid rgba(0,0,0,0.12)' }}
+                  sx={{
+                    display: 'block',
+                    width: 72,
+                    height: 72,
+                    objectFit: 'cover',
+                    borderRadius: 1,
+                    border: '1px solid rgba(0,0,0,0.12)',
+                  }}
                 />
+                <AttachmentSizeBadge bytes={image.file.size} />
                 <IconButton
                   size="small"
                   onClick={() => removePending(image.id)}

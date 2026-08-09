@@ -4,10 +4,13 @@ import DownloadIcon from '@mui/icons-material/Download'
 import ImageIcon from '@mui/icons-material/Image'
 import LinkIcon from '@mui/icons-material/Link'
 import { Box, Button, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material'
+import { formatBytes } from '../api/errors'
+import AttachmentSizeBadge from './AttachmentSizeBadge'
 
 export interface LightboxImage {
   url: string
   filename: string
+  size?: number | null
 }
 
 interface ImageLightboxProps {
@@ -144,47 +147,54 @@ export function ImageAttachmentPreview({
 
   return (
     <Box sx={{ width: 120 }}>
-      {loading || failed ? (
-        <Box
-          sx={{
-            width: 120,
-            height: 120,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 1,
-            borderRadius: '4px 4px 0 0',
-            border: '1px solid rgba(0,0,0,0.12)',
-            borderBottom: 0,
-            bgcolor: 'action.hover',
-          }}
-        >
-          {loading ? <CircularProgress size={28} /> : <ImageIcon color="action" fontSize="large" />}
-          <Typography variant="caption">
-            {loading ? 'Обработка HEIC…' : 'Не удалось показать HEIC'}
-          </Typography>
-        </Box>
-      ) : (
-        <Box
-          component="img"
-          src={previewUrl}
-          alt={image.filename}
-          loading="lazy"
-          decoding="async"
-          onClick={onOpen}
-          sx={{
-            display: 'block',
-            width: 120,
-            height: 120,
-            objectFit: 'cover',
-            borderRadius: '4px 4px 0 0',
-            cursor: 'pointer',
-            border: '1px solid rgba(0,0,0,0.12)',
-            borderBottom: 0,
-          }}
-        />
-      )}
+      <Box sx={{ position: 'relative' }}>
+        {loading || failed ? (
+          <Box
+            sx={{
+              width: 120,
+              height: 120,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1,
+              borderRadius: '4px 4px 0 0',
+              border: '1px solid rgba(0,0,0,0.12)',
+              borderBottom: 0,
+              bgcolor: 'action.hover',
+            }}
+          >
+            {loading ? (
+              <CircularProgress size={28} />
+            ) : (
+              <ImageIcon color="action" fontSize="large" />
+            )}
+            <Typography variant="caption">
+              {loading ? 'Обработка HEIC…' : 'Не удалось показать HEIC'}
+            </Typography>
+          </Box>
+        ) : (
+          <Box
+            component="img"
+            src={previewUrl}
+            alt={image.filename}
+            loading="lazy"
+            decoding="async"
+            onClick={onOpen}
+            sx={{
+              display: 'block',
+              width: 120,
+              height: 120,
+              objectFit: 'cover',
+              borderRadius: '4px 4px 0 0',
+              cursor: 'pointer',
+              border: '1px solid rgba(0,0,0,0.12)',
+              borderBottom: 0,
+            }}
+          />
+        )}
+        <AttachmentSizeBadge bytes={image.size} />
+      </Box>
       <Button
         fullWidth
         size="small"
@@ -280,6 +290,26 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
         p: 2,
       }}
     >
+      {image.size != null && (
+        <Typography
+          variant="caption"
+          sx={{
+            position: 'absolute',
+            top: 24,
+            left: 16,
+            px: 1,
+            py: 0.4,
+            borderRadius: 1,
+            bgcolor: 'rgba(0,0,0,0.5)',
+            color: '#fff',
+            fontWeight: 600,
+            pointerEvents: 'none',
+          }}
+        >
+          {formatBytes(image.size)}
+        </Typography>
+      )}
+
       <Box
         sx={{
           position: 'absolute',

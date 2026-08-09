@@ -59,6 +59,7 @@ import {
   formatBytes,
   logApiError,
 } from '../api/errors'
+import AttachmentSizeBadge from '../components/AttachmentSizeBadge'
 import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
@@ -322,10 +323,14 @@ function MessageBubble({
                 {message.attachments.map((att) => (
                   <ImageAttachmentPreview
                     key={att.id}
-                    image={{ url: att.url, filename: att.filename }}
+                    image={{ url: att.url, filename: att.filename, size: att.size }}
                     lightControls={ownSide && !isRequest && !isAnswer}
                     onOpen={() =>
-                      onOpenImage({ url: att.url, filename: att.filename })
+                      onOpenImage({
+                        url: att.url,
+                        filename: att.filename,
+                        size: att.size,
+                      })
                     }
                   />
                 ))}
@@ -1999,14 +2004,6 @@ export default function OrderThreadPage() {
           </Tooltip>
         </ToggleButtonGroup>
 
-        {hasOpenRevision && (
-          <Alert severity="info" icon={<InfoOutlinedIcon fontSize="small" />} sx={{ mb: 1 }}>
-            По заказу уже есть незакрытая правка. Новый запрос правки создать нельзя, пока
-            текущая не закрыта. Если появились новые детали — отредактируйте существующий
-            запрос правки или отправьте обычное сообщение (без пометок).
-          </Alert>
-        )}
-
         {pendingImages.length > 0 && (
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 1, gap: 1 }}>
             {pendingImages.map((img) => (
@@ -2035,6 +2032,7 @@ export default function OrderThreadPage() {
                     src={img.previewUrl}
                     alt={img.file.name}
                     sx={{
+                      display: 'block',
                       width: 72,
                       height: 72,
                       objectFit: 'cover',
@@ -2043,6 +2041,7 @@ export default function OrderThreadPage() {
                     }}
                   />
                 )}
+                <AttachmentSizeBadge bytes={img.file.size} />
                 <IconButton
                   size="small"
                   onClick={() => removePending(img.id)}

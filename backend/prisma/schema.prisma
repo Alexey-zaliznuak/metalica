@@ -406,6 +406,9 @@ model Attachment {
   objectKey     String
   filename      String
   mimeType      String?
+  // null у вложений, загруженных до появления колонки: размер дотягивается
+  // из хранилища при первой отдаче сообщения.
+  size          Int?
   kind          String       @default("attachment")
   createdAt     DateTime     @default(now())
 

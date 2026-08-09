@@ -93,6 +93,28 @@ export class StorageService implements OnModuleInit {
     return { key, filename: file.originalname, mimeType: file.mimetype };
   }
 
+  /**
+   * Метаданные объекта в бакете. Источник правды по размеру и типу файла:
+   * значения от клиента для этого не годятся. Возвращает null, если объекта
+   * нет или хранилище недоступно — вызывающий код должен уметь жить без них.
+   */
+  async stat(
+    objectKey: string,
+  ): Promise<{ size: number; mimeType: string | null } | null> {
+    try {
+      const stat = await this.internalClient.statObject(this.bucket, objectKey);
+      return {
+        size: stat.size,
+        mimeType: (stat.metaData?.['content-type'] as string) || null,
+      };
+    } catch (e) {
+      this.logger.warn(
+        `Не удалось получить метаданные "${objectKey}" из "${this.bucket}": ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
+
   async getUrl(objectKey: string): Promise<string> {
     const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
     return `${this.publicFilesBaseUrl}/${encodedKey}?v=${encodeURIComponent(this.publicFilesVersion)}`;

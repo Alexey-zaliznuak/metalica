@@ -8,7 +8,7 @@ import {
 import { ChatMemberRole, ChatType, Prisma, Role } from '@prisma/client';
 import { AuthUser } from '../auth/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import { StorageService } from '../storage/storage.service';
+import { AttachmentsService } from '../storage/attachments.service';
 import { ChatsGateway } from '../realtime/chats.gateway';
 import { AddChatMemberDto } from './dto/add-chat-member.dto';
 import { CreateChatDto } from './dto/create-chat.dto';
@@ -48,7 +48,7 @@ export class ChatsService {
 
   constructor(
     private prisma: PrismaService,
-    private storage: StorageService,
+    private attachments: AttachmentsService,
     private gateway: ChatsGateway,
   ) {}
 
@@ -227,21 +227,20 @@ export class ChatsService {
       throw new BadRequestException('Сообщение не может быть пустым');
     }
 
+    // Метаданные вложений тянутся из хранилища до транзакции, чтобы не держать
+    // её открытой на время сетевых запросов в MinIO.
+    const attachments = await this.attachments.buildCreateInput(
+      dto.attachmentKeys,
+      'attachment',
+    );
+
     const message = await this.prisma.$transaction(async (tx) => {
       const created = await tx.chatMessage.create({
         data: {
           chatId,
           authorId,
           body: dto.body?.trim() || null,
-          attachments: dto.attachmentKeys?.length
-            ? {
-                create: dto.attachmentKeys.map((key) => ({
-                  objectKey: key,
-                  filename: key.substring(key.lastIndexOf('/') + 1),
-                  kind: 'attachment',
-                })),
-              }
-            : undefined,
+          attachments,
         },
         include: chatMessageInclude,
       });
@@ -369,15 +368,7 @@ export class ChatsService {
   }
 
   private async serializeMessage(message: ChatMessageWithRelations) {
-    const attachments = await Promise.all(
-      message.attachments.map(async (attachment) => ({
-        id: attachment.id,
-        url: await this.storage.getUrl(attachment.objectKey),
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        kind: attachment.kind,
-      })),
-    );
+    const attachments = await this.attachments.serialize(message.attachments);
 
     return {
       id: message.id,
