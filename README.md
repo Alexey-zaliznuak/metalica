@@ -101,14 +101,15 @@ server {
     ssl_certificate /etc/letsencrypt/live/metallity-crm.ru/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/metallity-crm.ru/privkey.pem;
 
-    client_max_body_size 300m;
-    client_body_timeout 600s;
-    proxy_read_timeout 600s;
-    proxy_send_timeout 600s;
+    client_max_body_size 1100m;
+    client_body_timeout 3600s;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
+        proxy_request_buffering off;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
