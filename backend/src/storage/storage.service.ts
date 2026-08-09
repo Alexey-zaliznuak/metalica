@@ -16,37 +16,25 @@ interface UploadedFile {
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
   private internalClient: MinioClient;
-  private publicClient: MinioClient;
   private bucket: string;
+  private publicFilesBaseUrl: string;
 
   constructor() {
     const accessKey = process.env.MINIO_ACCESS_KEY || 'minioadmin';
     const secretKey = process.env.MINIO_SECRET_KEY || 'minioadmin';
     this.bucket = process.env.MINIO_BUCKET || 'metalica';
+    const appDomain = (process.env.APP_DOMAIN || 'metallity-crm.ru')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '');
+    const appProtocol = (process.env.APP_PROTOCOL || 'https').replace(/:$/, '');
+    this.publicFilesBaseUrl = `${appProtocol}://${appDomain}/files`;
 
-    // Pin the region so the client never performs a getBucketRegion network
-    // lookup. Without this, presignedGetObject on the public client tries to
-    // reach its (browser-facing) endpoint from inside the container, which is
-    // unreachable and fails with ECONNREFUSED.
     const region = process.env.MINIO_REGION || 'us-east-1';
 
-    // Internal client: used inside the docker network for uploads/admin.
     this.internalClient = new MinioClient({
       endPoint: process.env.MINIO_ENDPOINT || 'minio',
       port: Number(process.env.MINIO_PORT) || 9000,
       useSSL: (process.env.MINIO_USE_SSL || 'false') === 'true',
-      region,
-      accessKey,
-      secretKey,
-    });
-
-    // Public client: used only to compute presigned GET URLs that the
-    // browser can reach. Its endpoint must be browser-reachable, because the
-    // host is part of the signed request.
-    this.publicClient = new MinioClient({
-      endPoint: process.env.MINIO_PUBLIC_ENDPOINT || 'localhost',
-      port: Number(process.env.MINIO_PUBLIC_PORT) || 9000,
-      useSSL: (process.env.MINIO_PUBLIC_USE_SSL || 'false') === 'true',
       region,
       accessKey,
       secretKey,
@@ -103,20 +91,9 @@ export class StorageService implements OnModuleInit {
     return { key, filename: file.originalname, mimeType: file.mimetype };
   }
 
-  async getUrl(objectKey: string, expirySeconds = 60 * 60 * 24): Promise<string> {
-    try {
-      return await this.publicClient.presignedGetObject(
-        this.bucket,
-        objectKey,
-        expirySeconds,
-      );
-    } catch (e) {
-      this.logger.error(
-        `Не удалось подписать ссылку на "${objectKey}": ${(e as Error).message}`,
-        (e as Error).stack,
-      );
-      throw e;
-    }
+  async getUrl(objectKey: string): Promise<string> {
+    const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
+    return `${this.publicFilesBaseUrl}/${encodedKey}`;
   }
 
   /**

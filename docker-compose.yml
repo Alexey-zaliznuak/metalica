@@ -20,8 +20,8 @@ services:
     env_file:
       - .env
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -29,6 +29,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    env_file:
+      - .env
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        bucket="$${MINIO_BUCKET:-metalica}"
+        mc alias set local http://minio:9000 "$${MINIO_ACCESS_KEY:-minioadmin}" "$${MINIO_SECRET_KEY:-minioadmin}"
+        mc mb --ignore-existing "local/$${bucket}"
+        printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}' "$${bucket}" > /tmp/public-read.json
+        mc anonymous set-json /tmp/public-read.json "local/$${bucket}"
+    restart: "no"
 
   backend:
     build:
@@ -44,7 +63,9 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     environment:
       PORT: 3000
 
@@ -60,13 +81,15 @@ services:
   nginx:
     image: nginx:alpine
     restart: unless-stopped
+    environment:
+      MINIO_BUCKET: ${MINIO_BUCKET:-metalica}
     depends_on:
       - backend
       - frontend
     ports:
-      - "${APP_PORT:-8080}:80"
+      - "127.0.0.1:${APP_PORT:-8080}:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
 
 volumes:
   pgdata:
