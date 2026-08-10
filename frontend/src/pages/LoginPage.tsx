@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
 import {
   Alert,
   Box,
@@ -10,12 +10,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
+import axios from 'axios'
+import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { describeApiError, logApiError } from '../api/errors'
 import { useAuth } from '../auth/AuthContext'
 import { BRAND } from '../theme'
-import { describeApiError, logApiError } from '../api/errors'
-import axios from 'axios'
 
 interface LocationState {
   from?: { pathname?: string }
@@ -118,7 +118,7 @@ export default function LoginPage() {
               <PrecisionManufacturingIcon sx={{ fontSize: 40 }} />
             </Box>
             <Typography variant="h5" align="center" sx={{ fontWeight: 800 }}>
-              Портреты на металле
+              Металлити
             </Typography>
             <Typography variant="body2" color="text.secondary" align="center">
               Заказы и правки металлических портретов

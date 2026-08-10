@@ -1,3 +1,12 @@
+import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn'
+import ForumIcon from '@mui/icons-material/Forum'
+import GroupIcon from '@mui/icons-material/Group'
+import InsightsIcon from '@mui/icons-material/Insights'
+import ListAltIcon from '@mui/icons-material/ListAlt'
+import LogoutIcon from '@mui/icons-material/Logout'
+import LowPriorityIcon from '@mui/icons-material/LowPriority'
+import MenuIcon from '@mui/icons-material/Menu'
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
 import {
   AppBar,
   Avatar,
@@ -17,20 +26,11 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
-import LogoutIcon from '@mui/icons-material/Logout'
-import MenuIcon from '@mui/icons-material/Menu'
-import ListAltIcon from '@mui/icons-material/ListAlt'
-import InsightsIcon from '@mui/icons-material/Insights'
-import GroupIcon from '@mui/icons-material/Group'
-import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn'
-import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
-import ForumIcon from '@mui/icons-material/Forum'
-import LowPriorityIcon from '@mui/icons-material/LowPriority'
 import { useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import type { UserScope } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { hasScope, roleLabel } from '../utils'
-import type { UserScope } from '../api/types'
 
 interface NavItem {
   to: string
@@ -187,7 +187,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </Box>
             <Box sx={{ display: { xs: 'none', sm: 'block' }, lineHeight: 1.05 }}>
               <Typography sx={{ fontWeight: 800, fontSize: 17 }}>
-                Портреты на металле
+                Металлити
               </Typography>
               <Typography sx={{ fontSize: 11, opacity: 0.8 }}>
                 заказы и правки
@@ -288,7 +288,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               <PrecisionManufacturingIcon sx={{ fontSize: 22 }} />
             </Box>
             <Box>
-              <Typography sx={{ fontWeight: 800 }}>Портреты на металле</Typography>
+              <Typography sx={{ fontWeight: 800 }}>Металлити</Typography>
               <Typography variant="caption" color="text.secondary">
                 заказы и правки
               </Typography>
