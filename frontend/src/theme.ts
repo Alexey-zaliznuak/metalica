@@ -1,6 +1,6 @@
 import { createTheme, alpha } from '@mui/material/styles'
 
-// Material blue palette for "Металлити".
+// Material blue palette for "Портреты на металле".
 // Deep → bright → light → pale, plus standard semantic accents
 // (blue messages, orange revisions, green resolutions).
 export const BRAND = {

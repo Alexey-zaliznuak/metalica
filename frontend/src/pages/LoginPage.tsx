@@ -118,7 +118,7 @@ export default function LoginPage() {
               <PrecisionManufacturingIcon sx={{ fontSize: 40 }} />
             </Box>
             <Typography variant="h5" align="center" sx={{ fontWeight: 800 }}>
-              Металлити
+              Портреты на металле
             </Typography>
             <Typography variant="body2" color="text.secondary" align="center">
               Заказы и правки металлических портретов
