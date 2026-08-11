@@ -80,7 +80,7 @@ function NotificationRow({ item }: { item: AppNotification }) {
             </Typography>
           ) : isOrderPayload(item) ? (
             <Typography variant="body2" sx={{ fontWeight: wasReadBeforeOpen ? 400 : 600 }}>
-              Новый заказ{' '}
+              {item.payload.statusName}:{' '}
               <MuiLink
                 component={RouterLink}
                 to={`/orders/${item.payload.orderId}`}
@@ -88,9 +88,8 @@ function NotificationRow({ item }: { item: AppNotification }) {
                 color="primary"
                 sx={{ fontWeight: 700 }}
               >
-                {item.payload.orderNumber}
-              </MuiLink>{' '}
-              в статусе {item.payload.statusName}
+                новый заказ
+              </MuiLink>
             </Typography>
           ) : null}
           <Typography variant="caption" color="text.secondary">
@@ -242,8 +241,7 @@ export default function NotificationBell() {
                     </Typography>
                   ) : isOrderPayload(toast.notification) ? (
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      Новый заказ {toast.notification.payload.orderNumber} ·{' '}
-                      {toast.notification.payload.statusName}
+                      {toast.notification.payload.statusName}: новый заказ
                     </Typography>
                   ) : null}
                   <Stack direction="row" justifyContent="flex-end" spacing={1}>
