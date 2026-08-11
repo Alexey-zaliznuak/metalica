@@ -13,6 +13,7 @@ import client from '../api/client'
 import { logApiError } from '../api/errors'
 import type { AppNotification } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { useUnreadTabIndicator } from './useUnreadTabIndicator'
 
 type ToastItem = {
   key: string
@@ -36,6 +37,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const socketRef = useRef<Socket | null>(null)
   const toastTimersRef = useRef<Map<string, number>>(new Map())
+
+  useUnreadTabIndicator(token ? unreadCount : 0)
 
   const dismissToast = useCallback((key: string) => {
     setToasts((prev) => prev.filter((item) => item.key !== key))
