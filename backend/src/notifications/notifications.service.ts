@@ -11,6 +11,9 @@ import { ChatsGateway } from '../realtime/chats.gateway';
 
 const RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
+/** Временно отключает создание и push новых уведомлений. Вернуть: поставить false. */
+const NOTIFICATIONS_CREATION_DISABLED = true;
+
 export type ChatMessageNotificationPayload = {
   chatId: number;
   chatName: string;
@@ -186,6 +189,9 @@ export class NotificationsService {
     chatType: ChatType;
     authorId: number;
   }) {
+    if (NOTIFICATIONS_CREATION_DISABLED) {
+      return;
+    }
     const dedupeKey = this.chatDedupeKey(params.chatId);
     const payload = {
       chatId: params.chatId,
@@ -246,6 +252,9 @@ export class NotificationsService {
     statusName: string;
     excludeUserId?: number | null;
   }) {
+    if (NOTIFICATIONS_CREATION_DISABLED) {
+      return;
+    }
     const recipients = await this.prisma.userOrderStatusNotification.findMany({
       where: {
         statusId: params.statusId,
