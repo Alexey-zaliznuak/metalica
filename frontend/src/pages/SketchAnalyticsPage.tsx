@@ -5,8 +5,10 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   CircularProgress,
   Divider,
+  FormControlLabel,
   Grid,
   IconButton,
   MenuItem,
@@ -46,6 +48,7 @@ export default function SketchAnalyticsPage() {
   const navigate = useNavigate()
   const [workStartHour, setWorkStartHour] = useState(9)
   const [workEndHour, setWorkEndHour] = useState(21)
+  const [excludeWithoutArtist, setExcludeWithoutArtist] = useState(true)
   const [period, setPeriod] = useState(createDefaultAnalyticsPeriod)
   const [data, setData] = useState<SketchAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -69,6 +72,7 @@ export default function SketchAnalyticsPage() {
           tzOffsetMinutes: MSK_OFFSET_MINUTES,
           dateFrom: dateRange.dateFrom,
           dateTo: dateRange.dateTo,
+          excludeWithoutArtist,
         },
       })
       setData(res.data)
@@ -78,7 +82,7 @@ export default function SketchAnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  }, [workStartHour, workEndHour, dateRange])
+  }, [workStartHour, workEndHour, dateRange, excludeWithoutArtist])
 
   useEffect(() => {
     load()
@@ -155,6 +159,17 @@ export default function SketchAnalyticsPage() {
         </Stack>
         <Divider sx={{ my: 2 }} />
         <AnalyticsDateFilter value={period} onChange={setPeriod} />
+        <FormControlLabel
+          sx={{ mt: 1.5, ml: 0 }}
+          control={
+            <Checkbox
+              checked={excludeWithoutArtist}
+              onChange={(e) => setExcludeWithoutArtist(e.target.checked)}
+              size="small"
+            />
+          }
+          label="Не учитывать эскизы без художника"
+        />
         {windowInvalid && (
           <Alert severity="warning" sx={{ mt: 2 }}>
             Конец рабочего дня должен быть позже начала.

@@ -223,19 +223,31 @@ export class MetricsService {
    * Для каждого заказа, у которого проставлены обе метки (sketchStartedAt и
    * sketchReadyAt), считает рабочее время между ними и группирует по текущему
    * художнику эскиза (sketchDesignerId). Заказы без художника попадают в
-   * отдельную строку «Без художника».
+   * отдельную строку «Без художника» (если excludeWithoutArtist = false).
    */
   async sketchAnalytics(params: {
     workStartHour?: number;
     workEndHour?: number;
     tzOffsetMinutes?: number;
     dateRange?: { from: Date; to: Date };
+    /** По умолчанию true — не учитывать эскизы без назначенного художника. */
+    excludeWithoutArtist?: boolean;
   }) {
     const workStartHour = this.clampHour(params.workStartHour, DEFAULT_WORK_START_HOUR);
     const workEndHour = this.clampHour(params.workEndHour, DEFAULT_WORK_END_HOUR);
     const tzOffsetMinutes = Number.isFinite(params.tzOffsetMinutes)
       ? (params.tzOffsetMinutes as number)
       : DEFAULT_TZ_OFFSET_MINUTES;
+    const excludeWithoutArtist = params.excludeWithoutArtist !== false;
+
+    const artistFilter = excludeWithoutArtist
+      ? { sketchDesigner: { is: { role: Role.SKETCH_DESIGNER } } }
+      : {
+          OR: [
+            { sketchDesignerId: null },
+            { sketchDesigner: { is: { role: Role.SKETCH_DESIGNER } } },
+          ],
+        };
 
     const orders = await this.prisma.order.findMany({
       where: {
@@ -243,10 +255,7 @@ export class MetricsService {
         sketchReadyAt: params.dateRange
           ? { gte: params.dateRange.from, lt: params.dateRange.to }
           : { not: null },
-        OR: [
-          { sketchDesignerId: null },
-          { sketchDesigner: { is: { role: Role.SKETCH_DESIGNER } } },
-        ],
+        ...artistFilter,
       },
       select: {
         sketchDesignerId: true,
@@ -263,6 +272,7 @@ export class MetricsService {
           ? { gte: params.dateRange.from, lt: params.dateRange.to }
           : { not: null },
         sketchReadyAt: null,
+        ...artistFilter,
       },
     });
 

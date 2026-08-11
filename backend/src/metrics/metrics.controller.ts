@@ -62,12 +62,16 @@ export class MetricsController {
     @Query('tzOffsetMinutes') tzOffsetMinutes?: string,
     @Query('dateFrom') dateFromRaw?: string,
     @Query('dateTo') dateToRaw?: string,
+    @Query('excludeWithoutArtist') excludeWithoutArtistRaw?: string,
   ) {
+    // По умолчанию включено: в среднее/количество идут только эскизы с художником.
+    const excludeWithoutArtist = excludeWithoutArtistRaw !== 'false';
     return this.metrics.sketchAnalytics({
       workStartHour: this.toNumber(workStartHour),
       workEndHour: this.toNumber(workEndHour),
       tzOffsetMinutes: this.toNumber(tzOffsetMinutes),
       dateRange: this.toDateRange(dateFromRaw, dateToRaw),
+      excludeWithoutArtist,
     });
   }
 
