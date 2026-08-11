@@ -302,8 +302,18 @@ export interface NotificationsPage {
   hasMore: boolean
 }
 
+export interface NotificationStatusSetting {
+  statusId: number
+  deliveryManagerNames: string[]
+  onboardingManagerNames: string[]
+  sketchDesignerNames: string[]
+  revisionDesignerNames: string[]
+}
+
 export interface NotificationSettings {
-  orderStatusIds: number[]
+  statuses: NotificationStatusSetting[]
+  /** @deprecated используйте statuses */
+  orderStatusIds?: number[]
 }
 
 export interface ChatMessage {

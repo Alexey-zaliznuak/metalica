@@ -238,10 +238,8 @@ const OrderCard = memo(function OrderCard({
     showStatusTimer &&
     statusTimer.alertAfterMinutes != null &&
     minutesInStatus >= statusTimer.alertAfterMinutes
-  const orderStatusLabel =
-    order.orderStatus && order.orderStatus.length > 18
-      ? `${order.orderStatus.slice(0, 18)}...`
-      : (order.orderStatus ?? '—')
+  const sketchDesignerName = order.sketchDesigner?.name ?? '—'
+  const revisionDesignerName = order.revisionDesigner?.name ?? '—'
   return (
     <Paper
       variant="outlined"
@@ -273,12 +271,16 @@ const OrderCard = memo(function OrderCard({
         {order.title || 'Без названия'}
       </Typography>
       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-        <Tooltip title={order.orderStatus ?? ''}>
+        <Tooltip title={`Художник эскиза: ${sketchDesignerName}`}>
           <Chip
             size="small"
-            label={orderStatusLabel}
-            color={order.orderStatus ? 'info' : 'default'}
-            variant={order.orderStatus ? 'filled' : 'outlined'}
+            label={
+              sketchDesignerName.length > 18
+                ? `${sketchDesignerName.slice(0, 18)}...`
+                : sketchDesignerName
+            }
+            color={order.sketchDesigner ? 'info' : 'default'}
+            variant={order.sketchDesigner ? 'filled' : 'outlined'}
           />
         </Tooltip>
         <Tooltip
@@ -337,12 +339,11 @@ const OrderCard = memo(function OrderCard({
             </Tooltip>
           </>
         ) : (
-          <>
-            <SyncAltIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
-            <Typography variant="caption" color="text.secondary">
-              {canMoveCard ? 'Можно перетаскивать' : 'Ручной заказ: статус не переносится'}
+          <Tooltip title={`Художник правок: ${revisionDesignerName}`}>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              {revisionDesignerName}
             </Typography>
-          </>
+          </Tooltip>
         )}
       </Stack>
       <Stack
