@@ -461,13 +461,18 @@ model ChatNotificationPref {
 }
 
 // Какие статусы заказов пользователь хочет получать в колокольчике.
+// Пустые people-фильтры = без ограничения (как на доске заказов).
 model UserOrderStatusNotification {
-  id        Int      @id @default(autoincrement())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int
+  id                       Int      @id @default(autoincrement())
+  user                     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                   Int
   // BluesalesOrderStatus.bsOrderStatusId (без FK — справочник денормализован)
-  statusId  Int
-  createdAt DateTime @default(now())
+  statusId                 Int
+  deliveryManagerNames     String[] @default([])
+  onboardingManagerNames   String[] @default([])
+  sketchDesignerNames      String[] @default([])
+  revisionDesignerNames    String[] @default([])
+  createdAt                DateTime @default(now())
 
   @@unique([userId, statusId])
   @@index([statusId])

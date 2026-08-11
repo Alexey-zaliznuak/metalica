@@ -47,7 +47,7 @@ export class NotificationsController {
     @CurrentUser() user: AuthUser,
     @Body() dto: UpdateNotificationSettingsDto,
   ) {
-    return this.notifications.updateSettings(user.id, dto.orderStatusIds);
+    return this.notifications.updateSettings(user.id, dto.statuses);
   }
 
   @Post('read')

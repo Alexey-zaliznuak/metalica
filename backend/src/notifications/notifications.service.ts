@@ -12,7 +12,7 @@ import { ChatsGateway } from '../realtime/chats.gateway';
 const RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** Временно отключает создание и push новых уведомлений. Вернуть: поставить false. */
-const NOTIFICATIONS_CREATION_DISABLED = true;
+const NOTIFICATIONS_CREATION_DISABLED = false;
 
 export type ChatMessageNotificationPayload = {
   chatId: number;
@@ -127,14 +127,56 @@ export class NotificationsService {
   async getSettings(userId: number) {
     const rows = await this.prisma.userOrderStatusNotification.findMany({
       where: { userId },
-      select: { statusId: true },
+      select: {
+        statusId: true,
+        deliveryManagerNames: true,
+        onboardingManagerNames: true,
+        sketchDesignerNames: true,
+        revisionDesignerNames: true,
+      },
       orderBy: { statusId: 'asc' },
     });
-    return { orderStatusIds: rows.map((row) => row.statusId) };
+    return {
+      statuses: rows.map((row) => ({
+        statusId: row.statusId,
+        deliveryManagerNames: row.deliveryManagerNames,
+        onboardingManagerNames: row.onboardingManagerNames,
+        sketchDesignerNames: row.sketchDesignerNames,
+        revisionDesignerNames: row.revisionDesignerNames,
+      })),
+      orderStatusIds: rows.map((row) => row.statusId),
+    };
   }
 
-  async updateSettings(userId: number, orderStatusIds: number[]) {
-    const uniqueIds = Array.from(new Set(orderStatusIds));
+  async updateSettings(
+    userId: number,
+    statuses: {
+      statusId: number;
+      deliveryManagerNames: string[];
+      onboardingManagerNames: string[];
+      sketchDesignerNames: string[];
+      revisionDesignerNames: string[];
+    }[],
+  ) {
+    const byStatus = new Map<
+      number,
+      {
+        deliveryManagerNames: string[];
+        onboardingManagerNames: string[];
+        sketchDesignerNames: string[];
+        revisionDesignerNames: string[];
+      }
+    >();
+    for (const item of statuses) {
+      byStatus.set(item.statusId, {
+        deliveryManagerNames: this.normalizeNameList(item.deliveryManagerNames),
+        onboardingManagerNames: this.normalizeNameList(item.onboardingManagerNames),
+        sketchDesignerNames: this.normalizeNameList(item.sketchDesignerNames),
+        revisionDesignerNames: this.normalizeNameList(item.revisionDesignerNames),
+      });
+    }
+    const uniqueIds = Array.from(byStatus.keys());
+
     if (uniqueIds.length > 0) {
       const known = await this.prisma.bluesalesOrderStatus.findMany({
         where: { bsOrderStatusId: { in: uniqueIds } },
@@ -151,7 +193,14 @@ export class NotificationsService {
       await tx.userOrderStatusNotification.deleteMany({ where: { userId } });
       if (uniqueIds.length > 0) {
         await tx.userOrderStatusNotification.createMany({
-          data: uniqueIds.map((statusId) => ({ userId, statusId })),
+          data: uniqueIds.map((statusId) => {
+            const filters = byStatus.get(statusId)!;
+            return {
+              userId,
+              statusId,
+              ...filters,
+            };
+          }),
         });
       }
     });
@@ -262,9 +311,35 @@ export class NotificationsService {
           ? { userId: { not: params.excludeUserId } }
           : {}),
       },
-      select: { userId: true },
+      select: {
+        userId: true,
+        deliveryManagerNames: true,
+        onboardingManagerNames: true,
+        sketchDesignerNames: true,
+        revisionDesignerNames: true,
+      },
     });
     if (recipients.length === 0) {
+      return;
+    }
+
+    const needsPeopleCheck = recipients.some((row) => this.hasPeopleFilters(row));
+    const orderPeople = needsPeopleCheck
+      ? await this.prisma.order.findUnique({
+          where: { id: params.orderId },
+          select: {
+            deliveryManagerName: true,
+            onboardingManagerName: true,
+            sketchDesigner: { select: { name: true } },
+            revisionDesigner: { select: { name: true } },
+          },
+        })
+      : null;
+
+    const userIds = recipients
+      .filter((row) => this.matchesPeopleFilters(orderPeople, row))
+      .map((row) => row.userId);
+    if (userIds.length === 0) {
       return;
     }
 
@@ -275,7 +350,6 @@ export class NotificationsService {
       statusName: params.statusName,
     } satisfies OrderStatusNotificationPayload;
     const payloadJson = JSON.stringify(payload);
-    const userIds = recipients.map((row) => row.userId);
 
     const inserted = await this.prisma.$queryRawUnsafe<NotificationRow[]>(
       `
@@ -348,6 +422,82 @@ export class NotificationsService {
 
   private chatDedupeKey(chatId: number) {
     return `chat:${chatId}`;
+  }
+
+  private normalizeNameList(values: string[] | undefined): string[] {
+    if (!values?.length) return [];
+    return Array.from(
+      new Set(values.map((value) => value.trim()).filter(Boolean)),
+    );
+  }
+
+  private hasPeopleFilters(filters: {
+    deliveryManagerNames: string[];
+    onboardingManagerNames: string[];
+    sketchDesignerNames: string[];
+    revisionDesignerNames: string[];
+  }) {
+    return (
+      filters.deliveryManagerNames.length > 0 ||
+      filters.onboardingManagerNames.length > 0 ||
+      filters.sketchDesignerNames.length > 0 ||
+      filters.revisionDesignerNames.length > 0
+    );
+  }
+
+  /**
+   * Как на доске заказов: пустой список в категории = без ограничения;
+   * непустые категории объединяются через AND.
+   */
+  private matchesPeopleFilters(
+    order: {
+      deliveryManagerName: string | null;
+      onboardingManagerName: string | null;
+      sketchDesigner: { name: string } | null;
+      revisionDesigner: { name: string } | null;
+    } | null,
+    filters: {
+      deliveryManagerNames: string[];
+      onboardingManagerNames: string[];
+      sketchDesignerNames: string[];
+      revisionDesignerNames: string[];
+    },
+  ) {
+    if (!this.hasPeopleFilters(filters)) {
+      return true;
+    }
+    if (!order) {
+      return false;
+    }
+    if (
+      filters.deliveryManagerNames.length > 0 &&
+      (!order.deliveryManagerName ||
+        !filters.deliveryManagerNames.includes(order.deliveryManagerName))
+    ) {
+      return false;
+    }
+    if (
+      filters.onboardingManagerNames.length > 0 &&
+      (!order.onboardingManagerName ||
+        !filters.onboardingManagerNames.includes(order.onboardingManagerName))
+    ) {
+      return false;
+    }
+    if (
+      filters.sketchDesignerNames.length > 0 &&
+      (!order.sketchDesigner?.name ||
+        !filters.sketchDesignerNames.includes(order.sketchDesigner.name))
+    ) {
+      return false;
+    }
+    if (
+      filters.revisionDesignerNames.length > 0 &&
+      (!order.revisionDesigner?.name ||
+        !filters.revisionDesignerNames.includes(order.revisionDesigner.name))
+    ) {
+      return false;
+    }
+    return true;
   }
 
   private async ensureCanAccessChat(chatId: number, userId: number) {

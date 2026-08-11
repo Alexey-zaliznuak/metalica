@@ -1,9 +1,37 @@
-import { ArrayUnique, IsArray, IsInt, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsInt,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+
+export class NotificationStatusSettingDto {
+  @IsInt()
+  @Min(1)
+  statusId!: number;
+
+  @IsArray()
+  @IsString({ each: true })
+  deliveryManagerNames!: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  onboardingManagerNames!: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  sketchDesignerNames!: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  revisionDesignerNames!: string[];
+}
 
 export class UpdateNotificationSettingsDto {
   @IsArray()
-  @ArrayUnique()
-  @IsInt({ each: true })
-  @Min(1, { each: true })
-  orderStatusIds!: number[];
+  @ValidateNested({ each: true })
+  @Type(() => NotificationStatusSettingDto)
+  statuses!: NotificationStatusSettingDto[];
 }
