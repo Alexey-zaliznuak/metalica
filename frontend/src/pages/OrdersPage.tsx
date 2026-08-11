@@ -340,9 +340,21 @@ const OrderCard = memo(function OrderCard({
           </>
         ) : (
           <Tooltip title={`Художник правок: ${revisionDesignerName}`}>
-            <Typography variant="caption" color="text.secondary" noWrap>
-              {revisionDesignerName}
-            </Typography>
+            <Chip
+              size="small"
+              label={
+                revisionDesignerName.length > 22
+                  ? `${revisionDesignerName.slice(0, 22)}...`
+                  : revisionDesignerName
+              }
+              color={order.revisionDesigner ? 'secondary' : 'default'}
+              variant="outlined"
+              sx={{
+                maxWidth: '100%',
+                height: 22,
+                '& .MuiChip-label': { px: 1, fontSize: 12 },
+              }}
+            />
           </Tooltip>
         )}
       </Stack>
