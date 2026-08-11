@@ -88,7 +88,7 @@ function NotificationRow({ item }: { item: AppNotification }) {
                 color="primary"
                 sx={{ fontWeight: 700 }}
               >
-                новый заказ
+                новый заказ {item.payload.orderNumber}
               </MuiLink>
             </Typography>
           ) : null}
@@ -241,7 +241,8 @@ export default function NotificationBell() {
                     </Typography>
                   ) : isOrderPayload(toast.notification) ? (
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {toast.notification.payload.statusName}: новый заказ
+                      {toast.notification.payload.statusName}: новый заказ{' '}
+                      {toast.notification.payload.orderNumber}
                     </Typography>
                   ) : null}
                   <Stack direction="row" justifyContent="flex-end" spacing={1}>
