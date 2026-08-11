@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-const BEEP_INTERVAL_MS = 12_000
+const BEEP_INTERVAL_MS = 6_000
 
 function playUnreadBeep(audioCtx: AudioContext) {
   if (audioCtx.state === 'suspended') {
