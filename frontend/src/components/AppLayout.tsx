@@ -8,7 +8,6 @@ import LowPriorityIcon from '@mui/icons-material/LowPriority'
 import MenuIcon from '@mui/icons-material/Menu'
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
-import NotificationBell from './NotificationBell'
 import {
   AppBar,
   Avatar,
@@ -374,8 +373,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       >
         {children}
       </Container>
-
-      <NotificationBell />
     </Box>
   )
 }

@@ -18,6 +18,7 @@ import ChatsPage from './pages/ChatsPage'
 import ChatThreadPage from './pages/ChatThreadPage'
 import OrderStatusesPage from './pages/OrderStatusesPage'
 import NotificationsPage from './pages/NotificationsPage'
+import NotificationBellHost from './components/NotificationBellHost'
 import { NotificationsProvider } from './notifications/NotificationsContext'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -141,6 +142,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               />
               <Route path="*" element={<Navigate to="/orders" replace />} />
             </Routes>
+            <NotificationBellHost />
           </NotificationsProvider>
         </AuthProvider>
       </BrowserRouter>

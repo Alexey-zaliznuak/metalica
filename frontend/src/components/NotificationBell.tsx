@@ -16,7 +16,7 @@ import {
 import NotificationsIcon from '@mui/icons-material/Notifications'
 import ForumOutlinedIcon from '@mui/icons-material/ForumOutlined'
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined'
-import { Link as RouterLink } from 'react-router-dom'
+import { Link as RouterLink, useLocation } from 'react-router-dom'
 import client from '../api/client'
 import { describeApiError, logApiError } from '../api/errors'
 import type {
@@ -42,20 +42,22 @@ function isOrderPayload(
 }
 
 function NotificationRow({ item }: { item: AppNotification }) {
-  const read = Boolean(item.readAt)
+  // readAt с сервера на момент открытия списка: уже прочитанные — тусклые,
+  // те что были непрочитанными до открытия — с акцентом (даже после mark-all-read).
+  const wasReadBeforeOpen = Boolean(item.readAt)
   return (
     <Box
       sx={{
         px: 1.5,
         py: 1.25,
-        opacity: read ? 0.62 : 1,
-        bgcolor: read ? 'action.hover' : 'background.paper',
+        opacity: wasReadBeforeOpen ? 0.62 : 1,
+        bgcolor: wasReadBeforeOpen ? 'action.hover' : 'background.paper',
         borderLeft: 3,
-        borderColor: read ? 'transparent' : 'primary.main',
+        borderColor: wasReadBeforeOpen ? 'transparent' : 'primary.main',
       }}
     >
       <Stack direction="row" spacing={1.25} alignItems="flex-start">
-        <Box sx={{ color: read ? 'text.disabled' : 'primary.main', mt: 0.25 }}>
+        <Box sx={{ color: wasReadBeforeOpen ? 'text.disabled' : 'primary.main', mt: 0.25 }}>
           {item.type === 'CHAT_MESSAGE' ? (
             <ForumOutlinedIcon fontSize="small" />
           ) : (
@@ -64,7 +66,7 @@ function NotificationRow({ item }: { item: AppNotification }) {
         </Box>
         <Box sx={{ minWidth: 0, flex: 1 }}>
           {isChatPayload(item) ? (
-            <Typography variant="body2" sx={{ fontWeight: read ? 400 : 600 }}>
+            <Typography variant="body2" sx={{ fontWeight: wasReadBeforeOpen ? 400 : 600 }}>
               Пришло новое сообщение(я) в чате{' '}
               <MuiLink
                 component={RouterLink}
@@ -77,7 +79,7 @@ function NotificationRow({ item }: { item: AppNotification }) {
               </MuiLink>
             </Typography>
           ) : isOrderPayload(item) ? (
-            <Typography variant="body2" sx={{ fontWeight: read ? 400 : 600 }}>
+            <Typography variant="body2" sx={{ fontWeight: wasReadBeforeOpen ? 400 : 600 }}>
               Новый заказ{' '}
               <MuiLink
                 component={RouterLink}
@@ -102,6 +104,7 @@ function NotificationRow({ item }: { item: AppNotification }) {
 
 export default function NotificationBell() {
   const { unreadCount, toasts, dismissToast, markOneRead, markAllRead } = useNotifications()
+  const location = useLocation()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [items, setItems] = useState<AppNotification[]>([])
   const [nextCursor, setNextCursor] = useState<number | null>(null)
@@ -111,6 +114,7 @@ export default function NotificationBell() {
   const [error, setError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
   const open = Boolean(anchorEl)
 
   const loadPage = useCallback(async (cursor?: number | null) => {
@@ -120,16 +124,28 @@ export default function NotificationBell() {
     return data
   }, [])
 
+  const closeBell = useCallback(() => {
+    setAnchorEl(null)
+  }, [])
+
   const openBell = async (event: MouseEvent<HTMLElement>) => {
+    // Повторный клик по кнопке — закрыть (toggle).
+    if (open) {
+      closeBell()
+      return
+    }
+
     setAnchorEl(event.currentTarget)
     setError(null)
     setLoading(true)
     try {
-      void markAllRead()
+      // Сначала грузим список с актуальным readAt, потом помечаем прочитанными —
+      // иначе гонка с markAllRead делает все строки серыми.
       const data = await loadPage()
-      setItems(data.items.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })))
+      setItems(data.items)
       setNextCursor(data.nextCursor)
       setHasMore(data.hasMore)
+      void markAllRead()
     } catch (err) {
       logApiError('загрузка уведомлений', err)
       setError(describeApiError(err, 'Не удалось загрузить уведомления'))
@@ -137,8 +153,6 @@ export default function NotificationBell() {
       setLoading(false)
     }
   }
-
-  const closeBell = () => setAnchorEl(null)
 
   const loadMore = useCallback(async () => {
     if (!hasMore || nextCursor == null || loadingMore) return
@@ -170,6 +184,11 @@ export default function NotificationBell() {
     return () => observer.disconnect()
   }, [loadMore, open, items.length])
 
+  // Смена роута (клик по ссылке в списке / навигация) — закрыть popover.
+  useEffect(() => {
+    setAnchorEl(null)
+  }, [location.pathname])
+
   const handleToastRead = async (toastKey: string, notificationId: number) => {
     dismissToast(toastKey)
     try {
@@ -181,19 +200,28 @@ export default function NotificationBell() {
 
   return (
     <>
+      {/* Кнопка в фиксированной точке — тосты абсолютом над ней, иначе Popover
+          прыгает при появлении/исчезновении тостов и не закрывается. */}
       <Box
         sx={{
           position: 'fixed',
           right: { xs: 16, sm: 24 },
           bottom: { xs: 16, sm: 24 },
           zIndex: (theme) => theme.zIndex.snackbar,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          gap: 1,
+          width: 56,
+          height: 56,
         }}
       >
-        <Stack spacing={1} sx={{ width: { xs: 280, sm: 320 }, mb: 0.5 }}>
+        <Stack
+          spacing={1}
+          sx={{
+            position: 'absolute',
+            right: 0,
+            bottom: 64,
+            width: { xs: 280, sm: 320 },
+            pointerEvents: toasts.length > 0 ? 'auto' : 'none',
+          }}
+        >
           {toasts.map((toast) => (
             <Fade key={toast.key} in>
               <Paper
@@ -204,6 +232,7 @@ export default function NotificationBell() {
                   border: '1px solid',
                   borderColor: 'divider',
                   bgcolor: 'background.paper',
+                  pointerEvents: 'auto',
                 }}
               >
                 <Stack spacing={1}>
@@ -240,8 +269,10 @@ export default function NotificationBell() {
           color="error"
           overlap="circular"
           invisible={unreadCount <= 0}
+          sx={{ position: 'absolute', right: 0, bottom: 0 }}
         >
           <IconButton
+            ref={buttonRef}
             onClick={(e) => void openBell(e)}
             aria-label="Уведомления"
             sx={{
@@ -262,6 +293,7 @@ export default function NotificationBell() {
         open={open}
         anchorEl={anchorEl}
         onClose={closeBell}
+        disableRestoreFocus
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         slotProps={{
