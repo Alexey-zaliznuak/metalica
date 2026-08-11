@@ -1,6 +1,7 @@
 import {
   ConnectedSocket,
   MessageBody,
+  OnGatewayConnection,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -24,11 +25,15 @@ function roomName(chatId: number): string {
   return `chat:${chatId}`;
 }
 
+function userRoomName(userId: number): string {
+  return `user:${userId}`;
+}
+
 @Injectable()
 @WebSocketGateway({
   cors: { origin: true, credentials: true },
 })
-export class ChatsGateway implements OnModuleInit {
+export class ChatsGateway implements OnModuleInit, OnGatewayConnection {
   @WebSocketServer()
   server: Server;
 
@@ -62,6 +67,13 @@ export class ChatsGateway implements OnModuleInit {
         next(new Error('Unauthorized'));
       }
     });
+  }
+
+  handleConnection(client: AuthenticatedSocket) {
+    const userId = client.data.userId;
+    if (userId) {
+      void client.join(userRoomName(userId));
+    }
   }
 
   @SubscribeMessage('chat:join')
@@ -123,6 +135,10 @@ export class ChatsGateway implements OnModuleInit {
 
   emitChatDeleted(chatId: number) {
     this.server.emit('chat:deleted', { chatId });
+  }
+
+  emitToUser(userId: number, event: string, payload: unknown) {
+    this.server.to(userRoomName(userId)).emit(event, payload);
   }
 
   private extractToken(socket: AuthenticatedSocket): string | null {

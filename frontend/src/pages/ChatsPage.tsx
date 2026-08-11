@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ChangeEvent, type MouseEvent } from 'react'
 import {
   Alert,
   Box,
@@ -10,12 +10,14 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
+  FormControlLabel,
   InputLabel,
   ListItemText,
   MenuItem,
   Paper,
   Select,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from '@mui/material'
@@ -80,8 +82,14 @@ export default function ChatsPage() {
     onMessageCreated: () => {},
     onChatUpdated: (chat) => {
       setChats((prev) => {
+        const existing = prev.find((item) => item.id === chat.id)
+        const merged = {
+          ...chat,
+          notificationsEnabled:
+            existing?.notificationsEnabled ?? chat.notificationsEnabled ?? true,
+        }
         const without = prev.filter((item) => item.id !== chat.id)
-        return [chat, ...without].sort(
+        return [merged, ...without].sort(
           (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
         )
       })
@@ -117,6 +125,32 @@ export default function ChatsPage() {
   }
 
   const selectableUsers = users.filter((candidate) => candidate.id !== user?.id)
+
+  const toggleChatNotifications = async (
+    event: MouseEvent | ChangeEvent,
+    chat: ChatListItem,
+  ) => {
+    event.stopPropagation()
+    const enabled = !chat.notificationsEnabled
+    setChats((prev) =>
+      prev.map((item) =>
+        item.id === chat.id ? { ...item, notificationsEnabled: enabled } : item,
+      ),
+    )
+    try {
+      await client.patch(`/chats/${chat.id}/notifications`, { enabled })
+    } catch (err) {
+      logApiError('переключение уведомлений чата', err)
+      setChats((prev) =>
+        prev.map((item) =>
+          item.id === chat.id
+            ? { ...item, notificationsEnabled: chat.notificationsEnabled }
+            : item,
+        ),
+      )
+      setError(describeApiError(err, 'Не удалось изменить уведомления чата'))
+    }
+  }
 
   if (loading) {
     return (
@@ -172,7 +206,7 @@ export default function ChatsPage() {
               }}
               onClick={() => navigate(`/chats/${chat.id}`)}
             >
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
                 <Box sx={{ minWidth: 0 }}>
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.4 }}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
@@ -184,14 +218,37 @@ export default function ChatsPage() {
                     {chat.lastMessage?.body || 'Пока без сообщений'}
                   </Typography>
                 </Box>
-                <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    {formatLastActivity(chat.lastMessageAt)}
-                  </Typography>
-                  <Typography variant="caption" display="block" color="text.secondary">
-                    участников: {chat.members.length}
-                  </Typography>
-                </Box>
+                <Stack
+                  direction="row"
+                  spacing={2}
+                  alignItems="center"
+                  sx={{ flexShrink: 0 }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <FormControlLabel
+                    sx={{ mr: 0 }}
+                    control={
+                      <Switch
+                        size="small"
+                        checked={chat.notificationsEnabled !== false}
+                        onChange={(e) => void toggleChatNotifications(e, chat)}
+                      />
+                    }
+                    label={
+                      <Typography variant="caption" color="text.secondary">
+                        Уведомления
+                      </Typography>
+                    }
+                  />
+                  <Box sx={{ textAlign: 'right' }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {formatLastActivity(chat.lastMessageAt)}
+                    </Typography>
+                    <Typography variant="caption" display="block" color="text.secondary">
+                      участников: {chat.members.length}
+                    </Typography>
+                  </Box>
+                </Stack>
               </Stack>
             </Paper>
           ))}

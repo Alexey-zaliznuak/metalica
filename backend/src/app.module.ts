@@ -11,6 +11,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { BluesalesModule } from './bluesales/bluesales.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ChatsModule } from './chats/chats.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -26,6 +27,8 @@ import { ChatsModule } from './chats/chats.module';
     BluesalesModule,
     RealtimeModule,
     ChatsModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}
+

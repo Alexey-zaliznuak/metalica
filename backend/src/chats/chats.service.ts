@@ -8,6 +8,7 @@ import {
 import { ChatMemberRole, ChatType, Prisma, Role } from '@prisma/client';
 import { AuthUser } from '../auth/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AttachmentsService } from '../storage/attachments.service';
 import { ChatsGateway } from '../realtime/chats.gateway';
 import { AddChatMemberDto } from './dto/add-chat-member.dto';
@@ -50,6 +51,7 @@ export class ChatsService {
     private prisma: PrismaService,
     private attachments: AttachmentsService,
     private gateway: ChatsGateway,
+    private notifications: NotificationsService,
   ) {}
 
   async list(currentUser: AuthUser) {
@@ -60,7 +62,13 @@ export class ChatsService {
       include: chatInclude,
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     });
-    return chats.map((chat) => this.serializeChat(chat));
+    const enabledMap = await this.notifications.getChatNotificationsEnabledMap(
+      currentUser.id,
+      chats.map((chat) => chat.id),
+    );
+    return chats.map((chat) =>
+      this.serializeChat(chat, enabledMap.get(chat.id) ?? true),
+    );
   }
 
   async getOne(chatId: number, currentUser: AuthUser) {
@@ -72,7 +80,11 @@ export class ChatsService {
     if (!chat) {
       throw new NotFoundException('Чат не найден');
     }
-    return this.serializeChat(chat);
+    const enabledMap = await this.notifications.getChatNotificationsEnabledMap(
+      currentUser.id,
+      [chatId],
+    );
+    return this.serializeChat(chat, enabledMap.get(chatId) ?? true);
   }
 
   async create(dto: CreateChatDto, currentUser: AuthUser) {
@@ -93,7 +105,7 @@ export class ChatsService {
       include: chatInclude,
     });
 
-    const serialized = this.serializeChat(chat);
+    const serialized = this.serializeChat(chat, true);
     this.gateway.emitChatUpdated(serialized);
     return serialized;
   }
@@ -122,7 +134,11 @@ export class ChatsService {
       include: chatInclude,
     });
 
-    const serialized = this.serializeChat(chat);
+    const enabledMap = await this.notifications.getChatNotificationsEnabledMap(
+      currentUser.id,
+      [chatId],
+    );
+    const serialized = this.serializeChat(chat, enabledMap.get(chatId) ?? true);
     this.gateway.emitChatUpdated(serialized);
     return serialized;
   }
@@ -160,7 +176,11 @@ export class ChatsService {
       include: chatInclude,
     });
 
-    const serialized = this.serializeChat(chat);
+    const enabledMap = await this.notifications.getChatNotificationsEnabledMap(
+      currentUser.id,
+      [chatId],
+    );
+    const serialized = this.serializeChat(chat, enabledMap.get(chatId) ?? true);
     this.gateway.emitChatUpdated(serialized);
     return serialized;
   }
@@ -189,7 +209,11 @@ export class ChatsService {
       include: chatInclude,
     });
 
-    const serialized = this.serializeChat(updated);
+    const enabledMap = await this.notifications.getChatNotificationsEnabledMap(
+      currentUser.id,
+      [chatId],
+    );
+    const serialized = this.serializeChat(updated, enabledMap.get(chatId) ?? true);
     this.gateway.emitChatUpdated(serialized);
     return serialized;
   }
@@ -259,6 +283,27 @@ export class ChatsService {
 
     const serialized = await this.serializeMessage(message);
     this.gateway.emitMessageCreated(chatId, serialized);
+
+    const chatMeta = await this.prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { name: true, type: true },
+    });
+    if (chatMeta) {
+      void this.notifications
+        .notifyChatMessage({
+          chatId,
+          chatName: chatMeta.name,
+          chatType: chatMeta.type,
+          authorId,
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Не удалось создать уведомления для чата ${chatId}`,
+            err instanceof Error ? err.stack : String(err),
+          );
+        });
+    }
+
     return serialized;
   }
 
@@ -340,7 +385,7 @@ export class ChatsService {
     return chat.type === ChatType.PUBLIC || chat.members.length > 0;
   }
 
-  private serializeChat(chat: ChatWithRelations) {
+  private serializeChat(chat: ChatWithRelations, notificationsEnabled = true) {
     const lastMessage = chat.messages[0] ?? null;
     return {
       id: chat.id,
@@ -349,6 +394,7 @@ export class ChatsService {
       createdById: chat.createdById,
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
+      notificationsEnabled,
       members: chat.members.map((member) => ({
         userId: member.userId,
         role: member.role,

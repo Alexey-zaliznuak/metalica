@@ -6,7 +6,9 @@ import ListAltIcon from '@mui/icons-material/ListAlt'
 import LogoutIcon from '@mui/icons-material/Logout'
 import LowPriorityIcon from '@mui/icons-material/LowPriority'
 import MenuIcon from '@mui/icons-material/Menu'
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
+import NotificationBell from './NotificationBell'
 import {
   AppBar,
   Avatar,
@@ -44,6 +46,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: '/orders', icon: <ListAltIcon />, label: 'Заказы' },
   { to: '/chats', icon: <ForumIcon />, label: 'Чаты' },
+  { to: '/notifications', icon: <NotificationsActiveIcon />, label: 'Уведомления' },
   {
     to: '/metrics',
     icon: <InsightsIcon />,
@@ -371,6 +374,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       >
         {children}
       </Container>
+
+      <NotificationBell />
     </Box>
   )
 }

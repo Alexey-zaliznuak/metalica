@@ -53,6 +53,7 @@ import type {
 const PAGE_SIZE = 30
 import { useAuth } from '../auth/AuthContext'
 import { useChatSocket } from '../hooks/useChatSocket'
+import { useNotifications } from '../notifications/NotificationsContext'
 import { formatTime, roleLabel } from '../utils'
 
 interface PendingImage {
@@ -75,6 +76,7 @@ export default function ChatThreadPage() {
   const chatId = Number(id)
   const navigate = useNavigate()
   const { user, token } = useAuth()
+  const { setUnreadCount } = useNotifications()
 
   const [chat, setChat] = useState<ChatListItem | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -181,6 +183,14 @@ export default function ChatThreadPage() {
       void load()
     }
   }, [chatId, load])
+
+  useEffect(() => {
+    if (!Number.isFinite(chatId)) return
+    void client
+      .post<{ ok: boolean; count: number }>(`/chats/${chatId}/notifications/read`)
+      .then(({ data }) => setUnreadCount(data.count))
+      .catch((err) => logApiError('прочитать уведомления чата', err))
+  }, [chatId, setUnreadCount])
 
   useEffect(() => {
     if (pendingScrollBottomRef.current) {

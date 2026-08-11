@@ -43,6 +43,11 @@ enum ChatMemberRole {
   MODERATOR
 }
 
+enum NotificationType {
+  CHAT_MESSAGE
+  ORDER_STATUS
+}
+
 model User {
   id                       Int                 @id @default(autoincrement())
   username                 String              @unique
@@ -62,6 +67,9 @@ model User {
   // События лога заказов, автором которых является пользователь
   orderEvents              OrderEvent[]        @relation("OrderEventActor")
   orderStatusChanges       OrderStatusChange[] @relation("OrderStatusChangeActor")
+  notifications            Notification[]
+  chatNotificationPrefs    ChatNotificationPref[]
+  orderStatusNotifications UserOrderStatusNotification[]
   createdAt                DateTime            @default(now())
   updatedAt                DateTime            @updatedAt
 
@@ -270,15 +278,16 @@ model BluesalesOrderStatus {
 }
 
 model Chat {
-  id          Int           @id @default(autoincrement())
-  name        String
-  type        ChatType      @default(PUBLIC)
-  createdBy   User?         @relation("ChatCreatedBy", fields: [createdById], references: [id])
-  createdById Int?
-  members     ChatMember[]
-  messages    ChatMessage[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                Int                   @id @default(autoincrement())
+  name              String
+  type              ChatType              @default(PUBLIC)
+  createdBy         User?                 @relation("ChatCreatedBy", fields: [createdById], references: [id])
+  createdById       Int?
+  members           ChatMember[]
+  messages          ChatMessage[]
+  notificationPrefs ChatNotificationPref[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 
   @@index([type])
   @@index([createdById])
@@ -414,4 +423,52 @@ model Attachment {
 
   @@index([messageId])
   @@index([chatMessageId])
+}
+
+// In-app inbox. Chat-уведы дедупятся через unique(userId, dedupeKey),
+// пока dedupeKey = "chat:{id}" и уведа непрочитана; после read dedupeKey = null.
+model Notification {
+  id        Int              @id @default(autoincrement())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  type      NotificationType
+  // "chat:{chatId}" только для непрочитанной CHAT_MESSAGE; иначе null
+  dedupeKey String?
+  payload   Json
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@index([createdAt])
+}
+
+// Mute/unmute чата. Нет строки = уведомления включены.
+model ChatNotificationPref {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId    Int
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, chatId])
+  @@index([chatId])
+}
+
+// Какие статусы заказов пользователь хочет получать в колокольчике.
+model UserOrderStatusNotification {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  // BluesalesOrderStatus.bsOrderStatusId (без FK — справочник денормализован)
+  statusId  Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, statusId])
+  @@index([statusId])
 }

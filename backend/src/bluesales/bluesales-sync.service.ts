@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { OrderSource, OrderStatusChangeState, Prisma } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BluesalesApiService, BsCustomer, BsOrder } from './bluesales-api.service';
 import {
@@ -77,6 +78,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly api: BluesalesApiService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {
     this.enabled = this.config.get<string>('BLUESALES_ENABLED', 'true') !== 'false';
     this.vkGroupId = this.config.get<string>('BLUESALES_VK_GROUP_ID', '');
@@ -894,14 +896,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         statusName,
         closesSketch,
       );
-      await this.prisma.$transaction(async (tx) => {
+      const notifyStatus = await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`
           SELECT "orderId"
           FROM "BluesalesOrderInfo"
           WHERE "orderId" = ${existingInfo.orderId}
           FOR UPDATE
         `;
-        const [currentInfo, pendingChanges] = await Promise.all([
+        const [currentInfo, pendingChanges, orderRow] = await Promise.all([
           tx.bluesalesOrderInfo.findUnique({
             where: { bsOrderId: bsOrder.id },
             select: { orderStatusObservedAt: true, orderStatusId: true },
@@ -917,6 +919,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
                 ],
               },
             },
+          }),
+          tx.order.findUnique({
+            where: { id: existingInfo.orderId },
+            select: { orderNumber: true },
           }),
         ]);
         const canApplyStatus =
@@ -950,7 +956,39 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             ...(leadId ? { leadId } : {}),
           },
         });
+
+        if (
+          canApplyStatus &&
+          statusChanged &&
+          statusData.orderStatusId != null &&
+          statusData.orderStatus &&
+          orderRow
+        ) {
+          return {
+            orderId: existingInfo.orderId,
+            orderNumber: orderRow.orderNumber,
+            statusId: statusData.orderStatusId,
+            statusName: statusData.orderStatus,
+          };
+        }
+        return null;
       });
+
+      if (notifyStatus) {
+        void this.notifications
+          .notifyOrderStatus({
+            orderId: notifyStatus.orderId,
+            orderNumber: notifyStatus.orderNumber,
+            statusId: notifyStatus.statusId,
+            statusName: notifyStatus.statusName,
+          })
+          .catch((err) => {
+            this.logger.error(
+              `Не удалось создать уведомления о статусе заказа #${notifyStatus.orderId} из BS sync`,
+              err instanceof Error ? err.stack : String(err),
+            );
+          });
+      }
       return;
     }
 
@@ -1095,7 +1133,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       },
       closesSketch,
     );
-    await this.prisma.order.create({
+    const created = await this.prisma.order.create({
       data: {
         orderNumber,
         title,
@@ -1105,7 +1143,24 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         ...newSketchData,
         bluesalesInfo: { create: { ...infoData, ...statusData, bsOrderId: bsOrder.id } },
       },
+      select: { id: true, orderNumber: true },
     });
+
+    if (statusData.orderStatusId != null && statusData.orderStatus) {
+      void this.notifications
+        .notifyOrderStatus({
+          orderId: created.id,
+          orderNumber: created.orderNumber,
+          statusId: statusData.orderStatusId,
+          statusName: statusData.orderStatus,
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Не удалось создать уведомления о новом заказе #${created.id} из BS sync`,
+            err instanceof Error ? err.stack : String(err),
+          );
+        });
+    }
   }
 
   /**

@@ -262,6 +262,7 @@ export interface ChatListItem {
   createdById: number | null
   createdAt: string
   updatedAt: string
+  notificationsEnabled: boolean
   members: ChatMember[]
   lastMessageAt: string | null
   lastMessage: {
@@ -270,6 +271,39 @@ export interface ChatListItem {
     createdAt: string
     author: MessageAuthor
   } | null
+}
+
+export type NotificationType = 'CHAT_MESSAGE' | 'ORDER_STATUS'
+
+export interface ChatMessageNotificationPayload {
+  chatId: number
+  chatName: string
+}
+
+export interface OrderStatusNotificationPayload {
+  orderId: number
+  orderNumber: string
+  statusId: number
+  statusName: string
+}
+
+export interface AppNotification {
+  id: number
+  type: NotificationType
+  payload: ChatMessageNotificationPayload | OrderStatusNotificationPayload
+  readAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface NotificationsPage {
+  items: AppNotification[]
+  nextCursor: number | null
+  hasMore: boolean
+}
+
+export interface NotificationSettings {
+  orderStatusIds: number[]
 }
 
 export interface ChatMessage {

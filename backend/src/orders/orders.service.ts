@@ -19,6 +19,7 @@ import { AuthUser } from '../auth/current-user.decorator';
 import { OrderEventChange, OrderEventsService } from './order-events.service';
 import { computeSketchTimestampUpdate } from './sketch-status';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
 
 @Injectable()
@@ -30,6 +31,7 @@ export class OrdersService {
     private orderEvents: OrderEventsService,
     private bsApi: BluesalesApiService,
     private storage: StorageService,
+    private notifications: NotificationsService,
   ) {}
 
   private readonly userSelect = {
@@ -775,6 +777,7 @@ export class OrdersService {
         where: { id },
         select: {
           id: true,
+          orderNumber: true,
           source: true,
           bluesalesInfo: { select: { orderId: true } },
         },
@@ -795,6 +798,7 @@ export class OrdersService {
       throw new BadRequestException('Неизвестный статус заказа BlueSales');
     }
 
+    let statusChanged = false;
     await this.prisma.$transaction(async (tx) => {
       // Сериализуем быстрые изменения одного заказа, чтобы delta всегда содержала
       // фактический предыдущий локальный статус.
@@ -823,6 +827,7 @@ export class OrdersService {
       const prevStatusName = current.bluesalesInfo.orderStatus;
       if (prevStatusId === statusId) return;
 
+      statusChanged = true;
       const sketchUpdate = computeSketchTimestampUpdate(
         targetStatus.name,
         current,
@@ -875,6 +880,23 @@ export class OrdersService {
         await tx.orderEvent.createMany({ data: eventData });
       }
     });
+
+    if (statusChanged) {
+      void this.notifications
+        .notifyOrderStatus({
+          orderId: id,
+          orderNumber: order.orderNumber,
+          statusId,
+          statusName: targetStatus.name,
+          excludeUserId: actor?.id ?? null,
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Не удалось создать уведомления о статусе заказа #${id}`,
+            err instanceof Error ? err.stack : String(err),
+          );
+        });
+    }
 
     return this.findOne(id);
   }

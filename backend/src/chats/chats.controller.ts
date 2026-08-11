@@ -19,11 +19,16 @@ import { CreateChatMessageDto } from './dto/create-chat-message.dto';
 import { UpdateChatDto } from './dto/update-chat.dto';
 import { UpdateChatMessageTextDto } from './dto/update-chat-message-text.dto';
 import { parseOptionalInt } from '../common/parse-optional-int';
+import { UpdateChatNotificationsDto } from '../notifications/dto/update-chat-notifications.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('chats')
 export class ChatsController {
-  constructor(private chats: ChatsService) {}
+  constructor(
+    private chats: ChatsService,
+    private notifications: NotificationsService,
+  ) {}
 
   @Get('users')
   listUsers() {
@@ -75,6 +80,23 @@ export class ChatsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.chats.removeMember(chatId, userId, user);
+  }
+
+  @Patch(':chatId/notifications')
+  setNotifications(
+    @Param('chatId', ParseIntPipe) chatId: number,
+    @Body() dto: UpdateChatNotificationsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.notifications.setChatNotificationsEnabled(user.id, chatId, dto.enabled);
+  }
+
+  @Post(':chatId/notifications/read')
+  markNotificationsRead(
+    @Param('chatId', ParseIntPipe) chatId: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.notifications.markChatRead(user.id, chatId);
   }
 
   @Get(':chatId/messages')
