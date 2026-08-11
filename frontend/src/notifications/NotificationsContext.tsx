@@ -13,7 +13,15 @@ import client from '../api/client'
 import { logApiError } from '../api/errors'
 import type { AppNotification } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { useUnreadSoundAlert } from './useUnreadSoundAlert'
 import { useUnreadTabIndicator } from './useUnreadTabIndicator'
+
+function isSoundWhileUnreadEnabled(settings: unknown): boolean {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    return false
+  }
+  return (settings as Record<string, unknown>).notificationsSoundWhileUnread === true
+}
 
 type ToastItem = {
   key: string
@@ -32,13 +40,15 @@ type NotificationsContextValue = {
 const NotificationsContext = createContext<NotificationsContextValue | null>(null)
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [unreadCount, setUnreadCount] = useState(0)
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const socketRef = useRef<Socket | null>(null)
   const toastTimersRef = useRef<Map<string, number>>(new Map())
+  const soundWhileUnread = isSoundWhileUnreadEnabled(user?.frontendSettings)
 
   useUnreadTabIndicator(token ? unreadCount : 0)
+  useUnreadSoundAlert(Boolean(token) && soundWhileUnread, unreadCount)
 
   const dismissToast = useCallback((key: string) => {
     setToasts((prev) => prev.filter((item) => item.key !== key))

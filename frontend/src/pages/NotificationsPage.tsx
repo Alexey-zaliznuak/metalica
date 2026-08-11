@@ -10,10 +10,12 @@ import {
   Grid,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from '@mui/material'
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
+import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import client from '../api/client'
 import { describeApiError, logApiError } from '../api/errors'
 import type {
@@ -23,6 +25,7 @@ import type {
   OrderAssigneesResponse,
   OrderFilterOptions,
 } from '../api/types'
+import { useAuth } from '../auth/AuthContext'
 
 type StatusPref = {
   enabled: boolean
@@ -44,6 +47,13 @@ function emptyPref(): StatusPref {
 }
 
 export default function NotificationsPage() {
+  const { user, updateFrontendSettings } = useAuth()
+  const soundWhileUnread =
+    user?.frontendSettings &&
+    typeof user.frontendSettings === 'object' &&
+    !Array.isArray(user.frontendSettings) &&
+    (user.frontendSettings as Record<string, unknown>).notificationsSoundWhileUnread === true
+
   const [statuses, setStatuses] = useState<BluesalesStatusOption[]>([])
   const [prefs, setPrefs] = useState<Record<number, StatusPref>>({})
   const [deliveryManagerOptions, setDeliveryManagerOptions] = useState<string[]>([])
@@ -199,7 +209,54 @@ export default function NotificationsPage() {
       {error && <Alert severity="error">{error}</Alert>}
       {savedOk && <Alert severity="success">Настройки сохранены</Alert>}
 
+      <Paper
+        variant="outlined"
+        sx={{
+          p: 2.5,
+          width: '100%',
+          bgcolor: soundWhileUnread ? 'action.hover' : 'background.paper',
+        }}
+      >
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={2}
+          alignItems={{ xs: 'stretch', sm: 'center' }}
+          justifyContent="space-between"
+        >
+          <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ minWidth: 0 }}>
+            <VolumeUpIcon color={soundWhileUnread ? 'primary' : 'disabled'} sx={{ mt: 0.25 }} />
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                Звуковой сигнал при непрочитанных
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Пока есть непрочитанные уведомления, раз в несколько секунд будет короткий
+                звуковой сигнал. Выключается после прочтения всех уведомлений.
+              </Typography>
+            </Box>
+          </Stack>
+          <FormControlLabel
+            sx={{ m: 0, flexShrink: 0, alignSelf: { xs: 'flex-end', sm: 'center' } }}
+            control={
+              <Switch
+                checked={Boolean(soundWhileUnread)}
+                onChange={(e) =>
+                  updateFrontendSettings({
+                    notificationsSoundWhileUnread: e.target.checked,
+                  })
+                }
+                color="primary"
+              />
+            }
+            label={soundWhileUnread ? 'Вкл' : 'Выкл'}
+          />
+        </Stack>
+      </Paper>
+
       <Paper variant="outlined" sx={{ p: 2.5, width: '100%' }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.5 }}>
+          Статусы заказов
+        </Typography>
         {orderedStatuses.length === 0 ? (
           <Typography color="text.secondary">Справочник статусов пока пуст</Typography>
         ) : (
