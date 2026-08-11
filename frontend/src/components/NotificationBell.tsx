@@ -294,6 +294,8 @@ export default function NotificationBell() {
         anchorEl={anchorEl}
         onClose={closeBell}
         disableRestoreFocus
+        // Иначе MUI убирает scrollbar у body и fixed-кнопка прыгает влево/вправо.
+        disableScrollLock
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         slotProps={{
