@@ -7,6 +7,7 @@ import {
   Checkbox,
   CircularProgress,
   FormControlLabel,
+  Grid,
   Paper,
   Stack,
   TextField,
@@ -182,7 +183,7 @@ export default function NotificationsPage() {
   }
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 800 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
       <Stack direction="row" spacing={1.5} alignItems="center">
         <NotificationsActiveIcon color="primary" />
         <Box>
@@ -198,11 +199,11 @@ export default function NotificationsPage() {
       {error && <Alert severity="error">{error}</Alert>}
       {savedOk && <Alert severity="success">Настройки сохранены</Alert>}
 
-      <Paper variant="outlined" sx={{ p: 2.5 }}>
+      <Paper variant="outlined" sx={{ p: 2.5, width: '100%' }}>
         {orderedStatuses.length === 0 ? (
           <Typography color="text.secondary">Справочник статусов пока пуст</Typography>
         ) : (
-          <Stack spacing={2}>
+          <Stack spacing={2} sx={{ width: '100%' }}>
             {orderedStatuses.map((status) => {
               const pref = prefs[status.id]
               const enabled = Boolean(pref?.enabled)
@@ -211,6 +212,8 @@ export default function NotificationsPage() {
                   key={status.id}
                   sx={{
                     p: 1.5,
+                    width: '100%',
+                    boxSizing: 'border-box',
                     borderRadius: 1.5,
                     border: '1px solid',
                     borderColor: enabled ? 'divider' : 'transparent',
@@ -218,6 +221,7 @@ export default function NotificationsPage() {
                   }}
                 >
                   <FormControlLabel
+                    sx={{ width: '100%', m: 0 }}
                     control={
                       <Checkbox
                         checked={enabled}
@@ -227,80 +231,92 @@ export default function NotificationsPage() {
                     label={<Typography sx={{ fontWeight: 600 }}>{status.name}</Typography>}
                   />
                   {enabled && pref && (
-                    <Stack spacing={1.5} sx={{ mt: 1, ml: { xs: 0, sm: 4 } }}>
-                      <Autocomplete
-                        multiple
-                        disableCloseOnSelect
-                        size="small"
-                        options={deliveryManagerOptions}
-                        value={pref.deliveryManagerNames}
-                        onChange={(_, values) =>
-                          patchFilters(status.id, { deliveryManagerNames: values })
-                        }
-                        noOptionsText="Нет менеджеров"
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label="Менеджер ведения"
-                            placeholder="Все"
-                          />
-                        )}
-                      />
-                      <Autocomplete
-                        multiple
-                        disableCloseOnSelect
-                        size="small"
-                        options={onboardingManagerOptions}
-                        value={pref.onboardingManagerNames}
-                        onChange={(_, values) =>
-                          patchFilters(status.id, { onboardingManagerNames: values })
-                        }
-                        noOptionsText="Нет менеджеров"
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label="Менеджер оформления"
-                            placeholder="Все"
-                          />
-                        )}
-                      />
-                      <Autocomplete
-                        multiple
-                        disableCloseOnSelect
-                        size="small"
-                        options={sketchDesignerOptions}
-                        value={pref.sketchDesignerNames}
-                        onChange={(_, values) =>
-                          patchFilters(status.id, { sketchDesignerNames: values })
-                        }
-                        noOptionsText="Нет художников"
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label="Художник эскиза"
-                            placeholder="Все"
-                          />
-                        )}
-                      />
-                      <Autocomplete
-                        multiple
-                        disableCloseOnSelect
-                        size="small"
-                        options={revisionDesignerOptions}
-                        value={pref.revisionDesignerNames}
-                        onChange={(_, values) =>
-                          patchFilters(status.id, { revisionDesignerNames: values })
-                        }
-                        noOptionsText="Нет художников"
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label="Художник правок"
-                            placeholder="Все"
-                          />
-                        )}
-                      />
-                    </Stack>
+                    <Grid container spacing={1.5} sx={{ mt: 0.5 }}>
+                      <Grid item xs={12} md={6}>
+                        <Autocomplete
+                          multiple
+                          disableCloseOnSelect
+                          size="small"
+                          fullWidth
+                          options={deliveryManagerOptions}
+                          value={pref.deliveryManagerNames}
+                          onChange={(_, values) =>
+                            patchFilters(status.id, { deliveryManagerNames: values })
+                          }
+                          noOptionsText="Нет менеджеров"
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Менеджер ведения"
+                              placeholder="Все"
+                            />
+                          )}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <Autocomplete
+                          multiple
+                          disableCloseOnSelect
+                          size="small"
+                          fullWidth
+                          options={onboardingManagerOptions}
+                          value={pref.onboardingManagerNames}
+                          onChange={(_, values) =>
+                            patchFilters(status.id, { onboardingManagerNames: values })
+                          }
+                          noOptionsText="Нет менеджеров"
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Менеджер оформления"
+                              placeholder="Все"
+                            />
+                          )}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <Autocomplete
+                          multiple
+                          disableCloseOnSelect
+                          size="small"
+                          fullWidth
+                          options={sketchDesignerOptions}
+                          value={pref.sketchDesignerNames}
+                          onChange={(_, values) =>
+                            patchFilters(status.id, { sketchDesignerNames: values })
+                          }
+                          noOptionsText="Нет художников"
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Художник эскиза"
+                              placeholder="Все"
+                            />
+                          )}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <Autocomplete
+                          multiple
+                          disableCloseOnSelect
+                          size="small"
+                          fullWidth
+                          options={revisionDesignerOptions}
+                          value={pref.revisionDesignerNames}
+                          onChange={(_, values) =>
+                            patchFilters(status.id, { revisionDesignerNames: values })
+                          }
+                          noOptionsText="Нет художников"
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Художник правок"
+                              placeholder="Все"
+                            />
+                          )}
+                        />
+                      </Grid>
+                    </Grid>
                   )}
                 </Box>
               )

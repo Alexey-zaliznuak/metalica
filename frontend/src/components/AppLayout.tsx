@@ -115,7 +115,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const isOrdersBoardPage = location.pathname === '/orders'
   const isOrderThreadPage = /^\/orders\/[^/]+$/.test(location.pathname)
-  const isWidePage = isOrdersBoardPage || isOrderThreadPage
+  const isNotificationsPage = location.pathname === '/notifications'
+  const isWidePage = isOrdersBoardPage || isOrderThreadPage || isNotificationsPage
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   const handleLogout = () => {
