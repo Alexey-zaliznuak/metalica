@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
+import { performance } from 'perf_hooks';
 
 /**
  * Низкоуровневый клиент BlueSales — TS-порт питоновского RequestApi.
@@ -9,10 +10,12 @@ import { createHash } from 'crypto';
  * параллельных запросах API возвращает ошибку «Другой пользователь находится
  * онлайн под логином ... <span class='countdown'>N</span>». Поэтому все
  * запросы сериализуются через внутреннюю очередь (mutex), а на countdown-ошибку
- * выполняется ожидание N+1 секунд и повтор.
+ * выполняется ожидание N+1 секунд и повтор. Между завершением одного HTTP-запроса
+ * и началом следующего выдерживается пауза не менее 300 мс.
  */
 
 const BASE_URL = 'https://bluesales.ru/app/Customers/WebServer.aspx';
+const MIN_REQUEST_GAP_MS = 300;
 
 export class BluesalesError extends Error {}
 export class BluesalesHttpError extends BluesalesError {}
@@ -138,6 +141,7 @@ export class BluesalesApiService {
   // чтобы залипший фоновый запрос не блокировал пользовательский API на часы.
   private readonly queue: BsQueueItem[] = [];
   private processing = false;
+  private lastRequestFinishedAtMs = Number.NEGATIVE_INFINITY;
 
   // ─── Настройки таймаутов/ретраев (из env) ─────────────────────────────────
   /** Таймаут одного HTTP-запроса к BlueSales (мс). */
@@ -225,6 +229,15 @@ export class BluesalesApiService {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /** Гарантирует минимальную паузу после завершения предыдущего HTTP-запроса. */
+  private async waitForRequestGap(): Promise<void> {
+    const elapsedMs = performance.now() - this.lastRequestFinishedAtMs;
+    const remainingMs = MIN_REQUEST_GAP_MS - elapsedMs;
+    if (remainingMs > 0) {
+      await this.sleep(Math.ceil(remainingMs));
+    }
+  }
+
   private getPauseRemainingMs(): number {
     if (!this.pausedUntilTs) {
       return 0;
@@ -306,6 +319,8 @@ export class BluesalesApiService {
     url.searchParams.set('password', this.passwordHash);
     url.searchParams.set('command', method);
 
+    await this.waitForRequestGap();
+
     // Таймаут на HTTP-запрос: без него зависший fetch держал бы очередь вечно.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
@@ -347,6 +362,7 @@ export class BluesalesApiService {
       );
     } finally {
       clearTimeout(timer);
+      this.lastRequestFinishedAtMs = performance.now();
     }
 
     let parsed: unknown;
