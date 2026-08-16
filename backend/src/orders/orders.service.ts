@@ -842,12 +842,17 @@ export class OrdersService {
         },
       ]);
 
+      const changedAt = new Date();
       await tx.bluesalesOrderInfo.update({
         where: { orderId: id },
         data: {
           orderStatusId: statusId,
           orderStatus: targetStatus.name,
-          orderStatusEnteredAt: new Date(),
+          orderStatusEnteredAt: changedAt,
+          // Метка наблюдения нужна и для ручного изменения: иначе синк судит о
+          // свежести только по активным задачам очереди, а они исчезают через
+          // пару секунд после доставки статуса в BlueSales.
+          orderStatusObservedAt: changedAt,
         },
       });
       // Даже если метки не меняются, update поднимает Order.updatedAt и карточку

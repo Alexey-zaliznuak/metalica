@@ -393,7 +393,8 @@ const EVENT_FIELD_LABELS: Record<string, string> = {
 // Системная запись лога заказа: по центру ленты, «кто что с чего на что поменял».
 function SystemEventRow({ event }: { event: OrderEvent }) {
   const label = EVENT_FIELD_LABELS[event.field] ?? event.field
-  const actorName = event.actor?.name ?? 'Система'
+  const fromBluesales = !event.actor && event.source === 'bluesales'
+  const actorName = event.actor?.name ?? (fromBluesales ? 'BlueSales' : 'Система')
   const dash = '—'
   const isSketchDate = event.field === 'sketchStartedAt' || event.field === 'sketchReadyAt'
   const from = event.oldValue?.trim()
@@ -428,7 +429,7 @@ function SystemEventRow({ event }: { event: OrderEvent }) {
         >
           <HistoryIcon sx={{ fontSize: 15, color: 'text.secondary' }} />
           <Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'center' }}>
-            <b>{actorName}</b> изменил(а) {label}:{' '}
+            <b>{actorName}</b> {fromBluesales ? 'изменил' : 'изменил(а)'} {label}:{' '}
             <Box component="span" sx={{ textDecoration: 'line-through', opacity: 0.7 }}>
               {from}
             </Box>{' '}

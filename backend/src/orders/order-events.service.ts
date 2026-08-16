@@ -84,7 +84,16 @@ export class OrderEventsService {
       oldValue: e.oldValue,
       newValue: e.newValue,
       actor: e.actor,
+      // У события без автора важно различать источник: изменение, прилетевшее
+      // из BlueSales, подписывается иначе, чем внутреннее системное.
+      source: this.resolveSource(e.meta),
       createdAt: e.createdAt,
     };
+  }
+
+  private resolveSource(meta: Prisma.JsonValue): string | null {
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null;
+    const source = (meta as Prisma.JsonObject).source;
+    return typeof source === 'string' ? source : null;
   }
 }

@@ -174,8 +174,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     const now = new Date();
     const dateFrom = new Date(now.getTime() - this.fastSyncOverlapMinutes * 60 * 1000);
 
-    const bsOrders = await this.api.getOrders(dateFrom, now);
+    // См. refreshBatch: наблюдение датируем началом запроса, иначе постраничная
+    // выгрузка «состарит» данные, а метка времени останется свежей.
     const statusObservedAt = new Date();
+    const bsOrders = await this.api.getOrders(dateFrom, now);
 
     const leadIds = new Set<number>();
     let synced = 0;
@@ -344,8 +346,12 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // параллельных запросов к BS из нашего бэкенда не будет.
     // Отдельно засекаем время самого запроса к BS (без учёта upsert в нашу БД).
     const apiStartedAt = Date.now();
+    // Момент наблюдения — отправка запроса, а не получение ответа: данные в
+    // ответе описывают состояние BS на момент выполнения запроса. Иначе ответ,
+    // запрошенный до ручной смены статуса, но пришедший после неё, выглядит
+    // более свежим и затирает изменение менеджера.
+    const statusObservedAt = new Date(apiStartedAt);
     const bsOrders = await this.api.getOrdersByIds(ids);
-    const statusObservedAt = new Date();
     const apiMs = Date.now() - apiStartedAt;
 
     // Нужно понять, какие id BlueSales вернул. Если какого-то id нет в ответе,
@@ -525,8 +531,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
   /** Синк всех заказов за окно [from, to] (вместе с их лидами). */
   private async syncOrdersWindow(from: Date, to: Date): Promise<number> {
-    const bsOrders = await this.api.getOrders(from, to);
+    // См. refreshBatch: наблюдение датируем началом запроса.
     const statusObservedAt = new Date();
+    const bsOrders = await this.api.getOrders(from, to);
     let synced = 0;
 
     const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
@@ -906,7 +913,11 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         const [currentInfo, pendingChanges, orderRow] = await Promise.all([
           tx.bluesalesOrderInfo.findUnique({
             where: { bsOrderId: bsOrder.id },
-            select: { orderStatusObservedAt: true, orderStatusId: true },
+            select: {
+              orderStatusObservedAt: true,
+              orderStatusId: true,
+              orderStatus: true,
+            },
           }),
           tx.orderStatusChange.count({
             where: {
@@ -956,6 +967,33 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             ...(leadId ? { leadId } : {}),
           },
         });
+
+        // Статус сменился на стороне BlueSales, а не у нас. Без записи в лог
+        // такой переход невидим, и перебитое чужой рукой изменение менеджера
+        // выглядит как «система не сохранила статус». Первичный импорт заказа
+        // (прежнего статуса ещё нет) событием не считаем.
+        if (
+          canApplyStatus &&
+          statusChanged &&
+          currentInfo?.orderStatusId != null &&
+          statusData.orderStatusId != null
+        ) {
+          await tx.orderEvent.create({
+            data: {
+              orderId: existingInfo.orderId,
+              actorId: null,
+              field: 'orderStatus',
+              oldValue: currentInfo.orderStatus,
+              newValue: statusData.orderStatus,
+              meta: {
+                oldId: currentInfo.orderStatusId,
+                newId: statusData.orderStatusId,
+                source: 'bluesales',
+              },
+              createdAt: statusObservedAt,
+            },
+          });
+        }
 
         if (
           canApplyStatus &&

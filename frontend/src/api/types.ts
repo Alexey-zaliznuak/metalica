@@ -235,6 +235,8 @@ export interface OrderEvent {
   oldValue: string | null
   newValue: string | null
   actor: MessageAuthor | null
+  // 'bluesales' — изменение пришло из BlueSales, а не от пользователя
+  source: string | null
   createdAt: string
 }
 
