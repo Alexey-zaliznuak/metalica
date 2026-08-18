@@ -760,6 +760,19 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
+    // Менеджер ведения на заказе = менеджер карточки клиента. Loop лидов
+    // обновляет клиента и по заказам вне refresh-окна, поэтому копируем сюда,
+    // а не ждём следующего orders.get.
+    // IS DISTINCT FROM: Prisma `NOT` / `{ not: value }` не выбирает NULL
+    // (`NULL = 'имя'` → NULL, строка отбрасывается).
+    await this.prisma.$executeRaw`
+      UPDATE "Order"
+      SET "deliveryManagerName" = ${managerName},
+          "updatedAt" = NOW()
+      WHERE "leadId" = ${lead.id}
+        AND "deliveryManagerName" IS DISTINCT FROM ${managerName}
+    `;
+
     return lead.id;
   }
 

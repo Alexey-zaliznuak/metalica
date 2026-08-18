@@ -87,7 +87,8 @@ model Order {
   events                OrderEvent[]
   statusChanges         OrderStatusChange[]
   // Имена менеджеров подтягиваются из BlueSales (не FK):
-  //  - deliveryManagerName  — менеджер ведения (customer.manager из BS)
+  //  - deliveryManagerName  — менеджер ведения (Lead.managerName = customer.manager).
+  //    Пишется и при синке заказа, и при синке карточки клиента.
   //  - onboardingManagerName — менеджер оформления (custom-поле «Оформление» из BS)
   deliveryManagerName   String?
   onboardingManagerName String?
