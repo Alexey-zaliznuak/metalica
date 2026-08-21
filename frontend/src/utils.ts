@@ -10,6 +10,7 @@ export const ROLE_LABELS: Record<string, string> = {
   SKETCH_DESIGNER: 'Художник эскиза',
   REVISION_DESIGNER: 'Художник правок',
   MANAGER: 'Менеджер',
+  PRODUCTION: 'Производство',
   ADMIN: 'Администратор',
 }
 
@@ -22,6 +23,7 @@ export const ASSIGNABLE_ROLES: { value: string; label: string }[] = [
   { value: 'MANAGER', label: ROLE_LABELS.MANAGER },
   { value: 'SKETCH_DESIGNER', label: ROLE_LABELS.SKETCH_DESIGNER },
   { value: 'REVISION_DESIGNER', label: ROLE_LABELS.REVISION_DESIGNER },
+  { value: 'PRODUCTION', label: ROLE_LABELS.PRODUCTION },
   { value: 'ADMIN', label: ROLE_LABELS.ADMIN },
 ]
 

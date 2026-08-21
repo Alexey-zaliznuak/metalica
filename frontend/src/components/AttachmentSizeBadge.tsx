@@ -19,7 +19,7 @@ export default function AttachmentSizeBadge({ bytes }: AttachmentSizeBadgeProps)
       component="span"
       sx={{
         position: 'absolute',
-        left: 4,
+        right: 4,
         bottom: 4,
         px: 0.6,
         py: '1px',

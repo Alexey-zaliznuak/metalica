@@ -2,6 +2,7 @@ export type UserRole =
   | 'SKETCH_DESIGNER'
   | 'REVISION_DESIGNER'
   | 'MANAGER'
+  | 'PRODUCTION'
   | 'ADMIN'
   | string
 export type UserScope =

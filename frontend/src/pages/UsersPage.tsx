@@ -48,12 +48,13 @@ import {
 
 const ROLE_CHIP_COLOR: Record<
   string,
-  'default' | 'primary' | 'secondary' | 'info' | 'warning'
+  'default' | 'primary' | 'secondary' | 'info' | 'success' | 'warning'
 > = {
   ADMIN: 'warning',
   MANAGER: 'primary',
   SKETCH_DESIGNER: 'secondary',
   REVISION_DESIGNER: 'info',
+  PRODUCTION: 'success',
 }
 
 export default function UsersPage() {
