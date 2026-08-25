@@ -39,6 +39,8 @@ export class AuthService {
         username: user.username,
         role: user.role,
         scopes: user.scopes,
+        directions: user.directions,
+        onShift: user.onShift,
         frontendSettings: user.frontendSettings,
       },
     };
@@ -54,6 +56,8 @@ export class AuthService {
         name: true,
         role: true,
         scopes: true,
+        directions: true,
+        onShift: true,
         frontendSettings: true,
       },
     });

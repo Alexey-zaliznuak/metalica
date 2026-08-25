@@ -6,6 +6,8 @@ export interface AuthUser {
   name: string;
   role: string;
   scopes: string[];
+  directions: string[];
+  onShift: boolean;
   frontendSettings?: Record<string, unknown> | null;
 }
 

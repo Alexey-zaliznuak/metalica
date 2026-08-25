@@ -91,6 +91,8 @@ export class OrdersController {
       showTimeInStatus: dto.showTimeInStatus,
       alertAfterMinutes: dto.alertAfterMinutes ?? null,
       closesSketch: dto.closesSketch,
+      assignSketchDesigner: dto.assignSketchDesigner,
+      assignRevisionDesigner: dto.assignRevisionDesigner,
     });
   }
 

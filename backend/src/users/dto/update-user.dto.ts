@@ -1,5 +1,5 @@
 import { IsArray, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
-import { Role, UserScope } from '@prisma/client';
+import { OrderDirection, Role, UserScope } from '@prisma/client';
 
 export class UpdateUserDto {
   @IsOptional()
@@ -25,4 +25,9 @@ export class UpdateUserDto {
   @IsArray()
   @IsEnum(UserScope, { each: true })
   scopes?: UserScope[];
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(OrderDirection, { each: true })
+  directions?: OrderDirection[];
 }

@@ -18,6 +18,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { AuthUser } from '../auth/current-user.decorator';
 import { OrderEventChange, OrderEventsService } from './order-events.service';
 import { computeSketchTimestampUpdate } from './sketch-status';
+import { AssignmentService } from '../assignment/assignment.service';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
@@ -32,6 +33,7 @@ export class OrdersService {
     private bsApi: BluesalesApiService,
     private storage: StorageService,
     private notifications: NotificationsService,
+    private assignment: AssignmentService,
   ) {}
 
   private readonly userSelect = {
@@ -701,6 +703,8 @@ export class OrdersService {
       showTimeInStatus: boolean;
       alertAfterMinutes: number | null;
       closesSketch?: boolean;
+      assignSketchDesigner?: boolean;
+      assignRevisionDesigner?: boolean;
     },
   ) {
     const status = await this.prisma.bluesalesOrderStatus.findUnique({
@@ -719,6 +723,12 @@ export class OrdersService {
         ...(settings.closesSketch !== undefined
           ? { closesSketch: settings.closesSketch }
           : {}),
+        ...(settings.assignSketchDesigner !== undefined
+          ? { assignSketchDesigner: settings.assignSketchDesigner }
+          : {}),
+        ...(settings.assignRevisionDesigner !== undefined
+          ? { assignRevisionDesigner: settings.assignRevisionDesigner }
+          : {}),
       },
     });
 
@@ -733,6 +743,8 @@ export class OrdersService {
       showTimeInStatus: status.showTimeInStatus,
       alertAfterMinutes: status.alertAfterMinutes,
       closesSketch: status.closesSketch,
+      assignSketchDesigner: status.assignSketchDesigner,
+      assignRevisionDesigner: status.assignRevisionDesigner,
     };
   }
 
@@ -901,6 +913,14 @@ export class OrdersService {
             err instanceof Error ? err.stack : String(err),
           );
         });
+
+      // Ждём назначения, чтобы в ответе уже был подобранный художник.
+      await this.assignment.maybeAssign(id, statusId).catch((err) => {
+        this.logger.error(
+          `Не удалось автоматически назначить художника заказу #${id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      });
     }
 
     return this.findOne(id);

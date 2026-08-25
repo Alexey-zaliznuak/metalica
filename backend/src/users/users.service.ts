@@ -1,9 +1,10 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role, UserScope } from '@prisma/client';
+import { OrderDirection, Prisma, Role, UserScope } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -19,12 +20,26 @@ export class UsersService {
     name: true,
     role: true,
     scopes: true,
+    directions: true,
+    onShift: true,
+    onShiftAt: true,
     createdAt: true,
   } as const;
+
+  /** Роли, участвующие в автораспределении заказов. */
+  private static readonly DESIGNER_ROLES: Role[] = [
+    Role.SKETCH_DESIGNER,
+    Role.REVISION_DESIGNER,
+  ];
 
   private normalizeScopes(scopes?: UserScope[]) {
     if (!scopes) return undefined;
     return Array.from(new Set(scopes));
+  }
+
+  private normalizeDirections(directions?: OrderDirection[]) {
+    if (!directions) return undefined;
+    return Array.from(new Set(directions));
   }
 
   findAll() {
@@ -48,6 +63,7 @@ export class UsersService {
         name: dto.name.trim(),
         role: dto.role ?? Role.MANAGER,
         scopes: this.normalizeScopes(dto.scopes) ?? [],
+        directions: this.normalizeDirections(dto.directions) ?? [],
         passwordHash,
       },
       select: this.userListSelect,
@@ -85,6 +101,21 @@ export class UsersService {
       data.scopes = this.normalizeScopes(dto.scopes) ?? [];
     }
 
+    if (dto.directions !== undefined) {
+      data.directions = this.normalizeDirections(dto.directions) ?? [];
+    }
+
+    // Роль сменили на не-художника — круги автораспределения его больше
+    // не касаются, поэтому смену и направления снимаем.
+    const nextRole = dto.role ?? existing.role;
+    if (!UsersService.DESIGNER_ROLES.includes(nextRole)) {
+      data.directions = [];
+      if (existing.onShift) {
+        data.onShift = false;
+        data.onShiftAt = new Date();
+      }
+    }
+
     if (dto.password) {
       data.passwordHash = await bcrypt.hash(dto.password, 10);
     }
@@ -92,6 +123,37 @@ export class UsersService {
     return this.prisma.user.update({
       where: { id },
       data,
+      select: this.userListSelect,
+    });
+  }
+
+  /**
+   * Переключает статус «На смене». Художник вызывает для себя, администратор —
+   * для любого художника (например, если сотрудник пропал со связи).
+   */
+  async setShift(id: number, onShift: boolean) {
+    const existing = await this.prisma.user.findUnique({
+      where: { id },
+      select: { role: true, onShift: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+    if (!UsersService.DESIGNER_ROLES.includes(existing.role)) {
+      throw new BadRequestException(
+        'Статус «На смене» доступен только художникам эскиза и правок',
+      );
+    }
+    if (existing.onShift === onShift) {
+      return this.prisma.user.findUniqueOrThrow({
+        where: { id },
+        select: this.userListSelect,
+      });
+    }
+
+    return this.prisma.user.update({
+      where: { id },
+      data: { onShift, onShiftAt: new Date() },
       select: this.userListSelect,
     });
   }

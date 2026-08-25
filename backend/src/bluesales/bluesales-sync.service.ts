@@ -2,6 +2,8 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { OrderSource, OrderStatusChangeState, Prisma } from '@prisma/client';
+import { AssignmentService } from '../assignment/assignment.service';
+import { GoodsService } from '../goods/goods.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BluesalesApiService, BsCustomer, BsOrder } from './bluesales-api.service';
@@ -79,6 +81,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
+    private readonly goods: GoodsService,
+    private readonly assignment: AssignmentService,
   ) {
     this.enabled = this.config.get<string>('BLUESALES_ENABLED', 'true') !== 'false';
     this.vkGroupId = this.config.get<string>('BLUESALES_VK_GROUP_ID', '');
@@ -910,6 +914,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       bsOrder.orderStatus?.id ?? null,
     );
 
+    // Справочник товаров пополняем до назначения художника: направление заказа
+    // считается по нему.
+    await this.goods.upsertFromPayload(infoData.rawPayload);
+
     if (existingInfo) {
       const sketchData = await this.resolveSketchTimestampUpdate(
         existingInfo.orderId,
@@ -1039,6 +1047,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
               err instanceof Error ? err.stack : String(err),
             );
           });
+        await this.tryAutoAssign(notifyStatus.orderId, notifyStatus.statusId);
       }
       return;
     }
@@ -1172,6 +1181,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           ...(leadId && sameNumber.leadId !== leadId ? { leadId } : {}),
         },
       });
+      await this.tryAutoAssign(sameNumber.id, statusData.orderStatusId);
       return;
     }
 
@@ -1211,6 +1221,23 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             err instanceof Error ? err.stack : String(err),
           );
         });
+    }
+
+    await this.tryAutoAssign(created.id, statusData.orderStatusId);
+  }
+
+  /**
+   * Автоназначение художника не должно ронять синк заказа: заказ важнее, а
+   * нераспределённый заказ назначается вручную.
+   */
+  private async tryAutoAssign(orderId: number, statusId: number | null) {
+    try {
+      await this.assignment.maybeAssign(orderId, statusId);
+    } catch (err) {
+      this.logger.error(
+        `Не удалось автоматически назначить художника заказу #${orderId} из BS sync`,
+        err instanceof Error ? err.stack : String(err),
+      );
     }
   }
 

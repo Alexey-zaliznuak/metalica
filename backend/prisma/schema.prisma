@@ -26,6 +26,15 @@ enum OrderSource {
   BLUESALES
 }
 
+// Направление работ по заказу. Определяется по товарам заказа (см. BluesalesGoods)
+// и задаёт независимый круг round-robin для автораспределения между художниками.
+enum OrderDirection {
+  // Фотопечать и ретушь — один общий круг
+  PHOTO_RETOUCH
+  NEURO_ART
+  DIGITAL
+}
+
 enum OrderStatusChangeState {
   PENDING
   PROCESSING
@@ -55,6 +64,13 @@ model User {
   name                     String
   role                     Role                @default(MANAGER)
   scopes                   UserScope[]         @default([])
+  // Направления, в которых работает художник. Участие в круге автораспределения
+  // требует и совпадения направления, и включённого onShift.
+  directions               OrderDirection[]    @default([])
+  // «На смене»: художник включает сам, админ может переключить принудительно.
+  // Сбрасывается всем ежедневно в 21:00 по МСК.
+  onShift                  Boolean             @default(false)
+  onShiftAt                DateTime?
   passwordHash             String
   frontendSettings         Json?
   messages                 Message[]
@@ -75,6 +91,7 @@ model User {
   updatedAt                DateTime            @updatedAt
 
   @@index([role])
+  @@index([role, onShift])
 }
 
 model Order {
@@ -273,10 +290,44 @@ model BluesalesOrderStatus {
   alertAfterMinutes Int?
   // При входе заказа в этот статус помечать эскиз начатым и готовым.
   closesSketch      Boolean  @default(false)
+  // При входе заказа в этот статус подобрать художника автоматически,
+  // если соответствующее поле заказа ещё пустое.
+  assignSketchDesigner   Boolean @default(false)
+  assignRevisionDesigner Boolean @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@index([sortOrder])
+}
+
+// Накопительный справочник товаров BlueSales (goodsPositions[].goods).
+// Пополняется при синке заказов; direction задаёт администратор в справочнике.
+// direction = null означает, что товар не влияет на направление заказа (доп).
+model BluesalesGoods {
+  // id товара в BlueSales (goodsPositions[].goods.id)
+  bsGoodsId Int             @id
+  name      String
+  marking   String?
+  direction OrderDirection?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([direction])
+  @@index([name])
+}
+
+// Курсор round-robin. Одна строка на круг: направление × роль художника
+// (SKETCH_DESIGNER | REVISION_DESIGNER) — итого до шести независимых очередей.
+model AssignmentCursor {
+  id           Int            @id @default(autoincrement())
+  direction    OrderDirection
+  designerRole Role
+  // Последний художник, получивший заказ в этом круге. null = круг ещё не стартовал.
+  lastUserId   Int?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([direction, designerRole])
 }
 
 model Chat {

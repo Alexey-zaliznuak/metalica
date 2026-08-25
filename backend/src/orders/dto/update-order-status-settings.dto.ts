@@ -12,6 +12,15 @@ export class UpdateOrderStatusSettingsDto {
   @IsBoolean()
   closesSketch?: boolean;
 
+  // Нужно ли при входе заказа в статус подобрать художника автоматически.
+  @IsOptional()
+  @IsBoolean()
+  assignSketchDesigner?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  assignRevisionDesigner?: boolean;
+
   // null/отсутствует = порог не задан: таймер показывается без «огонька».
   @ValidateIf(
     (dto: UpdateOrderStatusSettingsDto) =>

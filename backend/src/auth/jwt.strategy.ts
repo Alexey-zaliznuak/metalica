@@ -31,6 +31,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       name: user.name,
       role: user.role,
       scopes: user.scopes,
+      directions: user.directions,
+      onShift: user.onShift,
       frontendSettings: user.frontendSettings,
     };
   }
