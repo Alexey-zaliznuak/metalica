@@ -14,6 +14,7 @@ import {
   MenuItem,
   Paper,
   Stack,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -34,14 +35,18 @@ import { describeApiError, logApiError } from '../api/errors'
 import type {
   AdminUser,
   CreateUserPayload,
+  OrderDirection,
   UpdateUserPayload,
   UserRole,
   UserScope,
 } from '../api/types'
 import {
+  ASSIGNABLE_DIRECTIONS,
   ASSIGNABLE_ROLES,
   ASSIGNABLE_SCOPES,
+  directionLabel,
   formatDateTime,
+  isDesignerRole,
   roleLabel,
   scopeLabel,
 } from '../utils'
@@ -71,10 +76,15 @@ export default function UsersPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [role, setRole] = useState<UserRole>('MANAGER')
   const [scopes, setScopes] = useState<UserScope[]>([])
+  const [directions, setDirections] = useState<OrderDirection[]>([])
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [shiftSavingId, setShiftSavingId] = useState<number | null>(null)
 
   const isEditing = editingUser !== null
+  // Смена и направления существуют только у художников: они участвуют в
+  // автораспределении заказов.
+  const showDirections = isDesignerRole(role)
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
@@ -102,6 +112,7 @@ export default function UsersPage() {
     setShowPassword(false)
     setRole('MANAGER')
     setScopes([])
+    setDirections([])
     setFormError(null)
     setDialogOpen(true)
   }
@@ -114,8 +125,27 @@ export default function UsersPage() {
     setShowPassword(false)
     setRole(u.role)
     setScopes(u.scopes ?? [])
+    setDirections(u.directions ?? [])
     setFormError(null)
     setDialogOpen(true)
+  }
+
+  const toggleShift = async (u: AdminUser, onShift: boolean) => {
+    setShiftSavingId(u.id)
+    setError(null)
+    try {
+      const { data } = await client.patch<AdminUser>(`/users/${u.id}/shift`, {
+        onShift,
+      })
+      setUsers((prev) => prev.map((item) => (item.id === data.id ? data : item)))
+    } catch (err) {
+      logApiError(`смена статуса «На смене» у ${u.name}`, err)
+      setError(
+        describeApiError(err, `Не удалось изменить статус «На смене» у ${u.name}`),
+      )
+    } finally {
+      setShiftSavingId(null)
+    }
   }
 
   const canSubmit = useMemo(
@@ -140,6 +170,7 @@ export default function UsersPage() {
           name: name.trim(),
           role,
           scopes,
+          directions: showDirections ? directions : [],
         }
         if (password.length >= 6) {
           payload.password = password
@@ -156,6 +187,7 @@ export default function UsersPage() {
           password,
           role,
           scopes,
+          directions: showDirections ? directions : [],
         }
         const { data } = await client.post<AdminUser>('/users', payload)
         setUsers((prev) => [...prev, data])
@@ -218,6 +250,10 @@ export default function UsersPage() {
                 <TableCell>Логин</TableCell>
                 <TableCell>Имя</TableCell>
                 <TableCell>Роль</TableCell>
+                <TableCell align="center">На смене</TableCell>
+                <TableCell sx={{ display: { xs: 'none', lg: 'table-cell' } }}>
+                  Направления
+                </TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Скоупы</TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Создан</TableCell>
                 <TableCell align="right">Действия</TableCell>
@@ -226,14 +262,14 @@ export default function UsersPage() {
             <TableBody>
               {loading && (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
                     <CircularProgress />
                   </TableCell>
                 </TableRow>
               )}
               {!loading && users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
                     <Typography color="text.secondary">
                       Пользователей пока нет
                     </Typography>
@@ -253,6 +289,53 @@ export default function UsersPage() {
                         color={ROLE_CHIP_COLOR[u.role] ?? 'default'}
                         variant="filled"
                       />
+                    </TableCell>
+                    <TableCell align="center">
+                      {isDesignerRole(u.role) ? (
+                        <Tooltip
+                          title={
+                            u.onShift
+                              ? `На смене${u.onShiftAt ? ` с ${formatDateTime(u.onShiftAt)}` : ''}`
+                              : 'Не на смене — заказы автоматически не приходят'
+                          }
+                        >
+                          <Switch
+                            size="small"
+                            checked={u.onShift}
+                            disabled={shiftSavingId === u.id}
+                            onChange={(e) => void toggleShift(u, e.target.checked)}
+                            inputProps={{
+                              'aria-label': `Статус «На смене» — ${u.name}`,
+                            }}
+                          />
+                        </Tooltip>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          —
+                        </Typography>
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ display: { xs: 'none', lg: 'table-cell' } }}>
+                      {!isDesignerRole(u.role) ? (
+                        <Typography variant="body2" color="text.secondary">
+                          —
+                        </Typography>
+                      ) : (u.directions ?? []).length === 0 ? (
+                        <Typography variant="body2" color="warning.main">
+                          Не заданы
+                        </Typography>
+                      ) : (
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                          {(u.directions ?? []).map((direction) => (
+                            <Chip
+                              key={`${u.id}-${direction}`}
+                              size="small"
+                              label={directionLabel(direction)}
+                              variant="outlined"
+                            />
+                          ))}
+                        </Stack>
+                      )}
                     </TableCell>
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                       <Stack direction="row" spacing={0.5} flexWrap="wrap">
@@ -388,6 +471,37 @@ export default function UsersPage() {
                   </MenuItem>
                 ))}
               </TextField>
+              {showDirections && (
+                <TextField
+                  select
+                  label="Направления"
+                  value={directions}
+                  onChange={(e) => {
+                    const next = e.target.value
+                    setDirections(
+                      typeof next === 'string'
+                        ? (next.split(',') as OrderDirection[])
+                        : (next as OrderDirection[]),
+                    )
+                  }}
+                  fullWidth
+                  SelectProps={{
+                    multiple: true,
+                    renderValue: (selected) => {
+                      const values = selected as OrderDirection[]
+                      if (values.length === 0) return 'Не участвует в распределении'
+                      return values.map((value) => directionLabel(value)).join(', ')
+                    },
+                  }}
+                  helperText="Круги автораспределения, в которых участвует художник"
+                >
+                  {ASSIGNABLE_DIRECTIONS.map((direction) => (
+                    <MenuItem key={direction.value} value={direction.value}>
+                      {direction.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2 }}>

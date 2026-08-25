@@ -17,6 +17,7 @@ import WorkloadPage from './pages/WorkloadPage'
 import ChatsPage from './pages/ChatsPage'
 import ChatThreadPage from './pages/ChatThreadPage'
 import OrderStatusesPage from './pages/OrderStatusesPage'
+import GoodsPage from './pages/GoodsPage'
 import NotificationsPage from './pages/NotificationsPage'
 import NotificationBellHost from './components/NotificationBellHost'
 import { NotificationsProvider } from './notifications/NotificationsContext'
@@ -131,7 +132,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 }
               />
               <Route
-                path="/order-statuses"
+                path="/dictionary/orders"
                 element={
                   <ProtectedRoute requireAdmin>
                     <AppLayout>
@@ -139,6 +140,25 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                     </AppLayout>
                   </ProtectedRoute>
                 }
+              />
+              <Route
+                path="/dictionary/goods"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AppLayout>
+                      <GoodsPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dictionary"
+                element={<Navigate to="/dictionary/orders" replace />}
+              />
+              {/* Статусы заказов переехали в справочник; ссылки из закладок не ломаем. */}
+              <Route
+                path="/order-statuses"
+                element={<Navigate to="/dictionary/orders" replace />}
               />
               <Route path="*" element={<Navigate to="/orders" replace />} />
             </Routes>

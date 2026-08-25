@@ -4,12 +4,18 @@ import {
   Box,
   Button,
   Checkbox,
+  Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControlLabel,
   IconButton,
   InputAdornment,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
   Paper,
   Stack,
@@ -23,7 +29,17 @@ import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import SaveIcon from '@mui/icons-material/Save'
 import client from '../api/client'
 import { describeApiError, logApiError } from '../api/errors'
-import type { BluesalesStatusOption } from '../api/types'
+import type {
+  BluesalesStatusOption,
+  OrderStatusSettingsPayload,
+} from '../api/types'
+
+/**
+ * Автораспределение художника правок пока скрыто из интерфейса: бэкенд его
+ * поддерживает и уже сохранённые значения не сбрасываются, но включить
+ * настройку нельзя. Поставьте true, чтобы вернуть её в модалку и сводку.
+ */
+const SHOW_REVISION_ASSIGNMENT = false
 
 // Порог «огонька» в UI задаётся часами и минутами, а хранится одним числом минут.
 interface ThresholdDraft {
@@ -40,31 +56,248 @@ function draftFromMinutes(total: number | null): ThresholdDraft {
   return { hours: String(Math.floor(total / 60)), minutes: String(total % 60) }
 }
 
-function draftsFromStatuses(statuses: BluesalesStatusOption[]) {
-  const drafts: Record<number, ThresholdDraft> = {}
-  statuses.forEach((status) => {
-    drafts[status.id] = draftFromMinutes(status.alertAfterMinutes)
-  })
-  return drafts
-}
-
-function minutesFromDraft(draft: ThresholdDraft | undefined): number | null {
-  if (!draft) return null
+function minutesFromDraft(draft: ThresholdDraft): number | null {
   const hours = Math.max(Number(draft.hours) || 0, 0)
   const minutes = Math.max(Number(draft.minutes) || 0, 0)
   const total = Math.round(hours * 60 + minutes)
   return total > 0 ? total : null
 }
 
+function formatThreshold(total: number | null): string | null {
+  if (total == null) return null
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+  if (hours > 0) return minutes > 0 ? `${hours} ч ${minutes} мин` : `${hours} ч`
+  return `${minutes} мин`
+}
+
+// Краткая сводка настроек в строке списка: подробности — в модалке.
+function StatusSummary({ status }: { status: BluesalesStatusOption }) {
+  const chips: string[] = []
+  if (status.closesSketch) chips.push('Закрывает эскиз')
+  if (status.showTimeInStatus) {
+    const threshold = formatThreshold(status.alertAfterMinutes)
+    chips.push(threshold ? `Таймер · ${threshold}` : 'Таймер')
+  }
+  if (status.assignSketchDesigner) chips.push('Авто: эскиз')
+  if (SHOW_REVISION_ASSIGNMENT && status.assignRevisionDesigner) {
+    chips.push('Авто: правки')
+  }
+
+  if (chips.length === 0) {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        Без настроек
+      </Typography>
+    )
+  }
+  return (
+    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+      {chips.map((chip) => (
+        <Chip key={chip} size="small" label={chip} variant="outlined" />
+      ))}
+    </Stack>
+  )
+}
+
+interface SettingsDialogProps {
+  status: BluesalesStatusOption | null
+  saving: boolean
+  error: string | null
+  onClose: () => void
+  onSave: (next: OrderStatusSettingsPayload) => void
+}
+
+function StatusSettingsDialog({
+  status,
+  saving,
+  error,
+  onClose,
+  onSave,
+}: SettingsDialogProps) {
+  const [closesSketch, setClosesSketch] = useState(false)
+  const [showTimeInStatus, setShowTimeInStatus] = useState(false)
+  const [threshold, setThreshold] = useState<ThresholdDraft>({
+    hours: '',
+    minutes: '',
+  })
+  const [assignSketch, setAssignSketch] = useState(false)
+  const [assignRevision, setAssignRevision] = useState(false)
+
+  // Форму заполняем при каждом открытии, чтобы не показывать чужой черновик.
+  useEffect(() => {
+    if (!status) return
+    setClosesSketch(status.closesSketch)
+    setShowTimeInStatus(status.showTimeInStatus)
+    setThreshold(draftFromMinutes(status.alertAfterMinutes))
+    setAssignSketch(status.assignSketchDesigner)
+    setAssignRevision(status.assignRevisionDesigner)
+  }, [status])
+
+  return (
+    <Dialog
+      open={status !== null}
+      onClose={() => !saving && onClose()}
+      fullWidth
+      maxWidth="sm"
+    >
+      <DialogTitle>
+        {status?.name}
+        <Typography variant="body2" color="text.secondary">
+          Настройки статуса · ID {status?.id}
+        </Typography>
+      </DialogTitle>
+      <DialogContent>
+        <Stack spacing={2.5} sx={{ mt: 1 }}>
+          {error && <Alert severity="error">{error}</Alert>}
+
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+              Автоматическое назначение художника
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              При входе заказа в этот статус художник подбирается по кругу
+              направления заказа. Уже назначенного художника автораспределение не
+              заменяет, а ночью (с 21:00 до 10:00) не работает вовсе.
+            </Typography>
+            <Stack>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={assignSketch}
+                    disabled={saving}
+                    onChange={(event) => setAssignSketch(event.target.checked)}
+                  />
+                }
+                label="Нужно назначить художника эскиза"
+              />
+              {SHOW_REVISION_ASSIGNMENT && (
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={assignRevision}
+                      disabled={saving}
+                      onChange={(event) => setAssignRevision(event.target.checked)}
+                    />
+                  }
+                  label="Нужно назначить художника правок"
+                />
+              )}
+            </Stack>
+          </Box>
+
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+              Эскиз
+            </Typography>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={closesSketch}
+                  disabled={saving}
+                  onChange={(event) => setClosesSketch(event.target.checked)}
+                />
+              }
+              label="Закрывать эскиз (отметить начатым и готовым)"
+            />
+          </Box>
+
+          <Box>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+              Таймер на доске
+            </Typography>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={showTimeInStatus}
+                  disabled={saving}
+                  onChange={(event) => setShowTimeInStatus(event.target.checked)}
+                />
+              }
+              label="Показывать, сколько заказ находится в статусе"
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 1 }}>
+              Порог: через сколько времени таймер краснеет и появляется огонёк.
+              Пусто — без огонька.
+            </Typography>
+            <Stack direction="row" spacing={1}>
+              <TextField
+                size="small"
+                type="number"
+                placeholder="0"
+                label="Часы"
+                value={threshold.hours}
+                disabled={!showTimeInStatus || saving}
+                onChange={(event) =>
+                  setThreshold((current) => ({
+                    ...current,
+                    hours: event.target.value,
+                  }))
+                }
+                inputProps={{ min: 0, max: 8760 }}
+                InputProps={{
+                  endAdornment: <InputAdornment position="end">ч</InputAdornment>,
+                }}
+                sx={{ width: 120 }}
+              />
+              <TextField
+                size="small"
+                type="number"
+                placeholder="0"
+                label="Минуты"
+                value={threshold.minutes}
+                disabled={!showTimeInStatus || saving}
+                onChange={(event) =>
+                  setThreshold((current) => ({
+                    ...current,
+                    minutes: event.target.value,
+                  }))
+                }
+                inputProps={{ min: 0, max: 59 }}
+                InputProps={{
+                  endAdornment: <InputAdornment position="end">мин</InputAdornment>,
+                }}
+                sx={{ width: 130 }}
+              />
+            </Stack>
+          </Box>
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} disabled={saving}>
+          Отмена
+        </Button>
+        <Button
+          variant="contained"
+          disabled={saving}
+          startIcon={saving ? <CircularProgress size={18} color="inherit" /> : null}
+          onClick={() =>
+            onSave({
+              showTimeInStatus,
+              alertAfterMinutes: minutesFromDraft(threshold),
+              closesSketch,
+              assignSketchDesigner: assignSketch,
+              assignRevisionDesigner: assignRevision,
+            })
+          }
+        >
+          Сохранить
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
 export default function OrderStatusesPage() {
   const [statuses, setStatuses] = useState<BluesalesStatusOption[]>([])
   const [savedIds, setSavedIds] = useState<number[]>([])
-  const [drafts, setDrafts] = useState<Record<number, ThresholdDraft>>({})
   const [draggedId, setDraggedId] = useState<number | null>(null)
+  const [editing, setEditing] = useState<BluesalesStatusOption | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [savingSettingsId, setSavingSettingsId] = useState<number | null>(null)
+  const [savingSettings, setSavingSettings] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [dialogError, setDialogError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
   const fetchStatuses = useCallback(async () => {
@@ -75,7 +308,6 @@ export default function OrderStatusesPage() {
         await client.get<BluesalesStatusOption[]>('/orders/order-statuses')
       setStatuses(data)
       setSavedIds(idsOf(data))
-      setDrafts(draftsFromStatuses(data))
     } catch (err) {
       logApiError('загрузка статусов заказов', err)
       setError(describeApiError(err, 'Не удалось загрузить статусы заказов'))
@@ -133,7 +365,6 @@ export default function OrderStatusesPage() {
       )
       setStatuses(data)
       setSavedIds(idsOf(data))
-      setDrafts(draftsFromStatuses(data))
       setSuccess(true)
     } catch (err) {
       logApiError('сохранение порядка статусов', err)
@@ -148,21 +379,15 @@ export default function OrderStatusesPage() {
     }
   }
 
-  // Настройки таймера сохраняются сразу, независимо от несохранённого порядка,
-  // поэтому локальный sortOrder оставляем прежним.
-  const saveSettings = async (
-    status: BluesalesStatusOption,
-    next: {
-      showTimeInStatus: boolean
-      alertAfterMinutes: number | null
-      closesSketch: boolean
-    },
-  ) => {
-    setSavingSettingsId(status.id)
-    setError(null)
+  // Настройки сохраняются независимо от несохранённого порядка, поэтому
+  // локальный sortOrder оставляем прежним.
+  const saveSettings = async (next: OrderStatusSettingsPayload) => {
+    if (!editing) return
+    setSavingSettings(true)
+    setDialogError(null)
     try {
       const { data } = await client.patch<BluesalesStatusOption>(
-        `/orders/order-statuses/${status.id}/settings`,
+        `/orders/order-statuses/${editing.id}/settings`,
         next,
       )
       setStatuses((current) =>
@@ -170,38 +395,15 @@ export default function OrderStatusesPage() {
           item.id === data.id ? { ...data, sortOrder: item.sortOrder } : item,
         ),
       )
-      setDrafts((current) => ({
-        ...current,
-        [data.id]: draftFromMinutes(data.alertAfterMinutes),
-      }))
+      setEditing(null)
     } catch (err) {
-      logApiError(`сохранение настроек статуса «${status.name}»`, err)
-      setError(
-        describeApiError(err, `Не удалось сохранить настройки статуса «${status.name}»`),
+      logApiError(`сохранение настроек статуса «${editing.name}»`, err)
+      setDialogError(
+        describeApiError(err, `Не удалось сохранить настройки статуса «${editing.name}»`),
       )
-      setDrafts((current) => ({
-        ...current,
-        [status.id]: draftFromMinutes(status.alertAfterMinutes),
-      }))
     } finally {
-      setSavingSettingsId(null)
+      setSavingSettings(false)
     }
-  }
-
-  const handleThresholdBlur = (status: BluesalesStatusOption) => {
-    const nextMinutes = minutesFromDraft(drafts[status.id])
-    if (nextMinutes === status.alertAfterMinutes) {
-      setDrafts((current) => ({
-        ...current,
-        [status.id]: draftFromMinutes(nextMinutes),
-      }))
-      return
-    }
-    void saveSettings(status, {
-      showTimeInStatus: status.showTimeInStatus,
-      alertAfterMinutes: nextMinutes,
-      closesSketch: status.closesSketch,
-    })
   }
 
   return (
@@ -218,11 +420,10 @@ export default function OrderStatusesPage() {
             Статусы заказов
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Перетащите статус или используйте стрелки. Верхние статусы
-            показываются первыми. Галочка «Таймер на доске» включает на карточках
-            время в статусе, а порог — красный таймер с огоньком при его
-            превышении. «Закрывать эскиз» ставит обе метки эскиза при входе заказа
-            в статус.
+            Порядок задаётся перетаскиванием за ручку или стрелками — верхние
+            статусы показываются на доске первыми. Клик по статусу открывает его
+            настройки: закрытие эскиза, таймер на доске и автоматическое
+            назначение художника.
           </Typography>
         </Box>
         <Button
@@ -268,171 +469,93 @@ export default function OrderStatusesPage() {
               <ListItem
                 key={status.id}
                 divider={index < statuses.length - 1}
-                draggable={!saving}
-                onDragStart={() => setDraggedId(status.id)}
-                onDragEnd={() => setDraggedId(null)}
+                disablePadding
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => handleDrop(event, index)}
                 sx={{
-                  gap: 1,
                   bgcolor:
                     draggedId === status.id ? 'action.selected' : 'background.paper',
-                  cursor: saving ? 'default' : 'grab',
-                  '&:active': { cursor: saving ? 'default' : 'grabbing' },
                 }}
+                secondaryAction={
+                  <Stack direction="row">
+                    <Tooltip title="Поднять выше">
+                      <span>
+                        <IconButton
+                          aria-label={`Поднять статус «${status.name}» выше`}
+                          disabled={index === 0 || saving}
+                          onClick={() => moveStatus(index, index - 1)}
+                        >
+                          <ArrowUpwardIcon />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip title="Опустить ниже">
+                      <span>
+                        <IconButton
+                          aria-label={`Опустить статус «${status.name}» ниже`}
+                          disabled={index === statuses.length - 1 || saving}
+                          onClick={() => moveStatus(index, index + 1)}
+                        >
+                          <ArrowDownwardIcon />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Stack>
+                }
               >
-                <DragIndicatorIcon color="disabled" />
-                <Typography
-                  color="text.secondary"
-                  sx={{ width: 32, textAlign: 'right', flexShrink: 0 }}
-                >
-                  {index + 1}
-                </Typography>
-                <ListItemText primary={status.name} secondary={`ID: ${status.id}`} />
-                <Stack
-                  direction="row"
-                  alignItems="center"
-                  spacing={1}
-                  sx={{ flexShrink: 0 }}
-                  // Строка целиком draggable, поэтому выделение текста в полях
-                  // порога иначе превращалось бы в перетаскивание статуса.
-                  onDragStart={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
+                {/* Перетаскивание вешаем только на ручку: клик по строке
+                    открывает настройки статуса. */}
+                <Tooltip title="Перетащите, чтобы изменить порядок">
+                  <Box
+                    draggable={!saving}
+                    onDragStart={() => setDraggedId(status.id)}
+                    onDragEnd={() => setDraggedId(null)}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      pl: 2,
+                      cursor: saving ? 'default' : 'grab',
+                      '&:active': { cursor: saving ? 'default' : 'grabbing' },
+                    }}
+                  >
+                    <DragIndicatorIcon color="disabled" />
+                  </Box>
+                </Tooltip>
+                <ListItemButton
+                  onClick={() => {
+                    setDialogError(null)
+                    setEditing(status)
                   }}
+                  sx={{ gap: 2, pr: 12 }}
                 >
-                  <Tooltip title="При входе заказа в этот статус отметить эскиз начатым и готовым">
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={status.closesSketch}
-                          disabled={savingSettingsId === status.id}
-                          onChange={(event) =>
-                            void saveSettings(status, {
-                              showTimeInStatus: status.showTimeInStatus,
-                              alertAfterMinutes: minutesFromDraft(drafts[status.id]),
-                              closesSketch: event.target.checked,
-                            })
-                          }
-                        />
-                      }
-                      label="Закрывать эскиз"
-                      sx={{ mr: 0 }}
-                    />
-                  </Tooltip>
-                  <Tooltip title="Показывать на карточках доски, сколько заказ находится в этом статусе">
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={status.showTimeInStatus}
-                          disabled={savingSettingsId === status.id}
-                          onChange={(event) =>
-                            void saveSettings(status, {
-                              showTimeInStatus: event.target.checked,
-                              alertAfterMinutes: minutesFromDraft(
-                                drafts[status.id],
-                              ),
-                              closesSketch: status.closesSketch,
-                            })
-                          }
-                        />
-                      }
-                      label="Таймер на доске"
-                      sx={{ mr: 0 }}
-                    />
-                  </Tooltip>
-                  <Tooltip title="Через сколько времени в статусе таймер краснеет и появляется огонёк. Пусто — без огонька.">
-                    <Stack direction="row" spacing={0.5}>
-                      <TextField
-                        size="small"
-                        type="number"
-                        placeholder="0"
-                        aria-label={`Порог, часы — статус «${status.name}»`}
-                        value={drafts[status.id]?.hours ?? ''}
-                        disabled={
-                          !status.showTimeInStatus ||
-                          savingSettingsId === status.id
-                        }
-                        onChange={(event) =>
-                          setDrafts((current) => ({
-                            ...current,
-                            [status.id]: {
-                              hours: event.target.value,
-                              minutes: current[status.id]?.minutes ?? '',
-                            },
-                          }))
-                        }
-                        onBlur={() => handleThresholdBlur(status)}
-                        inputProps={{ min: 0, max: 8760 }}
-                        InputProps={{
-                          endAdornment: (
-                            <InputAdornment position="end">ч</InputAdornment>
-                          ),
-                        }}
-                        sx={{ width: 92 }}
-                      />
-                      <TextField
-                        size="small"
-                        type="number"
-                        placeholder="0"
-                        aria-label={`Порог, минуты — статус «${status.name}»`}
-                        value={drafts[status.id]?.minutes ?? ''}
-                        disabled={
-                          !status.showTimeInStatus ||
-                          savingSettingsId === status.id
-                        }
-                        onChange={(event) =>
-                          setDrafts((current) => ({
-                            ...current,
-                            [status.id]: {
-                              hours: current[status.id]?.hours ?? '',
-                              minutes: event.target.value,
-                            },
-                          }))
-                        }
-                        onBlur={() => handleThresholdBlur(status)}
-                        inputProps={{ min: 0, max: 59 }}
-                        InputProps={{
-                          endAdornment: (
-                            <InputAdornment position="end">мин</InputAdornment>
-                          ),
-                        }}
-                        sx={{ width: 104 }}
-                      />
-                    </Stack>
-                  </Tooltip>
-                </Stack>
-                <Stack direction="row">
-                  <Tooltip title="Поднять выше">
-                    <span>
-                      <IconButton
-                        aria-label={`Поднять статус «${status.name}» выше`}
-                        disabled={index === 0 || saving}
-                        onClick={() => moveStatus(index, index - 1)}
-                      >
-                        <ArrowUpwardIcon />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title="Опустить ниже">
-                    <span>
-                      <IconButton
-                        aria-label={`Опустить статус «${status.name}» ниже`}
-                        disabled={index === statuses.length - 1 || saving}
-                        onClick={() => moveStatus(index, index + 1)}
-                      >
-                        <ArrowDownwardIcon />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                </Stack>
+                  <Typography
+                    color="text.secondary"
+                    sx={{ width: 32, textAlign: 'right', flexShrink: 0 }}
+                  >
+                    {index + 1}
+                  </Typography>
+                  <ListItemText
+                    primary={status.name}
+                    secondary={`ID: ${status.id}`}
+                    sx={{ flex: '1 1 40%' }}
+                  />
+                  <Box sx={{ flex: '1 1 60%' }}>
+                    <StatusSummary status={status} />
+                  </Box>
+                </ListItemButton>
               </ListItem>
             ))}
           </List>
         )}
       </Paper>
+
+      <StatusSettingsDialog
+        status={editing}
+        saving={savingSettings}
+        error={dialogError}
+        onClose={() => setEditing(null)}
+        onSave={(next) => void saveSettings(next)}
+      />
     </Box>
   )
 }

@@ -1345,6 +1345,8 @@ export default function OrderThreadPage() {
         showTimeInStatus: false,
         alertAfterMinutes: null,
         closesSketch: false,
+        assignSketchDesigner: false,
+        assignRevisionDesigner: false,
       })
     }
     return options

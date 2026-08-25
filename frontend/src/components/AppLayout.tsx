@@ -1,10 +1,13 @@
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ForumIcon from '@mui/icons-material/Forum'
 import GroupIcon from '@mui/icons-material/Group'
 import InsightsIcon from '@mui/icons-material/Insights'
+import Inventory2Icon from '@mui/icons-material/Inventory2'
 import ListAltIcon from '@mui/icons-material/ListAlt'
 import LogoutIcon from '@mui/icons-material/Logout'
 import LowPriorityIcon from '@mui/icons-material/LowPriority'
+import MenuBookIcon from '@mui/icons-material/MenuBook'
 import MenuIcon from '@mui/icons-material/Menu'
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
@@ -22,6 +25,8 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Menu,
+  MenuItem,
   Stack,
   Toolbar,
   Tooltip,
@@ -40,6 +45,8 @@ interface NavItem {
   adminOnly?: boolean
   // Пункт показывается, если у пользователя есть любой из скоупов (или он ADMIN).
   requiredScopes?: UserScope[]
+  // Раздел со вложенными страницами: на десктопе раскрывается меню.
+  children?: { to: string; icon: ReactNode; label: string }[]
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -60,12 +67,29 @@ const NAV_ITEMS: NavItem[] = [
   },
   { to: '/users', icon: <GroupIcon />, label: 'Пользователи', adminOnly: true },
   {
-    to: '/order-statuses',
-    icon: <LowPriorityIcon />,
-    label: 'Статусы заказов',
+    to: '/dictionary',
+    icon: <MenuBookIcon />,
+    label: 'Справочник',
     adminOnly: true,
+    children: [
+      { to: '/dictionary/orders', icon: <LowPriorityIcon />, label: 'Заказы' },
+      { to: '/dictionary/goods', icon: <Inventory2Icon />, label: 'Товары' },
+    ],
   },
 ]
+
+const navButtonSx = {
+  borderRadius: 999,
+  px: 2,
+  whiteSpace: 'nowrap',
+  opacity: 0.9,
+  '&.active': {
+    bgcolor: 'rgba(255,255,255,0.22)',
+    opacity: 1,
+    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.25)',
+  },
+  '&:hover': { bgcolor: 'rgba(255,255,255,0.14)' },
+} as const
 
 function NavButton({
   to,
@@ -82,21 +106,59 @@ function NavButton({
       to={to}
       startIcon={icon}
       color="inherit"
-      sx={{
-        borderRadius: 999,
-        px: 2,
-        whiteSpace: 'nowrap',
-        opacity: 0.9,
-        '&.active': {
-          bgcolor: 'rgba(255,255,255,0.22)',
-          opacity: 1,
-          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.25)',
-        },
-        '&:hover': { bgcolor: 'rgba(255,255,255,0.14)' },
-      }}
+      sx={navButtonSx}
     >
       {label}
     </Button>
+  )
+}
+
+function NavSectionButton({ item }: { item: NavItem }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  const active = location.pathname.startsWith(item.to)
+
+  return (
+    <>
+      <Button
+        startIcon={item.icon}
+        endIcon={<ExpandMoreIcon />}
+        color="inherit"
+        onClick={(event) => setAnchorEl(event.currentTarget)}
+        sx={{
+          ...navButtonSx,
+          ...(active
+            ? {
+                bgcolor: 'rgba(255,255,255,0.22)',
+                opacity: 1,
+                boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.25)',
+              }
+            : null),
+        }}
+      >
+        {item.label}
+      </Button>
+      <Menu
+        anchorEl={anchorEl}
+        open={anchorEl !== null}
+        onClose={() => setAnchorEl(null)}
+      >
+        {(item.children ?? []).map((child) => (
+          <MenuItem
+            key={child.to}
+            selected={location.pathname === child.to}
+            onClick={() => {
+              setAnchorEl(null)
+              navigate(child.to)
+            }}
+          >
+            <ListItemIcon sx={{ minWidth: 36 }}>{child.icon}</ListItemIcon>
+            <ListItemText primary={child.label} />
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   )
 }
 
@@ -203,14 +265,18 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             spacing={1}
             sx={{ flexGrow: 1, display: { xs: 'none', md: 'flex' } }}
           >
-            {visibleNavItems.map((item) => (
-              <NavButton
-                key={item.to}
-                to={item.to}
-                icon={item.icon}
-                label={item.label}
-              />
-            ))}
+            {visibleNavItems.map((item) =>
+              item.children ? (
+                <NavSectionButton key={item.to} item={item} />
+              ) : (
+                <NavButton
+                  key={item.to}
+                  to={item.to}
+                  icon={item.icon}
+                  label={item.label}
+                />
+              ),
+            )}
           </Stack>
 
           {/* Spacer for mobile/tablet where the horizontal nav is hidden */}
@@ -322,6 +388,49 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             const active =
               location.pathname === item.to ||
               location.pathname.startsWith(`${item.to}/`)
+            if (item.children) {
+              return (
+                <Box key={item.to}>
+                  <ListItemText
+                    primary={item.label}
+                    primaryTypographyProps={{
+                      variant: 'overline',
+                      color: 'text.secondary',
+                    }}
+                    sx={{ px: 3, pt: 1 }}
+                  />
+                  {item.children.map((child) => {
+                    const childActive = location.pathname === child.to
+                    return (
+                      <ListItemButton
+                        key={child.to}
+                        onClick={() => {
+                          setDrawerOpen(false)
+                          navigate(child.to)
+                        }}
+                        selected={childActive}
+                        sx={{ mx: 1, pl: 3, borderRadius: 1.5 }}
+                      >
+                        <ListItemIcon
+                          sx={{
+                            minWidth: 40,
+                            color: childActive ? 'primary.main' : undefined,
+                          }}
+                        >
+                          {child.icon}
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={child.label}
+                          primaryTypographyProps={{
+                            fontWeight: childActive ? 700 : 500,
+                          }}
+                        />
+                      </ListItemButton>
+                    )
+                  })}
+                </Box>
+              )
+            }
             return (
               <ListItemButton
                 key={item.to}

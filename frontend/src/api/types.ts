@@ -11,12 +11,17 @@ export type UserScope =
   | 'WORKLOAD_VIEW'
   | string
 
+// Направление работ по заказу: определяет круг автораспределения заказов.
+export type OrderDirection = 'PHOTO_RETOUCH' | 'NEURO_ART' | 'DIGITAL'
+
 export interface User {
   id: number
   name: string
   username: string
   role: UserRole
   scopes: UserScope[]
+  directions: OrderDirection[]
+  onShift: boolean
   frontendSettings?: Record<string, unknown> | null
 }
 
@@ -26,6 +31,9 @@ export interface AdminUser {
   name: string
   role: UserRole
   scopes: UserScope[]
+  directions: OrderDirection[]
+  onShift: boolean
+  onShiftAt: string | null
   createdAt: string
 }
 
@@ -35,6 +43,7 @@ export interface CreateUserPayload {
   password: string
   role: UserRole
   scopes?: UserScope[]
+  directions?: OrderDirection[]
 }
 
 export interface UpdateUserPayload {
@@ -43,6 +52,15 @@ export interface UpdateUserPayload {
   password?: string
   role?: UserRole
   scopes?: UserScope[]
+  directions?: OrderDirection[]
+}
+
+export interface GoodsItem {
+  id: number
+  name: string
+  marking: string | null
+  // null = товар не влияет на направление заказа (доп, упаковка, срочность)
+  direction: OrderDirection | null
 }
 
 export interface UpdateOrderPayload {
@@ -65,6 +83,16 @@ export interface BluesalesStatusOption {
   showTimeInStatus: boolean
   alertAfterMinutes: number | null
   closesSketch: boolean
+  assignSketchDesigner: boolean
+  assignRevisionDesigner: boolean
+}
+
+export interface OrderStatusSettingsPayload {
+  showTimeInStatus: boolean
+  alertAfterMinutes: number | null
+  closesSketch: boolean
+  assignSketchDesigner: boolean
+  assignRevisionDesigner: boolean
 }
 
 export interface BluesalesTag {

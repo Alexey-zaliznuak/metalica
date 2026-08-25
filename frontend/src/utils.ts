@@ -1,4 +1,4 @@
-import type { MessageKind, UserRole } from './api/types'
+import type { MessageKind, OrderDirection, UserRole } from './api/types'
 
 export const MESSAGE_KIND_LABELS: Record<MessageKind, string> = {
   NORMAL: 'Обычное',
@@ -50,6 +50,29 @@ export const ASSIGNABLE_SCOPES: { value: string; label: string }[] = [
 
 export function scopeLabel(scope: string): string {
   return SCOPE_LABELS[scope] ?? scope
+}
+
+// Роли, участвующие в автораспределении заказов: у них есть смена и направления.
+export const DESIGNER_ROLES: UserRole[] = ['SKETCH_DESIGNER', 'REVISION_DESIGNER']
+
+export function isDesignerRole(role: UserRole | undefined): boolean {
+  return role !== undefined && DESIGNER_ROLES.includes(role)
+}
+
+export const DIRECTION_LABELS: Record<string, string> = {
+  PHOTO_RETOUCH: 'Фотопечать + ретушь',
+  NEURO_ART: 'Нейро-арт',
+  DIGITAL: 'Digital',
+}
+
+export const ASSIGNABLE_DIRECTIONS: { value: OrderDirection; label: string }[] = [
+  { value: 'PHOTO_RETOUCH', label: DIRECTION_LABELS.PHOTO_RETOUCH },
+  { value: 'NEURO_ART', label: DIRECTION_LABELS.NEURO_ART },
+  { value: 'DIGITAL', label: DIRECTION_LABELS.DIGITAL },
+]
+
+export function directionLabel(direction: string): string {
+  return DIRECTION_LABELS[direction] ?? direction
 }
 
 // Проверка наличия скоупа у пользователя. ADMIN всегда имеет доступ.

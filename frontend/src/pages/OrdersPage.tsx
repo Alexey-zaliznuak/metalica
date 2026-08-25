@@ -30,6 +30,7 @@ import {
   ListItemText,
   Paper,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -59,6 +60,7 @@ import {
   formatDuration,
   formatDurationShort,
   formatLastActivity,
+  isDesignerRole,
 } from '../utils'
 
 const NO_ORDER_STATUS_COLUMN_ID = -1
@@ -533,6 +535,56 @@ const BoardColumnView = memo(function BoardColumnView({
     </Paper>
   )
 })
+
+/**
+ * Тумблер «На смене» для художников: в автораспределении заказов участвуют
+ * только те, у кого он включён.
+ */
+function ShiftSwitch() {
+  const { user, setOnShift } = useAuth()
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (!isDesignerRole(user?.role)) return null
+
+  const onShift = user?.onShift ?? false
+  const toggle = async (next: boolean) => {
+    setSaving(true)
+    setError(null)
+    try {
+      await setOnShift(next)
+    } catch (err) {
+      logApiError('переключение статуса «На смене»', err)
+      setError(describeApiError(err, 'Не удалось изменить статус «На смене»'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Tooltip
+      title={
+        error ??
+        (onShift
+          ? 'Вы на смене — новые заказы распределяются на вас автоматически'
+          : 'Вы не на смене — автоматически заказы не приходят')
+      }
+    >
+      <FormControlLabel
+        control={
+          <Switch
+            checked={onShift}
+            disabled={saving}
+            onChange={(event) => void toggle(event.target.checked)}
+            color={error ? 'error' : 'primary'}
+          />
+        }
+        label="На смене"
+        sx={{ flexShrink: 0, mr: 0, whiteSpace: 'nowrap' }}
+      />
+    </Tooltip>
+  )
+}
 
 export default function OrdersPage() {
   const navigate = useNavigate()
@@ -1208,7 +1260,8 @@ export default function OrdersPage() {
         minHeight: 0,
       }}
     >
-      <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+        <ShiftSwitch />
         <TextField
           placeholder="Поиск по номеру (минимум 4 цифры)"
           value={search}

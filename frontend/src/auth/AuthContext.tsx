@@ -27,6 +27,11 @@ interface AuthContextValue {
    * writes are not cancelled when a page unmounts during navigation.
    */
   updateFrontendSettings: (patch: Record<string, unknown>) => void
+  /**
+   * Переключает собственный статус «На смене». Только художники участвуют в
+   * автораспределении заказов, поэтому только у них есть смена.
+   */
+  setOnShift: (onShift: boolean) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -106,6 +111,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data
   }, [cacheUser])
 
+  const setOnShift = useCallback(
+    async (onShift: boolean) => {
+      const { data } = await client.patch<{ onShift: boolean }>(
+        '/users/me/shift',
+        { onShift },
+      )
+      setUser((prev) => {
+        if (!prev) return prev
+        const next = { ...prev, onShift: data.onShift }
+        localStorage.setItem(USER_KEY, JSON.stringify(next))
+        return next
+      })
+    },
+    [],
+  )
+
   const updateFrontendSettings = useCallback(
     (patch: Record<string, unknown>) => {
       const merged = { ...settingsRef.current, ...patch }
@@ -166,8 +187,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, token, loading, login, logout, me, updateFrontendSettings }),
-    [user, token, loading, login, logout, me, updateFrontendSettings],
+    () => ({
+      user,
+      token,
+      loading,
+      login,
+      logout,
+      me,
+      updateFrontendSettings,
+      setOnShift,
+    }),
+    [user, token, loading, login, logout, me, updateFrontendSettings, setOnShift],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
