@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Alert,
   Autocomplete,
@@ -25,6 +26,7 @@ import {
 import client from '../api/client'
 import { describeApiError, logApiError } from '../api/errors'
 import { useAuth } from '../auth/AuthContext'
+import HistoryIcon from '@mui/icons-material/History'
 import type { BluesalesStatusOption, WorkloadMetric } from '../api/types'
 
 type WorkloadTab = 'sketch' | 'revision' | 'delivery' | 'onboarding'
@@ -206,6 +208,7 @@ function parsePeriodSettings(raw: unknown) {
 }
 
 export default function WorkloadPage() {
+  const navigate = useNavigate()
   const { user, updateFrontendSettings } = useAuth()
   const [loading, setLoading] = useState(true)
   const [statusesLoading, setStatusesLoading] = useState(true)
@@ -402,14 +405,30 @@ export default function WorkloadPage() {
 
   return (
     <Box>
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h4" sx={{ fontWeight: 800 }}>
-          Нагрузка
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Завершённые эскизы и правки за период, текущая загрузка менеджеров
-        </Typography>
-      </Box>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        alignItems={{ xs: 'stretch', sm: 'flex-start' }}
+        justifyContent="space-between"
+        sx={{ mb: 3 }}
+      >
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 800 }}>
+            Нагрузка
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Завершённые эскизы и правки за период, текущая загрузка менеджеров
+          </Typography>
+        </Box>
+        <Button
+          variant="outlined"
+          startIcon={<HistoryIcon />}
+          onClick={() => navigate('/workload/journal')}
+          sx={{ alignSelf: { xs: 'stretch', sm: 'center' }, flexShrink: 0 }}
+        >
+          Журнал распределения
+        </Button>
+      </Stack>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

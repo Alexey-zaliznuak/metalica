@@ -14,6 +14,7 @@ import RevisionAnalyticsPage from './pages/RevisionAnalyticsPage'
 import SketchAnalyticsPage from './pages/SketchAnalyticsPage'
 import UsersPage from './pages/UsersPage'
 import WorkloadPage from './pages/WorkloadPage'
+import AssignmentJournalPage from './pages/AssignmentJournalPage'
 import ChatsPage from './pages/ChatsPage'
 import ChatThreadPage from './pages/ChatThreadPage'
 import OrderStatusesPage from './pages/OrderStatusesPage'
@@ -87,6 +88,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                   <ProtectedRoute requiredScopes={['WORKLOAD_VIEW']}>
                     <AppLayout>
                       <WorkloadPage />
+                    </AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workload/journal"
+                element={
+                  <ProtectedRoute requiredScopes={['WORKLOAD_VIEW']}>
+                    <AppLayout>
+                      <AssignmentJournalPage />
                     </AppLayout>
                   </ProtectedRoute>
                 }

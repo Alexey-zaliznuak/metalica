@@ -246,4 +246,102 @@ export class AssignmentService {
     const map = await this.settingsLoad;
     return map.get(statusId) ?? { sketch: false, revision: false };
   }
+
+  /**
+   * Журнал выдачи заказов художникам: автораспределение и ручные назначения.
+   * События снятия художника (newValue пустой) не показываем — заказ тогда
+   * никому не отдан.
+   */
+  async journal(options: {
+    limit?: number;
+    before?: number;
+    role?: 'sketch' | 'revision';
+    source?: 'auto' | 'manual';
+    q?: string;
+  } = {}) {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+    const field =
+      options.role === 'sketch'
+        ? 'sketchDesigner'
+        : options.role === 'revision'
+          ? 'revisionDesigner'
+          : { in: ['sketchDesigner', 'revisionDesigner'] };
+
+    const query = options.q?.trim();
+    const where: Prisma.OrderEventWhereInput = {
+      field,
+      newValue: { not: null },
+      ...(options.before ? { id: { lt: options.before } } : {}),
+      ...(options.source === 'auto'
+        ? { actorId: null }
+        : options.source === 'manual'
+          ? { actorId: { not: null } }
+          : {}),
+      ...(query
+        ? {
+            OR: [
+              { order: { orderNumber: { contains: query, mode: 'insensitive' } } },
+              { newValue: { contains: query, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const rows = await this.prisma.orderEvent.findMany({
+      where,
+      orderBy: { id: 'desc' },
+      take: limit + 1,
+      include: {
+        actor: { select: { id: true, name: true, role: true } },
+        order: { select: { id: true, orderNumber: true, title: true } },
+      },
+    });
+
+    const hasMore = rows.length > limit;
+    const slice = hasMore ? rows.slice(0, limit) : rows;
+    return {
+      items: slice.map((row) => this.serializeJournalEntry(row)),
+      nextCursor: hasMore ? slice[slice.length - 1].id : null,
+      hasMore,
+    };
+  }
+
+  private serializeJournalEntry(row: {
+    id: number;
+    createdAt: Date;
+    field: string;
+    oldValue: string | null;
+    newValue: string | null;
+    actor: { id: number; name: string; role: Role } | null;
+    order: { id: number; orderNumber: string; title: string | null };
+    meta: Prisma.JsonValue;
+  }) {
+    const meta = this.readMetaObject(row.meta);
+    const source = meta.source === 'auto-assign' || row.actor === null ? 'auto' : 'manual';
+    const direction =
+      typeof meta.direction === 'string' && meta.direction.length > 0
+        ? meta.direction
+        : null;
+    const assigneeId = typeof meta.newId === 'number' ? meta.newId : null;
+
+    return {
+      id: row.id,
+      createdAt: row.createdAt,
+      field: row.field,
+      source,
+      direction,
+      assignee: {
+        id: assigneeId,
+        name: row.newValue,
+      },
+      previousAssignee: row.oldValue,
+      actor: row.actor,
+      order: row.order,
+    };
+  }
+
+  private readMetaObject(meta: Prisma.JsonValue): Record<string, Prisma.JsonValue> {
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return {};
+    return meta as Record<string, Prisma.JsonValue>;
+  }
 }

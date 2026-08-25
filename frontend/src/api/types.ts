@@ -441,6 +441,29 @@ export interface WorkloadMetric {
   revisionOrdersWithOpenRequest: number
 }
 
+export interface AssignmentJournalEntry {
+  id: number
+  createdAt: string
+  field: 'sketchDesigner' | 'revisionDesigner' | string
+  source: 'auto' | 'manual'
+  direction: OrderDirection | null
+  assignee: {
+    id: number | null
+    name: string | null
+  }
+  previousAssignee: string | null
+  actor: {
+    id: number
+    name: string
+    role: UserRole
+  } | null
+  order: {
+    id: number
+    orderNumber: string
+    title: string | null
+  }
+}
+
 export interface LoginResponse {
   accessToken: string
   user: User
