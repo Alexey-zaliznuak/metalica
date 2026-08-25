@@ -72,7 +72,7 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Справочник',
     adminOnly: true,
     children: [
-      { to: '/dictionary/orders', icon: <LowPriorityIcon />, label: 'Заказы' },
+      { to: '/dictionary/statuses', icon: <LowPriorityIcon />, label: 'Статусы' },
       { to: '/dictionary/goods', icon: <Inventory2Icon />, label: 'Товары' },
     ],
   },

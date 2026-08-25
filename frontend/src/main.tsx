@@ -132,7 +132,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 }
               />
               <Route
-                path="/dictionary/orders"
+                path="/dictionary/statuses"
                 element={
                   <ProtectedRoute requireAdmin>
                     <AppLayout>
@@ -153,12 +153,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               />
               <Route
                 path="/dictionary"
-                element={<Navigate to="/dictionary/orders" replace />}
+                element={<Navigate to="/dictionary/statuses" replace />}
               />
-              {/* Статусы заказов переехали в справочник; ссылки из закладок не ломаем. */}
+              {/* Старые адреса статусов: и отдельная страница, и /dictionary/orders. */}
               <Route
                 path="/order-statuses"
-                element={<Navigate to="/dictionary/orders" replace />}
+                element={<Navigate to="/dictionary/statuses" replace />}
+              />
+              <Route
+                path="/dictionary/orders"
+                element={<Navigate to="/dictionary/statuses" replace />}
               />
               <Route path="*" element={<Navigate to="/orders" replace />} />
             </Routes>
