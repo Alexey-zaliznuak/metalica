@@ -35,7 +35,7 @@ import { useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import type { UserScope } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import { hasScope, roleLabel } from '../utils'
+import { canManageArtistShifts, hasScope, roleLabel } from '../utils'
 
 interface NavItem {
   to: string
@@ -44,6 +44,7 @@ interface NavItem {
   adminOnly?: boolean
   // Пункт показывается, если у пользователя есть любой из скоупов (или он ADMIN).
   requiredScopes?: UserScope[]
+  shiftManagement?: boolean
   // Раздел со вложенными страницами: на десктопе раскрывается меню.
   children?: { to: string; icon: ReactNode; label: string }[]
 }
@@ -64,7 +65,12 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Нагрузка',
     requiredScopes: ['WORKLOAD_VIEW'],
   },
-  { to: '/users', icon: <GroupIcon />, label: 'Пользователи', adminOnly: true },
+  {
+    to: '/users',
+    icon: <GroupIcon />,
+    label: 'Пользователи',
+    shiftManagement: true,
+  },
   {
     to: '/dictionary',
     icon: <MenuBookIcon />,
@@ -186,6 +192,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   const visibleNavItems = NAV_ITEMS.filter((item) => {
     if (item.adminOnly && user?.role !== 'ADMIN') return false
+    if (
+      item.shiftManagement &&
+      !canManageArtistShifts(user?.role, user?.scopes)
+    ) {
+      return false
+    }
     if (
       item.requiredScopes &&
       item.requiredScopes.length > 0 &&

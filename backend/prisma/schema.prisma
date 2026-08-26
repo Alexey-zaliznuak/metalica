@@ -19,6 +19,7 @@ enum UserScope {
   ORDERS_CHANGE_RESPONSIBLE @map("orders.change_responsible")
   METRICS_VIEW              @map("metrics.view")
   WORKLOAD_VIEW             @map("workload.view")
+  ARTIST_SHIFTS_MANAGE      @map("artist_shifts.manage")
 }
 
 enum OrderSource {

@@ -31,6 +31,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   ORDERS_CHANGE_RESPONSIBLE: 'Изменять ответственных заказа',
   METRICS_VIEW: 'Просмотр метрик',
   WORKLOAD_VIEW: 'Просмотр нагрузки',
+  ARTIST_SHIFTS_MANAGE: 'Управление сменами художников',
 }
 
 export const ASSIGNABLE_SCOPES: { value: string; label: string }[] = [
@@ -46,10 +47,25 @@ export const ASSIGNABLE_SCOPES: { value: string; label: string }[] = [
     value: 'WORKLOAD_VIEW',
     label: SCOPE_LABELS.WORKLOAD_VIEW,
   },
+  {
+    value: 'ARTIST_SHIFTS_MANAGE',
+    label: SCOPE_LABELS.ARTIST_SHIFTS_MANAGE,
+  },
 ]
 
 export function scopeLabel(scope: string): string {
   return SCOPE_LABELS[scope] ?? scope
+}
+
+export function canManageArtistShifts(
+  role: UserRole | undefined,
+  scopes: string[] | undefined,
+): boolean {
+  return (
+    role === 'ADMIN' ||
+    role === 'MANAGER' ||
+    (scopes ?? []).includes('ARTIST_SHIFTS_MANAGE')
+  )
 }
 
 // Роли, участвующие в автораспределении заказов: у них есть смена и направления.

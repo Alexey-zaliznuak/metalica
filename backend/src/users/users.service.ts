@@ -49,6 +49,15 @@ export class UsersService {
     });
   }
 
+  /** Список только художников для экрана управления сменами. */
+  findShiftArtists() {
+    return this.prisma.user.findMany({
+      where: { role: { in: UsersService.DESIGNER_ROLES } },
+      select: this.userListSelect,
+      orderBy: [{ role: 'asc' }, { name: 'asc' }],
+    });
+  }
+
   async create(dto: CreateUserDto) {
     const username = dto.username.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { username } });

@@ -32,6 +32,7 @@ import VisibilityOff from '@mui/icons-material/VisibilityOff'
 import { AxiosError } from 'axios'
 import client from '../api/client'
 import { describeApiError, logApiError } from '../api/errors'
+import { useAuth } from '../auth/AuthContext'
 import type {
   AdminUser,
   CreateUserPayload,
@@ -63,6 +64,8 @@ const ROLE_CHIP_COLOR: Record<
 }
 
 export default function UsersPage() {
+  const { user: currentUser } = useAuth()
+  const canManageAccounts = currentUser?.role === 'ADMIN'
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -90,7 +93,8 @@ export default function UsersPage() {
     setLoading(true)
     setError(null)
     try {
-      const { data } = await client.get<AdminUser[]>('/users')
+      const endpoint = canManageAccounts ? '/users' : '/users/shift-artists'
+      const { data } = await client.get<AdminUser[]>(endpoint)
       setUsers(data)
     } catch (err) {
       logApiError('загрузка пользователей', err)
@@ -98,7 +102,7 @@ export default function UsersPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [canManageAccounts])
 
   useEffect(() => {
     fetchUsers()
@@ -223,16 +227,20 @@ export default function UsersPage() {
             Пользователи
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Управление аккаунтами и ролями
+            {canManageAccounts
+              ? 'Управление аккаунтами, ролями и сменами'
+              : 'Управление статусом «На смене» у художников'}
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          startIcon={<PersonAddIcon />}
-          onClick={openCreate}
-        >
-          Создать аккаунт
-        </Button>
+        {canManageAccounts && (
+          <Button
+            variant="contained"
+            startIcon={<PersonAddIcon />}
+            onClick={openCreate}
+          >
+            Создать аккаунт
+          </Button>
+        )}
       </Stack>
 
       {error && (
@@ -247,29 +255,37 @@ export default function UsersPage() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>ID</TableCell>
-                <TableCell>Логин</TableCell>
+                {canManageAccounts && <TableCell>Логин</TableCell>}
                 <TableCell>Имя</TableCell>
                 <TableCell>Роль</TableCell>
                 <TableCell align="center">На смене</TableCell>
                 <TableCell sx={{ display: { xs: 'none', lg: 'table-cell' } }}>
                   Направления
                 </TableCell>
-                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Скоупы</TableCell>
-                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Создан</TableCell>
-                <TableCell align="right">Действия</TableCell>
+                {canManageAccounts && (
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
+                    Скоупы
+                  </TableCell>
+                )}
+                {canManageAccounts && (
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
+                    Создан
+                  </TableCell>
+                )}
+                {canManageAccounts && <TableCell align="right">Действия</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
               {loading && (
                 <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={canManageAccounts ? 9 : 5} align="center" sx={{ py: 6 }}>
                     <CircularProgress />
                   </TableCell>
                 </TableRow>
               )}
               {!loading && users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={canManageAccounts ? 9 : 5} align="center" sx={{ py: 6 }}>
                     <Typography color="text.secondary">
                       Пользователей пока нет
                     </Typography>
@@ -280,7 +296,9 @@ export default function UsersPage() {
                 users.map((u) => (
                   <TableRow key={u.id} hover>
                     <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{u.id}</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
+                    {canManageAccounts && (
+                      <TableCell sx={{ fontWeight: 600 }}>{u.username}</TableCell>
+                    )}
                     <TableCell>{u.name}</TableCell>
                     <TableCell>
                       <Chip
@@ -337,36 +355,42 @@ export default function UsersPage() {
                         </Stack>
                       )}
                     </TableCell>
-                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
-                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                        {(u.scopes ?? []).length === 0 ? (
-                          <Typography variant="body2" color="text.secondary">
-                            —
-                          </Typography>
-                        ) : (
-                          (u.scopes ?? []).map((scope) => (
-                            <Chip
-                              key={`${u.id}-${scope}`}
-                              size="small"
-                              label={scopeLabel(scope)}
-                              variant="outlined"
-                            />
-                          ))
-                        )}
-                      </Stack>
-                    </TableCell>
-                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
-                      <Typography variant="body2" color="text.secondary">
-                        {formatDateTime(u.createdAt)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Tooltip title="Редактировать">
-                        <IconButton size="small" onClick={() => openEdit(u)}>
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
+                    {canManageAccounts && (
+                      <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                          {(u.scopes ?? []).length === 0 ? (
+                            <Typography variant="body2" color="text.secondary">
+                              —
+                            </Typography>
+                          ) : (
+                            (u.scopes ?? []).map((scope) => (
+                              <Chip
+                                key={`${u.id}-${scope}`}
+                                size="small"
+                                label={scopeLabel(scope)}
+                                variant="outlined"
+                              />
+                            ))
+                          )}
+                        </Stack>
+                      </TableCell>
+                    )}
+                    {canManageAccounts && (
+                      <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
+                        <Typography variant="body2" color="text.secondary">
+                          {formatDateTime(u.createdAt)}
+                        </Typography>
+                      </TableCell>
+                    )}
+                    {canManageAccounts && (
+                      <TableCell align="right">
+                        <Tooltip title="Редактировать">
+                          <IconButton size="small" onClick={() => openEdit(u)}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
             </TableBody>

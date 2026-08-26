@@ -9,6 +9,7 @@ export type UserScope =
   | 'ORDERS_CHANGE_RESPONSIBLE'
   | 'METRICS_VIEW'
   | 'WORKLOAD_VIEW'
+  | 'ARTIST_SHIFTS_MANAGE'
   | string
 
 // Направление работ по заказу: определяет круг автораспределения заказов.

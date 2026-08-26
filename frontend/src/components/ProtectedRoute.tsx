@@ -2,18 +2,20 @@ import { Box, CircularProgress } from '@mui/material'
 import { Navigate, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { hasScope } from '../utils'
+import { canManageArtistShifts, hasScope } from '../utils'
 import type { UserScope } from '../api/types'
 
 export default function ProtectedRoute({
   children,
   requireAdmin = false,
   requiredScopes,
+  requireShiftManagement = false,
 }: {
   children: ReactNode
   requireAdmin?: boolean
   // Достаточно любого из перечисленных скоупов. ADMIN проходит всегда.
   requiredScopes?: UserScope[]
+  requireShiftManagement?: boolean
 }) {
   const { token, user, loading } = useAuth()
   const location = useLocation()
@@ -38,6 +40,13 @@ export default function ProtectedRoute({
   }
 
   if (requireAdmin && user?.role !== 'ADMIN') {
+    return <Navigate to="/orders" replace />
+  }
+
+  if (
+    requireShiftManagement &&
+    !canManageArtistShifts(user?.role, user?.scopes)
+  ) {
     return <Navigate to="/orders" replace />
   }
 

@@ -134,7 +134,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route
                 path="/users"
                 element={
-                  <ProtectedRoute requireAdmin>
+                  <ProtectedRoute requireShiftManagement>
                     <AppLayout>
                       <UsersPage />
                     </AppLayout>

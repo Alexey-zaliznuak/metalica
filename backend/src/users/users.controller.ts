@@ -17,24 +17,36 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthUser, CurrentUser } from '../auth/current-user.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import { ShiftManagementGuard } from './shift-management.guard';
 
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN)
+@UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UsersController {
   constructor(private users: UsersService) {}
 
   @Get()
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
   findAll() {
     return this.users.findAll();
   }
 
+  @Get('shift-artists')
+  @UseGuards(ShiftManagementGuard)
+  findShiftArtists() {
+    return this.users.findShiftArtists();
+  }
+
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
   create(@Body() dto: CreateUserDto) {
     return this.users.create(dto);
   }
 
   @Patch(':id')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
     return this.users.update(id, dto);
   }
@@ -42,12 +54,14 @@ export class UsersController {
   // Художник управляет своей сменой сам — единственный метод раздела,
   // доступный не администратору.
   @Patch('me/shift')
+  @UseGuards(RolesGuard)
   @Roles(Role.SKETCH_DESIGNER, Role.REVISION_DESIGNER)
   setOwnShift(@CurrentUser() user: AuthUser, @Body() dto: UpdateShiftDto) {
     return this.users.setShift(user.id, dto.onShift);
   }
 
   @Patch(':id/shift')
+  @UseGuards(ShiftManagementGuard)
   setShift(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateShiftDto) {
     return this.users.setShift(id, dto.onShift);
   }
