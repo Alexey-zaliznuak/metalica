@@ -64,6 +64,10 @@ import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
 } from '../components/ImageLightbox'
+import PdfAttachmentPreview, {
+  isPdfAttachment,
+  isPdfFile,
+} from '../components/PdfAttachmentPreview'
 import type {
   BluesalesStatusOption,
   BluesalesTag,
@@ -95,14 +99,18 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith('image/') || HEIC_EXTENSION_PATTERN.test(file.name)
 }
 
+function isSupportedAttachment(file: File): boolean {
+  return isImageFile(file) || isPdfFile(file)
+}
+
 function isHeicFile(file: File): boolean {
   return HEIC_EXTENSION_PATTERN.test(file.name)
 }
 
-interface PendingImage {
+interface PendingAttachment {
   id: string
   file: File
-  previewUrl: string
+  previewUrl: string | null
 }
 
 interface AssigneesResponse {
@@ -320,20 +328,28 @@ function MessageBubble({
                   mt: message.body ? 1 : 0,
                 }}
               >
-                {message.attachments.map((att) => (
-                  <ImageAttachmentPreview
-                    key={att.id}
-                    image={{ url: att.url, filename: att.filename, size: att.size }}
-                    lightControls={ownSide && !isRequest && !isAnswer}
-                    onOpen={() =>
-                      onOpenImage({
-                        url: att.url,
-                        filename: att.filename,
-                        size: att.size,
-                      })
-                    }
-                  />
-                ))}
+                {message.attachments.map((att) =>
+                  isPdfAttachment(att) ? (
+                    <PdfAttachmentPreview
+                      key={att.id}
+                      url={att.url}
+                      bytes={att.size}
+                    />
+                  ) : (
+                    <ImageAttachmentPreview
+                      key={att.id}
+                      image={{ url: att.url, filename: att.filename, size: att.size }}
+                      lightControls={ownSide && !isRequest && !isAnswer}
+                      onOpen={() =>
+                        onOpenImage({
+                          url: att.url,
+                          filename: att.filename,
+                          size: att.size,
+                        })
+                      }
+                    />
+                  ),
+                )}
               </Box>
             )}
 
@@ -1166,7 +1182,7 @@ export default function OrderThreadPage() {
 
   const [body, setBody] = useState('')
   const [kind, setKind] = useState<MessageKind>('NORMAL')
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -1196,6 +1212,7 @@ export default function OrderThreadPage() {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const loadingOlderRef = useRef(false)
   const pendingScrollBottomRef = useRef(true)
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
   const canReassignResponsible = canEditOrderResponsibles(user?.role, user?.scopes)
 
   const loadAll = useCallback(async () => {
@@ -1528,13 +1545,13 @@ export default function OrderThreadPage() {
   }
 
   const addFiles = useCallback((files: FileList | File[]) => {
-    const images = Array.from(files).filter(isImageFile)
-    if (images.length === 0) return
+    const attachments = Array.from(files).filter(isSupportedAttachment)
+    if (attachments.length === 0) return
 
     // Отсекаем слишком большие файлы сразу: иначе пользователь ждёт заливку,
     // которую сервер всё равно отклонит с 413.
-    const tooBig = images.filter((file) => file.size > MAX_UPLOAD_BYTES)
-    const accepted = images.filter((file) => file.size <= MAX_UPLOAD_BYTES)
+    const tooBig = attachments.filter((file) => file.size > MAX_UPLOAD_BYTES)
+    const accepted = attachments.filter((file) => file.size <= MAX_UPLOAD_BYTES)
     if (tooBig.length > 0) {
       setSendError(
         `Лимит ${MAX_UPLOAD_MB} МБ на файл. Не прикреплено: ` +
@@ -1543,39 +1560,44 @@ export default function OrderThreadPage() {
     }
     if (accepted.length === 0) return
 
-    setPendingImages((prev) => [
+    setPendingAttachments((prev) => [
       ...prev,
       ...accepted.map((file) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
         file,
-        previewUrl: URL.createObjectURL(file),
+        previewUrl: isPdfFile(file) ? null : URL.createObjectURL(file),
       })),
     ])
   }, [])
 
   const removePending = (id: string) => {
-    setPendingImages((prev) => {
+    setPendingAttachments((prev) => {
       const target = prev.find((p) => p.id === id)
-      if (target) URL.revokeObjectURL(target.previewUrl)
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl)
       return prev.filter((p) => p.id !== id)
     })
   }
 
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments
+  }, [pendingAttachments])
+
   // Clean up object URLs on unmount.
   useEffect(() => {
     return () => {
-      pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
+      pendingAttachmentsRef.current.forEach((p) => {
+        if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
+      })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handlePaste = (e: ClipboardEvent<HTMLDivElement>) => {
     const items = e.clipboardData?.files
     if (items && items.length > 0) {
-      const imgs = Array.from(items).filter(isImageFile)
-      if (imgs.length > 0) {
+      const attachments = Array.from(items).filter(isSupportedAttachment)
+      if (attachments.length > 0) {
         e.preventDefault()
-        addFiles(imgs)
+        addFiles(attachments)
       }
     }
   }
@@ -1674,11 +1696,11 @@ export default function OrderThreadPage() {
 
   const canSend = useMemo(
     () =>
-      (body.trim().length > 0 || pendingImages.length > 0) &&
+      (body.trim().length > 0 || pendingAttachments.length > 0) &&
       !sending &&
       !(kind === 'REVISION_REQUEST' && hasOpenRevision) &&
       !(kind === 'REVISION_ANSWER' && !hasOpenRevision),
-    [body, pendingImages.length, sending, kind, hasOpenRevision],
+    [body, pendingAttachments.length, sending, kind, hasOpenRevision],
   )
 
   const handleSend = async () => {
@@ -1686,24 +1708,26 @@ export default function OrderThreadPage() {
     setSending(true)
     setSendError(null)
     try {
-      // 1) Upload each image, collecting keys. Файлы идут по одному, поэтому в
-      // ошибке важно указать, какое именно фото не доехало.
+      // 1) Upload each attachment, collecting keys. Файлы идут по одному,
+      // поэтому в ошибке важно указать, какой именно файл не доехал.
       const attachmentKeys: string[] = []
-      for (const [index, img] of pendingImages.entries()) {
+      for (const [index, attachment] of pendingAttachments.entries()) {
         const form = new FormData()
-        form.append('file', img.file)
+        form.append('file', attachment.file)
         try {
           const { data } = await client.post<UploadResponse>('/uploads', form)
           attachmentKeys.push(data.key)
         } catch (err) {
-          logApiError(`загрузка "${img.file.name}"`, err)
+          logApiError(`загрузка "${attachment.file.name}"`, err)
           const position =
-            pendingImages.length > 1 ? ` ${index + 1} из ${pendingImages.length}` : ''
+            pendingAttachments.length > 1
+              ? ` ${index + 1} из ${pendingAttachments.length}`
+              : ''
           setSendError(
             describeApiError(
               err,
-              `Не удалось загрузить фото${position} «${img.file.name}» ` +
-                `(${formatBytes(img.file.size)})`,
+              `Не удалось загрузить файл${position} «${attachment.file.name}» ` +
+                `(${formatBytes(attachment.file.size)})`,
             ),
           )
           return
@@ -1724,8 +1748,10 @@ export default function OrderThreadPage() {
         pendingScrollBottomRef.current = true
         setMessages((prev) => [...prev, created])
         // Reset composer.
-        pendingImages.forEach((p) => URL.revokeObjectURL(p.previewUrl))
-        setPendingImages([])
+        pendingAttachments.forEach((p) => {
+          if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
+        })
+        setPendingAttachments([])
         setBody('')
         setKind('NORMAL')
         refreshOrderMeta()
@@ -2007,11 +2033,13 @@ export default function OrderThreadPage() {
           </Tooltip>
         </ToggleButtonGroup>
 
-        {pendingImages.length > 0 && (
+        {pendingAttachments.length > 0 && (
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 1, gap: 1 }}>
-            {pendingImages.map((img) => (
-              <Box key={img.id} sx={{ position: 'relative' }}>
-                {isHeicFile(img.file) ? (
+            {pendingAttachments.map((attachment) => (
+              <Box key={attachment.id} sx={{ position: 'relative' }}>
+                {isPdfFile(attachment.file) ? (
+                  <PdfAttachmentPreview bytes={attachment.file.size} size={72} />
+                ) : isHeicFile(attachment.file) ? (
                   <Box
                     sx={{
                       width: 72,
@@ -2032,8 +2060,8 @@ export default function OrderThreadPage() {
                 ) : (
                   <Box
                     component="img"
-                    src={img.previewUrl}
-                    alt={img.file.name}
+                    src={attachment.previewUrl ?? undefined}
+                    alt={attachment.file.name}
                     sx={{
                       display: 'block',
                       width: 72,
@@ -2044,10 +2072,12 @@ export default function OrderThreadPage() {
                     }}
                   />
                 )}
-                <AttachmentSizeBadge bytes={img.file.size} />
+                {!isPdfFile(attachment.file) && (
+                  <AttachmentSizeBadge bytes={attachment.file.size} />
+                )}
                 <IconButton
                   size="small"
-                  onClick={() => removePending(img.id)}
+                  onClick={() => removePending(attachment.id)}
                   sx={{
                     position: 'absolute',
                     top: -8,
@@ -2065,7 +2095,7 @@ export default function OrderThreadPage() {
         )}
 
         <Stack direction="row" spacing={1} alignItems="flex-end">
-          <Tooltip title="Прикрепить изображения">
+          <Tooltip title="Прикрепить изображение или PDF">
             <IconButton onClick={() => fileInputRef.current?.click()}>
               <ImageIcon />
             </IconButton>
@@ -2073,7 +2103,7 @@ export default function OrderThreadPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,.heic,.heif"
+            accept="image/*,.heic,.heif,application/pdf,.pdf"
             multiple
             hidden
             onChange={(e) => {
@@ -2082,7 +2112,7 @@ export default function OrderThreadPage() {
             }}
           />
           <TextField
-            placeholder="Напишите сообщение… (можно вставить или перетащить изображение)"
+            placeholder="Напишите сообщение… (можно вставить или перетащить файл)"
             value={body}
             onChange={(e) => setBody(e.target.value)}
             multiline

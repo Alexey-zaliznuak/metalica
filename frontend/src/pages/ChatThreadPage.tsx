@@ -42,6 +42,10 @@ import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
 } from '../components/ImageLightbox'
+import PdfAttachmentPreview, {
+  isPdfAttachment,
+  isPdfFile,
+} from '../components/PdfAttachmentPreview'
 import type {
   ChatListItem,
   ChatMemberUser,
@@ -56,10 +60,10 @@ import { useChatSocket } from '../hooks/useChatSocket'
 import { useNotifications } from '../notifications/NotificationsContext'
 import { formatTime, roleLabel } from '../utils'
 
-interface PendingImage {
+interface PendingAttachment {
   id: string
   file: File
-  previewUrl: string
+  previewUrl: string | null
 }
 
 function initials(name: string): string {
@@ -88,7 +92,7 @@ export default function ChatThreadPage() {
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [body, setBody] = useState('')
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [dragOver, setDragOver] = useState(false)
   const [lightbox, setLightbox] = useState<LightboxImage | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
@@ -106,6 +110,7 @@ export default function ChatThreadPage() {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const loadingOlderRef = useRef(false)
   const pendingScrollBottomRef = useRef(true)
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
 
   const isNearBottom = useCallback(() => {
     const container = scrollRef.current
@@ -235,13 +240,15 @@ export default function ChatThreadPage() {
   })
 
   const addFiles = useCallback((files: FileList | File[]) => {
-    const images = Array.from(files).filter((file) => file.type.startsWith('image/'))
-    if (images.length === 0) return
+    const attachments = Array.from(files).filter(
+      (file) => file.type.startsWith('image/') || isPdfFile(file),
+    )
+    if (attachments.length === 0) return
 
     // Отсекаем слишком большие файлы сразу: иначе пользователь ждёт заливку,
     // которую сервер всё равно отклонит с 413.
-    const tooBig = images.filter((file) => file.size > MAX_UPLOAD_BYTES)
-    const accepted = images.filter((file) => file.size <= MAX_UPLOAD_BYTES)
+    const tooBig = attachments.filter((file) => file.size > MAX_UPLOAD_BYTES)
+    const accepted = attachments.filter((file) => file.size <= MAX_UPLOAD_BYTES)
     if (tooBig.length > 0) {
       setSendError(
         `Лимит ${MAX_UPLOAD_MB} МБ на файл. Не прикреплено: ` +
@@ -250,34 +257,40 @@ export default function ChatThreadPage() {
     }
     if (accepted.length === 0) return
 
-    setPendingImages((prev) => [
+    setPendingAttachments((prev) => [
       ...prev,
       ...accepted.map((file) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
         file,
-        previewUrl: URL.createObjectURL(file),
+        previewUrl: isPdfFile(file) ? null : URL.createObjectURL(file),
       })),
     ])
   }, [])
 
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments
+  }, [pendingAttachments])
+
   useEffect(
     () => () => {
-      pendingImages.forEach((pending) => URL.revokeObjectURL(pending.previewUrl))
+      pendingAttachmentsRef.current.forEach((pending) => {
+        if (pending.previewUrl) URL.revokeObjectURL(pending.previewUrl)
+      })
     },
-    [pendingImages],
+    [],
   )
 
   const removePending = (idToRemove: string) => {
-    setPendingImages((prev) => {
+    setPendingAttachments((prev) => {
       const target = prev.find((pending) => pending.id === idToRemove)
-      if (target) URL.revokeObjectURL(target.previewUrl)
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl)
       return prev.filter((pending) => pending.id !== idToRemove)
     })
   }
 
   const canSend = useMemo(
-    () => (body.trim().length > 0 || pendingImages.length > 0) && !sending,
-    [body, pendingImages.length, sending],
+    () => (body.trim().length > 0 || pendingAttachments.length > 0) && !sending,
+    [body, pendingAttachments.length, sending],
   )
 
   const handleSend = async () => {
@@ -285,24 +298,26 @@ export default function ChatThreadPage() {
     setSending(true)
     setSendError(null)
     try {
-      // Фото грузятся по одному, поэтому в ошибке важно указать, какое именно
+      // Файлы грузятся по одному, поэтому в ошибке важно указать, какой именно
       // не доехало: иначе непонятно, что переделывать.
       const attachmentKeys: string[] = []
-      for (const [index, image] of pendingImages.entries()) {
+      for (const [index, attachment] of pendingAttachments.entries()) {
         const form = new FormData()
-        form.append('file', image.file)
+        form.append('file', attachment.file)
         try {
           const { data } = await client.post<UploadResponse>('/uploads', form)
           attachmentKeys.push(data.key)
         } catch (err) {
-          logApiError(`загрузка "${image.file.name}"`, err)
+          logApiError(`загрузка "${attachment.file.name}"`, err)
           const position =
-            pendingImages.length > 1 ? ` ${index + 1} из ${pendingImages.length}` : ''
+            pendingAttachments.length > 1
+              ? ` ${index + 1} из ${pendingAttachments.length}`
+              : ''
           setSendError(
             describeApiError(
               err,
-              `Не удалось загрузить фото${position} «${image.file.name}» ` +
-                `(${formatBytes(image.file.size)})`,
+              `Не удалось загрузить файл${position} «${attachment.file.name}» ` +
+                `(${formatBytes(attachment.file.size)})`,
             ),
           )
           return
@@ -324,8 +339,10 @@ export default function ChatThreadPage() {
           pendingScrollBottomRef.current = true
           return [...prev, createdMessage]
         })
-        pendingImages.forEach((pending) => URL.revokeObjectURL(pending.previewUrl))
-        setPendingImages([])
+        pendingAttachments.forEach((pending) => {
+          if (pending.previewUrl) URL.revokeObjectURL(pending.previewUrl)
+        })
+        setPendingAttachments([])
         setBody('')
       } catch (err) {
         logApiError('отправка сообщения в чат', err)
@@ -575,23 +592,31 @@ export default function ChatThreadPage() {
                     )}
                     {message.attachments.length > 0 && (
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: message.body ? 1 : 0 }}>
-                        {message.attachments.map((attachment) => (
-                          <ImageAttachmentPreview
-                            key={attachment.id}
-                            image={{
-                              url: attachment.url,
-                              filename: attachment.filename,
-                              size: attachment.size,
-                            }}
-                            onOpen={() =>
-                              setLightbox({
+                        {message.attachments.map((attachment) =>
+                          isPdfAttachment(attachment) ? (
+                            <PdfAttachmentPreview
+                              key={attachment.id}
+                              url={attachment.url}
+                              bytes={attachment.size}
+                            />
+                          ) : (
+                            <ImageAttachmentPreview
+                              key={attachment.id}
+                              image={{
                                 url: attachment.url,
                                 filename: attachment.filename,
                                 size: attachment.size,
-                              })
-                            }
-                          />
-                        ))}
+                              }}
+                              onOpen={() =>
+                                setLightbox({
+                                  url: attachment.url,
+                                  filename: attachment.filename,
+                                  size: attachment.size,
+                                })
+                              }
+                            />
+                          ),
+                        )}
                       </Box>
                     )}
                     <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 0.4 }}>
@@ -660,27 +685,33 @@ export default function ChatThreadPage() {
             {sendError}
           </Alert>
         )}
-        {pendingImages.length > 0 && (
+        {pendingAttachments.length > 0 && (
           <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
-            {pendingImages.map((image) => (
-              <Box key={image.id} sx={{ position: 'relative' }}>
-                <Box
-                  component="img"
-                  src={image.previewUrl}
-                  alt={image.file.name}
-                  sx={{
-                    display: 'block',
-                    width: 72,
-                    height: 72,
-                    objectFit: 'cover',
-                    borderRadius: 1,
-                    border: '1px solid rgba(0,0,0,0.12)',
-                  }}
-                />
-                <AttachmentSizeBadge bytes={image.file.size} />
+            {pendingAttachments.map((attachment) => (
+              <Box key={attachment.id} sx={{ position: 'relative' }}>
+                {isPdfFile(attachment.file) ? (
+                  <PdfAttachmentPreview bytes={attachment.file.size} size={72} />
+                ) : (
+                  <>
+                    <Box
+                      component="img"
+                      src={attachment.previewUrl ?? undefined}
+                      alt={attachment.file.name}
+                      sx={{
+                        display: 'block',
+                        width: 72,
+                        height: 72,
+                        objectFit: 'cover',
+                        borderRadius: 1,
+                        border: '1px solid rgba(0,0,0,0.12)',
+                      }}
+                    />
+                    <AttachmentSizeBadge bytes={attachment.file.size} />
+                  </>
+                )}
                 <IconButton
                   size="small"
-                  onClick={() => removePending(image.id)}
+                  onClick={() => removePending(attachment.id)}
                   sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid rgba(0,0,0,0.12)' }}
                 >
                   <CloseIcon sx={{ fontSize: 14 }} />
@@ -690,7 +721,7 @@ export default function ChatThreadPage() {
           </Stack>
         )}
         <Stack direction="row" spacing={1} alignItems="flex-end">
-          <Tooltip title="Прикрепить фото">
+          <Tooltip title="Прикрепить изображение или PDF">
             <IconButton onClick={() => fileInputRef.current?.click()}>
               <ImageIcon />
             </IconButton>
@@ -698,7 +729,7 @@ export default function ChatThreadPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf,.pdf"
             multiple
             hidden
             onChange={(event) => {
