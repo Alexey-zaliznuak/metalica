@@ -3,7 +3,6 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ForumIcon from '@mui/icons-material/Forum'
 import GroupIcon from '@mui/icons-material/Group'
 import InsightsIcon from '@mui/icons-material/Insights'
-import Inventory2Icon from '@mui/icons-material/Inventory2'
 import ListAltIcon from '@mui/icons-material/ListAlt'
 import LogoutIcon from '@mui/icons-material/Logout'
 import LowPriorityIcon from '@mui/icons-material/LowPriority'
@@ -73,7 +72,6 @@ const NAV_ITEMS: NavItem[] = [
     adminOnly: true,
     children: [
       { to: '/dictionary/statuses', icon: <LowPriorityIcon />, label: 'Статусы' },
-      { to: '/dictionary/goods', icon: <Inventory2Icon />, label: 'Товары' },
     ],
   },
 ]

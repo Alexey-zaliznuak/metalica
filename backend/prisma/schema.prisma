@@ -26,8 +26,8 @@ enum OrderSource {
   BLUESALES
 }
 
-// Направление работ по заказу. Определяется по товарам заказа (см. BluesalesGoods)
-// и задаёт независимый круг round-robin для автораспределения между художниками.
+// Направление работ по заказу. Определяется по тегам BlueSales и задаёт
+// независимый круг round-robin для автораспределения между художниками.
 enum OrderDirection {
   // Фотопечать и ретушь — один общий круг
   PHOTO_RETOUCH
@@ -298,22 +298,6 @@ model BluesalesOrderStatus {
   updatedAt         DateTime @updatedAt
 
   @@index([sortOrder])
-}
-
-// Накопительный справочник товаров BlueSales (goodsPositions[].goods).
-// Пополняется при синке заказов; direction задаёт администратор в справочнике.
-// direction = null означает, что товар не влияет на направление заказа (доп).
-model BluesalesGoods {
-  // id товара в BlueSales (goodsPositions[].goods.id)
-  bsGoodsId Int             @id
-  name      String
-  marking   String?
-  direction OrderDirection?
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-
-  @@index([direction])
-  @@index([name])
 }
 
 // Курсор round-robin. Одна строка на круг: направление × роль художника

@@ -18,7 +18,6 @@ import AssignmentJournalPage from './pages/AssignmentJournalPage'
 import ChatsPage from './pages/ChatsPage'
 import ChatThreadPage from './pages/ChatThreadPage'
 import OrderStatusesPage from './pages/OrderStatusesPage'
-import GoodsPage from './pages/GoodsPage'
 import NotificationsPage from './pages/NotificationsPage'
 import NotificationBellHost from './components/NotificationBellHost'
 import { NotificationsProvider } from './notifications/NotificationsContext'
@@ -148,16 +147,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                   <ProtectedRoute requireAdmin>
                     <AppLayout>
                       <OrderStatusesPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/dictionary/goods"
-                element={
-                  <ProtectedRoute requireAdmin>
-                    <AppLayout>
-                      <GoodsPage />
                     </AppLayout>
                   </ProtectedRoute>
                 }

@@ -55,14 +55,6 @@ export interface UpdateUserPayload {
   directions?: OrderDirection[]
 }
 
-export interface GoodsItem {
-  id: number
-  name: string
-  marking: string | null
-  // null = товар не влияет на направление заказа (доп, упаковка, срочность)
-  direction: OrderDirection | null
-}
-
 export interface UpdateOrderPayload {
   orderNumber?: string
   title?: string

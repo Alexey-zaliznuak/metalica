@@ -12,7 +12,6 @@ import { BluesalesModule } from './bluesales/bluesales.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ChatsModule } from './chats/chats.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { GoodsModule } from './goods/goods.module';
 import { AssignmentModule } from './assignment/assignment.module';
 
 @Module({
@@ -30,7 +29,6 @@ import { AssignmentModule } from './assignment/assignment.module';
     RealtimeModule,
     ChatsModule,
     NotificationsModule,
-    GoodsModule,
     AssignmentModule,
   ],
 })

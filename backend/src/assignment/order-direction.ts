@@ -1,23 +1,29 @@
 import { OrderDirection } from '@prisma/client';
-import { GoodsPosition } from '../goods/goods-payload';
 
 /**
- * Определяет направление заказа по его товарам.
+ * Определяет направление заказа по тегам клиента в BlueSales.
  *
- * Влияющими считаются только те товары, которым администратор задал направление
- * в справочнике (остальные — допы: упаковка, срочность, крепления). Правило
- * строгое: распределяем заказ только при единственном найденном направлении.
- * Ноль влияющих товаров или конфликт нескольких направлений означают, что
- * художника назначают вручную.
+ * «Фотопечать» и «Ретушь» входят в один круг. Неизвестные теги игнорируются.
+ * Распределяем заказ только при единственном найденном направлении; отсутствие
+ * подходящих тегов или конфликт нескольких направлений означает ручное назначение.
  */
-export function resolveOrderDirection(
-  positions: GoodsPosition[],
-  directionByGoodsId: Map<number, OrderDirection>,
-): OrderDirection | null {
+export function resolveOrderDirection(tagNames: string[]): OrderDirection | null {
   const found = new Set<OrderDirection>();
-  for (const position of positions) {
-    const direction = directionByGoodsId.get(position.bsGoodsId);
-    if (direction) found.add(direction);
+  for (const tagName of tagNames) {
+    switch (tagName.trim().toLocaleLowerCase('ru-RU')) {
+      case 'фотопечать':
+      case 'ретушь':
+        found.add(OrderDirection.PHOTO_RETOUCH);
+        break;
+      case 'нейро':
+        found.add(OrderDirection.NEURO_ART);
+        break;
+      case 'диджитал':
+        found.add(OrderDirection.DIGITAL);
+        break;
+      default:
+        break;
+    }
   }
   return found.size === 1 ? [...found][0] : null;
 }

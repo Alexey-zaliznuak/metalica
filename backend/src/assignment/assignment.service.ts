@@ -1,7 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OrderDirection, Prisma, Role } from '@prisma/client';
-import { extractGoodsPositions } from '../goods/goods-payload';
-import { GoodsService } from '../goods/goods.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveOrderDirection } from './order-direction';
 
@@ -55,10 +53,7 @@ export class AssignmentService {
   } | null = null;
   private settingsLoad: Promise<Map<number, AssignSettings>> | null = null;
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly goods: GoodsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   isWindowOpen(now: Date = new Date()): boolean {
     const hour = hourInZone(now);
@@ -90,7 +85,9 @@ export class AssignmentService {
       select: {
         sketchDesignerId: true,
         revisionDesignerId: true,
-        bluesalesInfo: { select: { rawPayload: true } },
+        lead: {
+          select: { tags: { select: { name: true } } },
+        },
       },
     });
     if (!order) return;
@@ -104,10 +101,8 @@ export class AssignmentService {
     }
     if (roles.length === 0) return;
 
-    const positions = extractGoodsPositions(order.bluesalesInfo?.rawPayload);
     const direction = resolveOrderDirection(
-      positions,
-      await this.goods.getDirectionMap(),
+      order.lead?.tags.map((tag) => tag.name) ?? [],
     );
     if (direction === null) {
       this.logger.debug(
