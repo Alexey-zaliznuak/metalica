@@ -93,6 +93,14 @@ import {
 } from '../utils'
 
 const HEIC_EXTENSION_PATTERN = /\.(heic|heif)$/i
+const DISTRIBUTION_TAG_NAMES = new Set(['диджитал', 'фотопечать', 'ретушь', 'нейро'])
+
+function getOrderTagColor(tagName: string): 'error.main' | 'success.main' | 'primary.main' {
+  const normalizedTagName = tagName.trim().toLocaleLowerCase('ru-RU')
+  if (normalizedTagName === 'срочно') return 'error.main'
+  if (DISTRIBUTION_TAG_NAMES.has(normalizedTagName)) return 'success.main'
+  return 'primary.main'
+}
 
 function isImageFile(file: File): boolean {
   return file.type.startsWith('image/') || HEIC_EXTENSION_PATTERN.test(file.name)
@@ -1113,10 +1121,7 @@ function OrderArticlesPanel({
               label={tag.name}
               title={`BlueSales tag ID: ${tag.id}`}
               sx={{
-                bgcolor:
-                  tag.name.trim().toLocaleLowerCase('ru-RU') === 'срочно'
-                    ? 'error.main'
-                    : 'primary.main',
+                bgcolor: getOrderTagColor(tag.name),
                 color: '#fff',
                 fontWeight: 700,
               }}
