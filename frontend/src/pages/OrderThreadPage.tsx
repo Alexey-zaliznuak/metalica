@@ -89,7 +89,6 @@ import { BRAND, ACCENT } from '../theme'
 import {
   formatDateTime,
   formatDuration,
-  formatTime,
   roleLabel,
 } from '../utils'
 
@@ -362,7 +361,7 @@ function MessageBubble({
                 opacity: 0.7,
               }}
             >
-              {formatTime(message.createdAt)}
+              {formatDateTime(message.createdAt)}
             </Typography>
 
             {isResolved && (
