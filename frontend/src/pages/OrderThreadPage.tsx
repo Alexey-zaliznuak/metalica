@@ -1212,6 +1212,8 @@ export default function OrderThreadPage() {
   const [savingNote, setSavingNote] = useState(false)
   const [savingSketchDates, setSavingSketchDates] = useState(false)
   const [refreshingFromBs, setRefreshingFromBs] = useState(false)
+  const [refreshLocked, setRefreshLocked] = useState(false)
+  const refreshLockTimerRef = useRef<number | undefined>(undefined)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -1354,12 +1356,33 @@ export default function OrderThreadPage() {
     }
   }, [orderId, refreshOrderMeta])
 
+  useEffect(() => {
+    setRefreshLocked(false)
+    if (refreshLockTimerRef.current !== undefined) {
+      window.clearTimeout(refreshLockTimerRef.current)
+      refreshLockTimerRef.current = undefined
+    }
+  }, [orderId])
+
+  useEffect(() => {
+    return () => {
+      if (refreshLockTimerRef.current !== undefined) {
+        window.clearTimeout(refreshLockTimerRef.current)
+      }
+    }
+  }, [])
+
   const handleRefreshFromBs = async () => {
-    if (!order || refreshingFromBs) return
+    if (!order || refreshingFromBs || refreshLocked) return
     setRefreshingFromBs(true)
     setSendError(null)
     try {
       await client.post(`/orders/${orderId}/refresh`)
+      setRefreshLocked(true)
+      refreshLockTimerRef.current = window.setTimeout(() => {
+        setRefreshLocked(false)
+        refreshLockTimerRef.current = undefined
+      }, 30_000)
     } catch (err) {
       logApiError('обновление заказа из BlueSales', err)
       setSendError(describeApiError(err, 'Не удалось поставить обновление в очередь'))
@@ -1879,7 +1902,7 @@ export default function OrderThreadPage() {
                           )
                         }
                         onClick={() => void handleRefreshFromBs()}
-                        disabled={refreshingFromBs}
+                        disabled={refreshingFromBs || refreshLocked}
                       >
                         Обновить заказ
                       </Button>
