@@ -79,6 +79,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private backfillRunning = false;
   /** Флаг остановки фонового цикла (выставляется при shutdown). */
   private loopActive = false;
+  /** Ручные обновления с карточки заказа: id заказа → в работе по одному. */
+  private readonly pendingManualRefreshIds = new Set<number>();
+  private manualRefreshPumpActive = false;
   private closesSketchStatusCache: { ids: Set<number>; expiresAt: number } | null = null;
   private closesSketchStatusLoad: Promise<Set<number>> | null = null;
 
@@ -140,6 +143,75 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.loopActive = false;
+    this.pendingManualRefreshIds.clear();
+  }
+
+  get canRefreshFromBluesales(): boolean {
+    return this.enabled && this.api.isConfigured;
+  }
+
+  /**
+   * Ставит заказ в очередь приоритетного обновления из BlueSales.
+   * HTTP-запрос не ждёт ответ BS: качает интерактивная очередь API.
+   */
+  enqueueOrderRefresh(orderId: number): { queued: true } {
+    this.pendingManualRefreshIds.add(orderId);
+    void this.pumpManualRefreshes();
+    return { queued: true };
+  }
+
+  private async pumpManualRefreshes(): Promise<void> {
+    if (this.manualRefreshPumpActive) return;
+    this.manualRefreshPumpActive = true;
+    try {
+      while (this.pendingManualRefreshIds.size > 0) {
+        const orderId = this.pendingManualRefreshIds.values().next().value as number;
+        this.pendingManualRefreshIds.delete(orderId);
+        try {
+          await this.refreshSingleOrder(orderId);
+        } catch (err) {
+          this.logger.error(
+            `Ручное обновление заказа #${orderId}: ${(err as Error).message}`,
+            err instanceof Error ? err.stack : undefined,
+          );
+        }
+      }
+    } finally {
+      this.manualRefreshPumpActive = false;
+      if (this.pendingManualRefreshIds.size > 0) {
+        void this.pumpManualRefreshes();
+      }
+    }
+  }
+
+  private async refreshSingleOrder(orderId: number): Promise<void> {
+    const info = await this.prisma.bluesalesOrderInfo.findUnique({
+      where: { orderId },
+      select: { bsOrderId: true, orderId: true },
+    });
+    if (!info) {
+      this.logger.warn(`Ручное обновление: у заказа #${orderId} нет связи с BlueSales`);
+      return;
+    }
+
+    const statusObservedAt = new Date();
+    const bsOrders = await this.api.getOrdersByIds([info.bsOrderId], 'interactive');
+    const bsOrder = bsOrders.find((item) => item.id === info.bsOrderId);
+    if (!bsOrder) {
+      await this.prisma.bluesalesOrderInfo.update({
+        where: { orderId },
+        data: { lastSyncedAt: new Date() },
+      });
+      this.logger.warn(
+        `Ручное обновление: BS#${info.bsOrderId} не найден в ответе BlueSales`,
+      );
+      return;
+    }
+
+    await this.syncReferenceDictionaries([bsOrder.customer ?? null]);
+    const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
+    await this.upsertOrder(bsOrder, leadId, { orderId: info.orderId }, statusObservedAt);
+    this.logger.log(`Ручное обновление: заказ #${orderId} (BS#${info.bsOrderId}) актуализирован`);
   }
 
   private envInt(key: string, def: number): number {

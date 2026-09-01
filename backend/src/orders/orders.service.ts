@@ -20,6 +20,7 @@ import { OrderEventChange, OrderEventsService } from './order-events.service';
 import { computeSketchTimestampUpdate } from './sketch-status';
 import { AssignmentService } from '../assignment/assignment.service';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
+import { BluesalesSyncService } from '../bluesales/bluesales-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
 
@@ -31,6 +32,7 @@ export class OrdersService {
     private prisma: PrismaService,
     private orderEvents: OrderEventsService,
     private bsApi: BluesalesApiService,
+    private bsSync: BluesalesSyncService,
     private storage: StorageService,
     private notifications: NotificationsService,
     private assignment: AssignmentService,
@@ -303,6 +305,28 @@ export class OrdersService {
       bluesalesInfo: order.bluesalesInfo ? bluesalesInfo : null,
       articles,
     };
+  }
+
+  /** Ставит актуализацию заказа из BlueSales в интерактивную очередь. */
+  async requestBluesalesRefresh(id: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        source: true,
+        bluesalesInfo: { select: { bsOrderId: true } },
+      },
+    });
+    if (!order) {
+      throw new NotFoundException('Заказ не найден');
+    }
+    if (order.source !== OrderSource.BLUESALES || !order.bluesalesInfo) {
+      throw new BadRequestException('Заказ не связан с BlueSales');
+    }
+    if (!this.bsSync.canRefreshFromBluesales) {
+      throw new BadRequestException('Синхронизация BlueSales отключена');
+    }
+    return this.bsSync.enqueueOrderRefresh(order.id);
   }
 
   /**

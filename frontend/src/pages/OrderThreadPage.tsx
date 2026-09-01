@@ -48,6 +48,7 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined'
 import LocalOfferOutlinedIcon from '@mui/icons-material/LocalOfferOutlined'
 import HistoryIcon from '@mui/icons-material/History'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import RefreshIcon from '@mui/icons-material/Refresh'
 import ScheduleIcon from '@mui/icons-material/Schedule'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -1210,6 +1211,7 @@ export default function OrderThreadPage() {
   const [noteDraft, setNoteDraft] = useState('')
   const [savingNote, setSavingNote] = useState(false)
   const [savingSketchDates, setSavingSketchDates] = useState(false)
+  const [refreshingFromBs, setRefreshingFromBs] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -1338,19 +1340,33 @@ export default function OrderThreadPage() {
   }, [orderId])
 
   useEffect(() => {
-    if (!order?.orderStatusSync || order.orderStatusSync.state === 'failed') return
+    if (!Number.isFinite(orderId)) return
     let cancelled = false
     let timer: number | undefined
     const poll = async () => {
       await refreshOrderMeta()
-      if (!cancelled) timer = window.setTimeout(poll, 2000)
+      if (!cancelled) timer = window.setTimeout(poll, 3000)
     }
-    timer = window.setTimeout(poll, 2000)
+    timer = window.setTimeout(poll, 3000)
     return () => {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [order?.orderStatusSync, refreshOrderMeta])
+  }, [orderId, refreshOrderMeta])
+
+  const handleRefreshFromBs = async () => {
+    if (!order || refreshingFromBs) return
+    setRefreshingFromBs(true)
+    setSendError(null)
+    try {
+      await client.post(`/orders/${orderId}/refresh`)
+    } catch (err) {
+      logApiError('обновление заказа из BlueSales', err)
+      setSendError(describeApiError(err, 'Не удалось поставить обновление в очередь'))
+    } finally {
+      setRefreshingFromBs(false)
+    }
+  }
 
   const orderStatusOptions = useMemo(() => {
     const options = [...orderStatuses]
@@ -1834,7 +1850,7 @@ export default function OrderThreadPage() {
               <ArrowBackIcon />
             </IconButton>
             <Box>
-              <Stack direction="row" spacing={0.5} alignItems="center">
+              <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>
                   Заказ {order.orderNumber}
                 </Typography>
@@ -1843,6 +1859,33 @@ export default function OrderThreadPage() {
                     <EditIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
+                {order.source === 'BLUESALES' && (
+                  <Tooltip
+                    title={
+                      order.bluesalesInfo?.lastSyncedAt
+                        ? `Последняя синхронизация: ${formatDateTime(order.bluesalesInfo.lastSyncedAt)}`
+                        : 'Подтянуть данные из BlueSales'
+                    }
+                  >
+                    <span>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={
+                          refreshingFromBs ? (
+                            <CircularProgress size={14} color="inherit" />
+                          ) : (
+                            <RefreshIcon fontSize="small" />
+                          )
+                        }
+                        onClick={() => void handleRefreshFromBs()}
+                        disabled={refreshingFromBs}
+                      >
+                        Обновить заказ
+                      </Button>
+                    </span>
+                  </Tooltip>
+                )}
               </Stack>
               <Typography variant="body2" color="text.secondary">
                 {order.title || 'Без названия'}

@@ -6,6 +6,7 @@ import {
   ParseIntPipe,
   Param,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -124,6 +125,11 @@ export class OrdersController {
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.orders.findOne(id);
+  }
+
+  @Post(':id/refresh')
+  refreshFromBluesales(@Param('id', ParseIntPipe) id: number) {
+    return this.orders.requestBluesalesRefresh(id);
   }
 
   @Patch(':id')
