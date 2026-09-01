@@ -1,11 +1,21 @@
 import { OrderDirection } from '@prisma/client';
 
 /**
+ * При нескольких стилях на одном заказе берём круг с высшим приоритетом.
+ * «Фотопечать» и «Ретушь» — один круг.
+ */
+const DIRECTION_PRIORITY: OrderDirection[] = [
+  OrderDirection.DIGITAL,
+  OrderDirection.NEURO_ART,
+  OrderDirection.PHOTO_RETOUCH,
+];
+
+/**
  * Определяет направление заказа по тегам клиента в BlueSales.
  *
- * «Фотопечать» и «Ретушь» входят в один круг. Неизвестные теги игнорируются.
- * Распределяем заказ только при единственном найденном направлении; отсутствие
- * подходящих тегов или конфликт нескольких направлений означает ручное назначение.
+ * Неизвестные теги игнорируются. Если стилей несколько, выбирается один
+ * по приоритету: Диджитал → Нейро → Ретушь/Фотопечать. Без подходящих
+ * тегов направление не определяется — назначение вручную.
  */
 export function resolveOrderDirection(tagNames: string[]): OrderDirection | null {
   const found = new Set<OrderDirection>();
@@ -25,5 +35,5 @@ export function resolveOrderDirection(tagNames: string[]): OrderDirection | null
         break;
     }
   }
-  return found.size === 1 ? [...found][0] : null;
+  return DIRECTION_PRIORITY.find((direction) => found.has(direction)) ?? null;
 }
