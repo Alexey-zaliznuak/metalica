@@ -25,6 +25,13 @@ const NIGHT_REFRESH_MULTIPLIER = 3;
  */
 const FAST_SYNC_CRON = process.env.BLUESALES_FAST_SYNC_CRON ?? '*/5 * * * *';
 
+/** Сравнивает наборы id тегов без учёта порядка. */
+function sameTagIdSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const seen = new Set(left);
+  return right.every((id) => seen.has(id));
+}
+
 /**
  * Cron периодического добора «потеряшек» — заказов и лидов за последние
  * несколько дней по дате создания / первого контакта. Переопределяется через
@@ -722,6 +729,11 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       await this.upsertSalesChannelName(salesChannelPair);
     }
     const tagConnections = tagReferences.map(({ bsTagId }) => ({ bsTagId }));
+    const nextTagIds = tagConnections.map(({ bsTagId }) => bsTagId);
+    const previous = await this.prisma.lead.findUnique({
+      where: { bsCustomerId: customer.id },
+      select: { tagIds: true },
+    });
 
     const lead = await this.prisma.lead.upsert({
       where: { bsCustomerId: customer.id },
@@ -738,7 +750,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         source,
         salesChannel,
         marks,
-        tagIds: tagConnections.map(({ bsTagId }) => bsTagId),
+        tagIds: nextTagIds,
         tags: { connect: tagConnections },
         crmStatus,
         lastSyncedAt: new Date(),
@@ -755,7 +767,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         source,
         salesChannel,
         marks,
-        tagIds: tagConnections.map(({ bsTagId }) => bsTagId),
+        tagIds: nextTagIds,
         tags: { set: tagConnections },
         crmStatus,
         lastSyncedAt: new Date(),
@@ -774,6 +786,12 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       WHERE "leadId" = ${lead.id}
         AND "deliveryManagerName" IS DISTINCT FROM ${managerName}
     `;
+
+    // Назначение смотрит на локальные теги. Если направление появилось уже
+    // после входа заказа в статус выдачи, повторно пробуем подобрать художника.
+    if (previous && !sameTagIdSet(previous.tagIds, nextTagIds)) {
+      await this.tryAutoAssignLeadOrders(lead.id);
+    }
 
     return lead.id;
   }
@@ -1230,6 +1248,34 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.logger.error(
         `Не удалось автоматически назначить художника заказу #${orderId} из BS sync`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
+  /**
+   * После смены тегов лида ещё раз вызываем автоназначение по его заказам.
+   * `maybeAssign` сам отфильтрует статус, окно, уже занятого художника и
+   * неоднозначное направление.
+   */
+  private async tryAutoAssignLeadOrders(leadId: number): Promise<void> {
+    try {
+      const orders = await this.prisma.order.findMany({
+        where: {
+          leadId,
+          OR: [{ sketchDesignerId: null }, { revisionDesignerId: null }],
+        },
+        select: {
+          id: true,
+          bluesalesInfo: { select: { orderStatusId: true } },
+        },
+      });
+      for (const order of orders) {
+        await this.tryAutoAssign(order.id, order.bluesalesInfo?.orderStatusId ?? null);
+      }
+    } catch (err) {
+      this.logger.error(
+        `Не удалось автоматически назначить художников по лиду #${leadId} после смены тегов`,
         err instanceof Error ? err.stack : String(err),
       );
     }
