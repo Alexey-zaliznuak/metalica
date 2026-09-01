@@ -711,7 +711,8 @@ export default function OrdersPage() {
     )
 
     skipSaveRef.current = true
-    setSearch(parsed.searchQuery)
+    // Поиск по номеру не восстанавливаем: он одноразовый, чтобы после
+    // карточки заказа снова открывалась полная доска.
     setSelectedDeliveryManagers(parsed.selectedDeliveryManagers)
     setSelectedOnboardingManagers(parsed.selectedOnboardingManagers)
     setSelectedSketchDesigners(parsed.selectedSketchDesigners)
@@ -734,7 +735,7 @@ export default function OrdersPage() {
       ordersBoard: {
         selectedOrderStatusIds,
         columnOrder,
-        searchQuery: search,
+        searchQuery: '',
         selectedDeliveryManagers,
         selectedOnboardingManagers,
         selectedSketchDesigners,
@@ -745,7 +746,6 @@ export default function OrdersPage() {
     })
   }, [
     initialized,
-    search,
     selectedDeliveryManagers,
     selectedOnboardingManagers,
     selectedSketchDesigners,
