@@ -441,7 +441,42 @@ export class OrdersService {
       if (article === null && name === null) continue;
       result.push({ article, name, quantity, size, comment });
     }
-    return result;
+    return this.mergePlainArticles(result);
+  }
+
+  /**
+   * Склеивает одинаковые артикулы в одну строку с суммой количества.
+   * Только позиции без размера и без комментария: у «доп лицо ×4» в BS
+   * часто четыре отдельные строки по 1 шт, а упаковка с размером/комментом
+   * должна остаться отдельными строками.
+   */
+  private mergePlainArticles(
+    items: Array<{
+      article: string | null;
+      name: string | null;
+      quantity: number | null;
+      size: string | null;
+      comment: string | null;
+    }>,
+  ) {
+    const merged: typeof items = [];
+    const indexByKey = new Map<string, number>();
+    for (const item of items) {
+      if (item.size !== null || item.comment !== null) {
+        merged.push(item);
+        continue;
+      }
+      const key = `${item.article ?? ''}\0${item.name ?? ''}`;
+      const existingIndex = indexByKey.get(key);
+      if (existingIndex === undefined) {
+        indexByKey.set(key, merged.length);
+        merged.push({ ...item });
+        continue;
+      }
+      const existing = merged[existingIndex];
+      existing.quantity = (existing.quantity ?? 1) + (item.quantity ?? 1);
+    }
+    return merged;
   }
 
   /**
