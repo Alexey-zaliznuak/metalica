@@ -61,6 +61,10 @@ import {
   logApiError,
 } from '../api/errors'
 import AttachmentSizeBadge from '../components/AttachmentSizeBadge'
+import DngAttachmentPreview, {
+  isDngAttachment,
+  isDngFile,
+} from '../components/DngAttachmentPreview'
 import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
@@ -108,7 +112,7 @@ function isImageFile(file: File): boolean {
 }
 
 function isSupportedAttachment(file: File): boolean {
-  return isImageFile(file) || isPdfFile(file)
+  return isImageFile(file) || isPdfFile(file) || isDngFile(file)
 }
 
 function isHeicFile(file: File): boolean {
@@ -341,6 +345,13 @@ function MessageBubble({
                     <PdfAttachmentPreview
                       key={att.id}
                       url={att.url}
+                      bytes={att.size}
+                    />
+                  ) : isDngAttachment(att) ? (
+                    <DngAttachmentPreview
+                      key={att.id}
+                      url={att.url}
+                      filename={att.filename}
                       bytes={att.size}
                     />
                   ) : (
@@ -1711,7 +1722,7 @@ export default function OrderThreadPage() {
       ...accepted.map((file) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
         file,
-        previewUrl: isPdfFile(file) ? null : URL.createObjectURL(file),
+        previewUrl: isPdfFile(file) || isDngFile(file) ? null : URL.createObjectURL(file),
       })),
     ])
   }, [])
@@ -2212,6 +2223,12 @@ export default function OrderThreadPage() {
               <Box key={attachment.id} sx={{ position: 'relative' }}>
                 {isPdfFile(attachment.file) ? (
                   <PdfAttachmentPreview bytes={attachment.file.size} size={72} />
+                ) : isDngFile(attachment.file) ? (
+                  <DngAttachmentPreview
+                    bytes={attachment.file.size}
+                    filename={attachment.file.name}
+                    size={72}
+                  />
                 ) : isHeicFile(attachment.file) ? (
                   <Box
                     sx={{
@@ -2268,7 +2285,7 @@ export default function OrderThreadPage() {
         )}
 
         <Stack direction="row" spacing={1} alignItems="flex-end">
-          <Tooltip title="Прикрепить изображение или PDF">
+          <Tooltip title="Прикрепить изображение, PDF или DNG">
             <IconButton onClick={() => fileInputRef.current?.click()}>
               <ImageIcon />
             </IconButton>
@@ -2276,7 +2293,7 @@ export default function OrderThreadPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,.heic,.heif,application/pdf,.pdf"
+            accept="image/*,.heic,.heif,application/pdf,.pdf,image/dng,image/x-adobe-dng,.dng"
             multiple
             hidden
             onChange={(e) => {

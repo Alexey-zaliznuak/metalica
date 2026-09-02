@@ -38,6 +38,10 @@ import {
   logApiError,
 } from '../api/errors'
 import AttachmentSizeBadge from '../components/AttachmentSizeBadge'
+import DngAttachmentPreview, {
+  isDngAttachment,
+  isDngFile,
+} from '../components/DngAttachmentPreview'
 import ImageLightbox, {
   ImageAttachmentPreview,
   type LightboxImage,
@@ -241,7 +245,7 @@ export default function ChatThreadPage() {
 
   const addFiles = useCallback((files: FileList | File[]) => {
     const attachments = Array.from(files).filter(
-      (file) => file.type.startsWith('image/') || isPdfFile(file),
+      (file) => file.type.startsWith('image/') || isPdfFile(file) || isDngFile(file),
     )
     if (attachments.length === 0) return
 
@@ -262,7 +266,7 @@ export default function ChatThreadPage() {
       ...accepted.map((file) => ({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
         file,
-        previewUrl: isPdfFile(file) ? null : URL.createObjectURL(file),
+        previewUrl: isPdfFile(file) || isDngFile(file) ? null : URL.createObjectURL(file),
       })),
     ])
   }, [])
@@ -599,6 +603,13 @@ export default function ChatThreadPage() {
                               url={attachment.url}
                               bytes={attachment.size}
                             />
+                          ) : isDngAttachment(attachment) ? (
+                            <DngAttachmentPreview
+                              key={attachment.id}
+                              url={attachment.url}
+                              filename={attachment.filename}
+                              bytes={attachment.size}
+                            />
                           ) : (
                             <ImageAttachmentPreview
                               key={attachment.id}
@@ -691,6 +702,12 @@ export default function ChatThreadPage() {
               <Box key={attachment.id} sx={{ position: 'relative' }}>
                 {isPdfFile(attachment.file) ? (
                   <PdfAttachmentPreview bytes={attachment.file.size} size={72} />
+                ) : isDngFile(attachment.file) ? (
+                  <DngAttachmentPreview
+                    bytes={attachment.file.size}
+                    filename={attachment.file.name}
+                    size={72}
+                  />
                 ) : (
                   <>
                     <Box
@@ -721,7 +738,7 @@ export default function ChatThreadPage() {
           </Stack>
         )}
         <Stack direction="row" spacing={1} alignItems="flex-end">
-          <Tooltip title="Прикрепить изображение или PDF">
+          <Tooltip title="Прикрепить изображение, PDF или DNG">
             <IconButton onClick={() => fileInputRef.current?.click()}>
               <ImageIcon />
             </IconButton>
@@ -729,7 +746,7 @@ export default function ChatThreadPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,application/pdf,.pdf"
+            accept="image/*,application/pdf,.pdf,image/dng,image/x-adobe-dng,.dng"
             multiple
             hidden
             onChange={(event) => {

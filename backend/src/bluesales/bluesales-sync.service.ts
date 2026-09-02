@@ -13,11 +13,14 @@ import {
   SKETCH_START_STATUS,
   SketchTimestamps,
 } from '../orders/sketch-status';
+import {
+  BLUESALES_SYNC_TIME_ZONE,
+  datePartsInZone,
+  getBluesalesSyncSchedule,
+  syncDateKey,
+} from './bluesales-sync.schedule';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const NIGHT_START_UTC_HOUR = 21;
-const NIGHT_END_UTC_HOUR = 7;
-const NIGHT_REFRESH_MULTIPLIER = 3;
 
 /**
  * Cron быстрого инкрементального синка. Переопределяется через
@@ -38,6 +41,9 @@ function sameTagIdSet(left: string[], right: string[]): boolean {
  * BLUESALES_BACKFILL_CRON (читается на этапе загрузки модуля).
  */
 const BACKFILL_CRON = process.env.BLUESALES_BACKFILL_CRON ?? '0 * * * *';
+
+/** Ежедневный полный проход заказов за шестимесячное окно. */
+const NIGHTLY_ORDERS_SYNC_CRON = '0 2 * * *';
 
 @Injectable()
 export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
@@ -72,11 +78,19 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly sketchBackfillBatchSize: number;
   /** Пауза между итерациями бэкфилла меток эскиза, когда работы нет (мс). */
   private readonly sketchBackfillIdleMs: number;
+  /** Глубина ежедневного ночного синка заказов в календарных месяцах. */
+  private readonly nightlyOrdersSyncMonths: number;
 
   /** Защита от параллельного запуска быстрого синка. */
   private fastSyncRunning = false;
   /** Защита от параллельного запуска периодического добора. */
   private backfillRunning = false;
+  /** Пока true, все обычные фоновые синки заказов и лидов стоят. */
+  private nightlyOrdersSyncRunning = false;
+  /** Локальная дата последнего завершённого ночного прохода. */
+  private nightlyOrdersSyncCompletedDateKey: string | null = null;
+  /** Счётчики позволяют замедлить cron-задачи вместе с постоянными циклами. */
+  private readonly slowCronTicks = { fast: 0, backfill: 0 };
   /** Флаг остановки фонового цикла (выставляется при shutdown). */
   private loopActive = false;
   /** Ручные обновления с карточки заказа: id заказа → в работе по одному. */
@@ -110,6 +124,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.backfillDays = this.envInt('BLUESALES_BACKFILL_DAYS', 2);
     this.sketchBackfillBatchSize = this.envInt('SKETCH_BACKFILL_BATCH_SIZE', 500);
     this.sketchBackfillIdleMs = this.envInt('SKETCH_BACKFILL_IDLE_MS', 60000);
+    this.nightlyOrdersSyncMonths = this.envInt('BLUESALES_NIGHTLY_ORDERS_SYNC_MONTHS', 6);
   }
 
   onModuleInit(): void {
@@ -126,7 +141,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `BlueSales sync активен: cron "${FAST_SYNC_CRON}" + refresh-loop заказов + loop лидов` +
         ` + backfill "${BACKFILL_CRON}" за ${this.backfillDays} дн.` +
-        ` + ночные паузы x${NIGHT_REFRESH_MULTIPLIER} (${NIGHT_START_UTC_HOUR}:00–${NIGHT_END_UTC_HOUR}:00 UTC)` +
+        ` + ночные паузы x3 (21:00–09:00 ${BLUESALES_SYNC_TIME_ZONE})` +
+        ` + ночной синк заказов "${NIGHTLY_ORDERS_SYNC_CRON}" за ${this.nightlyOrdersSyncMonths} мес.` +
         (this.fullSyncOnStartup ? ` + полный синк при старте за ${this.fullSyncDays} дн.` : ''),
     );
     this.loopActive = true;
@@ -165,6 +181,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.manualRefreshPumpActive = true;
     try {
       while (this.pendingManualRefreshIds.size > 0) {
+        if (!this.currentSyncSchedule().ordersEnabled) {
+          await this.sleepBeforeNextBsRefresh(this.refreshPauseMs);
+          continue;
+        }
         const orderId = this.pendingManualRefreshIds.values().next().value as number;
         this.pendingManualRefreshIds.delete(orderId);
         try {
@@ -237,13 +257,19 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   @Cron(FAST_SYNC_CRON)
   async handleFastSync(): Promise<void> {
     if (!this.enabled || !this.api.isConfigured) return;
+    const schedule = this.currentSyncSchedule();
+    if (!schedule.ordersEnabled && !schedule.leadsEnabled) return;
     if (this.fastSyncRunning) {
       this.logger.debug('Быстрый синк ещё выполняется — пропуск');
       return;
     }
+    if (!this.shouldRunScheduledSync('fast', schedule.pauseMultiplier)) return;
     this.fastSyncRunning = true;
     try {
-      await this.runFastSync();
+      await this.runFastSync({
+        orders: schedule.ordersEnabled,
+        leads: schedule.leadsEnabled,
+      });
     } catch (err) {
       this.logger.error(`Быстрый синк BS ошибка: ${(err as Error).message}`);
     } finally {
@@ -251,41 +277,48 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async runFastSync(): Promise<{ orders: number; leads: number }> {
+  async runFastSync(
+    options: { orders?: boolean; leads?: boolean } = {},
+  ): Promise<{ orders: number; leads: number }> {
+    const syncOrders = options.orders ?? true;
+    const syncLeads = options.leads ?? true;
     const now = new Date();
     const dateFrom = new Date(now.getTime() - this.fastSyncOverlapMinutes * 60 * 1000);
 
-    // См. refreshBatch: наблюдение датируем началом запроса, иначе постраничная
-    // выгрузка «состарит» данные, а метка времени останется свежей.
+    // Ответ описывает состояние BlueSales на момент запроса, поэтому метку
+    // наблюдения фиксируем до сетевого вызова, а не после него.
     const statusObservedAt = new Date();
-    const bsOrders = await this.api.getOrders(dateFrom, now);
-
+    const bsOrders = syncOrders ? await this.api.getOrders(dateFrom, now) : [];
     const leadIds = new Set<number>();
     let synced = 0;
 
-    const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
-      where: { bsOrderId: { in: bsOrders.map((o) => o.id) } },
-      select: { bsOrderId: true, orderId: true },
-    });
-    const existingByBsId = new Map(existingInfos.map((info) => [info.bsOrderId, info]));
+    if (syncOrders) {
+      // См. refreshBatch: наблюдение датируем началом запроса, иначе постраничная
+      // выгрузка «состарит» данные, а метка времени останется свежей.
+      const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
+        where: { bsOrderId: { in: bsOrders.map((o) => o.id) } },
+        select: { bsOrderId: true, orderId: true },
+      });
+      const existingByBsId = new Map(existingInfos.map((info) => [info.bsOrderId, info]));
 
-    await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
+      await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
 
-    for (const bsOrder of bsOrders) {
-      try {
-        const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
-        if (leadId) leadIds.add(leadId);
-        await this.upsertOrder(
-          bsOrder,
-          leadId,
-          existingByBsId.get(bsOrder.id) ?? null,
-          statusObservedAt,
-        );
-        synced++;
-      } catch (err) {
-        this.logger.error(
-          `Быстрый синк: не удалось обработать BS#${bsOrder.id}: ${(err as Error).message}`,
-        );
+      for (const bsOrder of bsOrders) {
+        try {
+          const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
+          if (leadId) leadIds.add(leadId);
+          await this.upsertOrder(
+            bsOrder,
+            leadId,
+            existingByBsId.get(bsOrder.id) ?? null,
+            statusObservedAt,
+          );
+          synced++;
+        } catch (err) {
+          this.logger.error(
+            `Быстрый синк: не удалось обработать BS#${bsOrder.id}: ${(err as Error).message}`,
+          );
+        }
       }
     }
 
@@ -293,7 +326,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // Ловит тех, кто написал, но заказ ещё не оформил (синк заказов их не видит).
     // BS фильтрует даты с точностью до дня, поэтому окно перекрытия фактически
     // охватывает текущий (и при переходе через полночь — вчерашний) день.
-    const newLeads = await this.syncRecentLeads(dateFrom, now);
+    const newLeads = syncLeads && this.currentSyncSchedule().leadsEnabled
+      ? await this.syncRecentLeads(dateFrom, now)
+      : 0;
 
     this.logger.log(
       `Быстрый синк BS: заказов ${synced}/${bsOrders.length}, ` +
@@ -323,10 +358,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   @Cron(BACKFILL_CRON)
   async handleRecentBackfill(): Promise<void> {
     if (!this.enabled || !this.api.isConfigured) return;
+    const schedule = this.currentSyncSchedule();
+    if (!schedule.ordersEnabled && !schedule.leadsEnabled) return;
     if (this.backfillRunning) {
       this.logger.debug('Добор новых лидов ещё выполняется — пропуск');
       return;
     }
+    if (!this.shouldRunScheduledSync('backfill', schedule.pauseMultiplier)) return;
     this.backfillRunning = true;
     try {
       await this.runRecentBackfill();
@@ -351,8 +389,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     for (let i = 0; i < this.backfillDays && this.loopActive; i++) {
       const day = new Date(now.getTime() - i * DAY_MS);
       try {
-        orders += await this.syncOrdersWindow(day, day);
-        leads += await this.syncLeadsWindow(day, day);
+        const schedule = this.currentSyncSchedule();
+        if (schedule.ordersEnabled) {
+          orders += await this.syncOrdersWindow(day, day);
+        }
+        if (this.currentSyncSchedule().leadsEnabled) {
+          leads += await this.syncLeadsWindow(day, day);
+        }
       } catch (err) {
         this.logger.error(
           `Добор: день ${this.formatDate(day)} ошибка: ${(err as Error).message}`,
@@ -378,7 +421,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     while (this.loopActive) {
       try {
-        await this.refreshBatch();
+        if (this.currentSyncSchedule().ordersEnabled) {
+          await this.refreshBatch();
+        }
       } catch (err) {
         this.logger.error(`Refresh-loop ошибка: ${(err as Error).message}`);
       }
@@ -610,6 +655,79 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Полный синк завершён: заказов ${orders}, лидов ${leads}`);
   }
 
+  // ─── Ежедневный ночной синк заказов ───────────────────────────────────────
+
+  /**
+   * В 02:00 останавливает обычные фоновые синки и последовательно обновляет
+   * все заказы за последние N календарных месяцев. Синк отдельных лидов в
+   * этот проход не запускается; customer внутри заказа сохраняется как часть
+   * самого заказа.
+   */
+  @Cron(NIGHTLY_ORDERS_SYNC_CRON, { timeZone: BLUESALES_SYNC_TIME_ZONE })
+  async handleNightlyOrdersSync(): Promise<void> {
+    if (!this.enabled || !this.api.isConfigured || this.nightlyOrdersSyncRunning) return;
+
+    const startedAt = new Date();
+    const dateKey = syncDateKey(startedAt);
+    if (this.nightlyOrdersSyncCompletedDateKey === dateKey) {
+      this.logger.debug(`Ночной синк заказов за ${dateKey} уже завершён — пропуск`);
+      return;
+    }
+
+    this.nightlyOrdersSyncRunning = true;
+    try {
+      await this.runNightlyOrdersSync(startedAt);
+    } catch (err) {
+      this.logger.error(
+        `Ночной синк заказов ошибка: ${(err as Error).message}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+    } finally {
+      // После завершения попытки разрешаем медленный синк заказов. Ошибки
+      // отдельных окон уже залогированы, а обычные циклы доберут их позже.
+      this.nightlyOrdersSyncCompletedDateKey = dateKey;
+      this.nightlyOrdersSyncRunning = false;
+    }
+  }
+
+  private async runNightlyOrdersSync(now: Date): Promise<void> {
+    const { year, month, day } = datePartsInZone(now);
+    const to = new Date(Date.UTC(year, month - 1, day));
+    const from = this.subtractUtcCalendarMonths(to, this.nightlyOrdersSyncMonths);
+    let windowTo = to;
+    let orders = 0;
+    let failedWindows = 0;
+
+    this.logger.log(
+      `Ночной синк заказов начат: ${this.formatDate(from)}…${this.formatDate(to)}, ` +
+        `${this.nightlyOrdersSyncMonths} мес., без синка лидов`,
+    );
+
+    while (this.loopActive && windowTo.getTime() >= from.getTime()) {
+      const windowFrom = new Date(
+        Math.max(
+          from.getTime(),
+          windowTo.getTime() - (this.fullSyncWindowDays - 1) * DAY_MS,
+        ),
+      );
+      try {
+        orders += await this.syncOrdersWindow(windowFrom, windowTo);
+      } catch (err) {
+        failedWindows++;
+        this.logger.error(
+          `Ночной синк заказов: окно ${this.formatDate(windowFrom)}…${this.formatDate(windowTo)} ` +
+            `ошибка: ${(err as Error).message}`,
+        );
+      }
+      // Окна идут подряд, без дополнительной паузы, и не перекрываются.
+      windowTo = new Date(windowFrom.getTime() - DAY_MS);
+    }
+
+    this.logger.log(
+      `Ночной синк заказов завершён: заказов ${orders}, окон с ошибками ${failedWindows}`,
+    );
+  }
+
   /** Синк всех заказов за окно [from, to] (вместе с их лидами). */
   private async syncOrdersWindow(from: Date, to: Date): Promise<number> {
     // См. refreshBatch: наблюдение датируем началом запроса.
@@ -676,7 +794,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     while (this.loopActive) {
       try {
-        await this.refreshLeadsBatch();
+        if (this.currentSyncSchedule().leadsEnabled) {
+          await this.refreshLeadsBatch();
+        }
       } catch (err) {
         this.logger.error(`Loop лидов ошибка: ${(err as Error).message}`);
       }
@@ -1601,14 +1721,46 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * С 21:00 до 07:00 по времени сервера (UTC) фоновые обращения к BlueSales
-   * выполняются в три раза реже. Проверяем время перед каждой паузой, поэтому
+   * С 21:00 до 09:00 в часовом поясе синка фоновые обращения к BlueSales
+   * выполняются в три раза реже. Проверяем расписание перед каждой паузой, поэтому
    * переключение режима не требует перезапуска приложения.
    */
   private sleepBeforeNextBsRefresh(baseMs: number): Promise<void> {
-    const hour = new Date().getUTCHours();
-    const isNight = hour >= NIGHT_START_UTC_HOUR || hour < NIGHT_END_UTC_HOUR;
-    return this.sleep(baseMs * (isNight ? NIGHT_REFRESH_MULTIPLIER : 1));
+    return this.sleep(baseMs * this.currentSyncSchedule().pauseMultiplier);
+  }
+
+  private currentSyncSchedule(now = new Date()) {
+    return getBluesalesSyncSchedule(now, {
+      running: this.nightlyOrdersSyncRunning,
+      completedDateKey: this.nightlyOrdersSyncCompletedDateKey,
+    });
+  }
+
+  /** В медленном режиме cron-задача выполняется только на каждом третьем тике. */
+  private shouldRunScheduledSync(
+    task: keyof typeof this.slowCronTicks,
+    multiplier: 1 | 3,
+  ): boolean {
+    if (multiplier === 1) {
+      this.slowCronTicks[task] = 0;
+      return true;
+    }
+    const tick = this.slowCronTicks[task];
+    this.slowCronTicks[task] = (tick + 1) % multiplier;
+    return tick === 0;
+  }
+
+  /** Вычитает календарные месяцы, корректно зажимая 29–31 число. */
+  private subtractUtcCalendarMonths(date: Date, months: number): Date {
+    const sourceDay = date.getUTCDate();
+    const result = new Date(date);
+    result.setUTCDate(1);
+    result.setUTCMonth(result.getUTCMonth() - months);
+    const daysInTargetMonth = new Date(
+      Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0),
+    ).getUTCDate();
+    result.setUTCDate(Math.min(sourceDay, daysInTargetMonth));
+    return result;
   }
 
   private formatDuration(ms: number): string {
