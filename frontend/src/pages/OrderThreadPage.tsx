@@ -843,6 +843,11 @@ function OrderInfoPanel({
                   : dash
               }
             />
+            <InfoRow label="Служба доставки" value={bs.deliveryService ?? dash} />
+            <InfoRow label="Способ доставки" value={bs.deliveryType ?? dash} />
+            <InfoRow label="Комментарий" value={bs.comment ?? dash} />
+            <InfoRow label="Срочность" value={bs.urgency ?? dash} />
+            <InfoRow label="Дедлайн отправки" value={bs.shippingDeadline ?? dash} />
           </Stack>
         </Box>
       )}
@@ -1002,6 +1007,9 @@ function SketchDatesCard({
   )
 }
 
+/** Наше поле «Примечание» скрыто. Вернуть: поставить true. */
+const SHOW_ORDER_NOTE = false
+
 function OrderArticlesPanel({
   articles,
   tags,
@@ -1141,30 +1149,34 @@ function OrderArticlesPanel({
           ))}
         </Stack>
       )}
-      <Divider sx={{ my: 2 }} />
-      <SectionTitle icon={<EditNoteIcon fontSize="small" />}>Примечание</SectionTitle>
-      <TextField
-        value={noteDraft}
-        onChange={(event) => onNoteDraftChange(event.target.value)}
-        placeholder="Добавьте примечание к заказу"
-        multiline
-        minRows={3}
-        maxRows={8}
-        fullWidth
-        size="small"
-        disabled={savingNote}
-        inputProps={{ maxLength: 5000 }}
-      />
-      <Button
-        variant="contained"
-        size="small"
-        fullWidth
-        onClick={onSaveNote}
-        disabled={savingNote}
-        sx={{ mt: 1 }}
-      >
-        {savingNote ? 'Сохранение…' : 'Сохранить примечание'}
-      </Button>
+      {SHOW_ORDER_NOTE && (
+        <>
+          <Divider sx={{ my: 2 }} />
+          <SectionTitle icon={<EditNoteIcon fontSize="small" />}>Примечание</SectionTitle>
+          <TextField
+            value={noteDraft}
+            onChange={(event) => onNoteDraftChange(event.target.value)}
+            placeholder="Добавьте примечание к заказу"
+            multiline
+            minRows={3}
+            maxRows={8}
+            fullWidth
+            size="small"
+            disabled={savingNote}
+            inputProps={{ maxLength: 5000 }}
+          />
+          <Button
+            variant="contained"
+            size="small"
+            fullWidth
+            onClick={onSaveNote}
+            disabled={savingNote}
+            sx={{ mt: 1 }}
+          >
+            {savingNote ? 'Сохранение…' : 'Сохранить примечание'}
+          </Button>
+        </>
+      )}
       <Box sx={{ mt: 'auto', pt: 3 }}>
         <SketchDatesCard
           sketchStartedAt={sketchStartedAt}

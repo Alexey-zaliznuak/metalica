@@ -1,4 +1,40 @@
 ---
+description: Не ходить в API BlueSales напрямую — только через бэкенд-роуты
 alwaysApply: true
 ---
-При работе с bluesales агент не должен пытаться выполнять запросы к самому bluesales
+
+# BlueSales
+
+Не вызывать API BlueSales напрямую: не ходить на `bluesales.ru`, не брать
+`BLUESALES_LOGIN` / `BLUESALES_PASSWORD` из `.env`, не писать скрипты с
+`orders.get` / `customers.get`. Даже «разово посмотреть заказ».
+
+Данные BS смотреть только через бэкенд (префикс `/api`, без JWT).
+`:key` — номер заказа или наш `order.id`.
+
+## Диагностика — `/api/diag`
+
+Read-only: наша БД и при необходимости живой BS через очередь бэкенда.
+
+- `GET /api/diag/health` — свежесть синка, очереди
+- `GET /api/diag/frozen?hours=1&limit=100` — статусы, которые не обновляются
+- `GET /api/diag/order/:key` — заказ из нашей БД (без полного `rawPayload`)
+- `GET /api/diag/order/:key/live` — сверка БД с живым BS, в ответе `rawLiveOrder`
+- `GET /api/diag/probe?ids=1,2,3` — какие BS `id` API реально возвращает
+- `GET /api/diag/probe-frozen?hours=1` — то же для замороженных заказов
+- `GET /api/diag/queue` — исходящие смены статуса + очередь к BS
+- `GET /api/diag/duplicates` — один `bsNumber` на разные `bsOrderId`
+
+У `live` / `probe` / `probe-frozen`: `?priority=interactive` (дефолт) или `background`.
+
+Для живого заказа: `GET /api/diag/order/29643612/live`.
+
+## Ручное управление — `/api/bluesales`
+
+- `GET /api/bluesales/pause` — стоп обращений к BS на 5 минут
+- `GET /api/bluesales/unpause` — снять паузу
+- `GET /api/bluesales/test/orders-by-ids?ids=123,456` — полный `orders.get` по BS id
+
+## Продуктовый роут (нужен JWT)
+
+- `POST /api/orders/:id/refresh` — актуализировать заказ из BS через очередь бэкенда

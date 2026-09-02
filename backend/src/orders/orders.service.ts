@@ -282,8 +282,8 @@ export class OrdersService {
     const base = await this.withStats(order);
     const articles = this.extractArticles(order.bluesalesInfo?.rawPayload);
     // rawPayload — тяжёлый JSON целого заказа BlueSales; наружу не отдаём,
-    // из него отдаём только извлечённый список артикулов.
-    const { rawPayload: _rawPayload, ...bluesalesInfo } = order.bluesalesInfo ?? {};
+    // из него отдаём только извлечённые поля карточки.
+    const { rawPayload, ...bluesalesInfo } = order.bluesalesInfo ?? {};
     return {
       ...base,
       source: order.source,
@@ -302,7 +302,9 @@ export class OrdersService {
             })),
           }
         : null,
-      bluesalesInfo: order.bluesalesInfo ? bluesalesInfo : null,
+      bluesalesInfo: order.bluesalesInfo
+        ? { ...bluesalesInfo, ...this.extractOrderExtra(rawPayload) }
+        : null,
       articles,
     };
   }
@@ -466,6 +468,87 @@ export class OrdersService {
         continue;
       }
       const value = this.pickString(field.valueAsText, field.value);
+      if (value) return value;
+    }
+    return null;
+  }
+
+  /**
+   * Поля карточки заказа из rawPayload BlueSales: доставка, комментарий,
+   * срочность и дедлайн. Комментарий — только `internalComments` (менеджер).
+   */
+  private extractOrderExtra(rawPayload: Prisma.JsonValue | null | undefined): {
+    deliveryService: string | null;
+    deliveryType: string | null;
+    comment: string | null;
+    urgency: string | null;
+    shippingDeadline: string | null;
+  } {
+    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+      return {
+        deliveryService: null,
+        deliveryType: null,
+        comment: null,
+        urgency: null,
+        shippingDeadline: null,
+      };
+    }
+    const order = rawPayload as Record<string, unknown>;
+    const delivery =
+      order.delivery && typeof order.delivery === 'object'
+        ? (order.delivery as Record<string, unknown>)
+        : {};
+
+    return {
+      deliveryService: this.resolveDeliveryService(order.deliveryService),
+      deliveryType: this.resolveDeliveryType(delivery),
+      comment: this.pickString(order.internalComments),
+      urgency: this.extractOrderCustomField(order, (name) => name.includes('срочност')),
+      shippingDeadline: this.extractOrderCustomField(
+        order,
+        (name) => name.includes('дедлайн') && name.includes('отправ'),
+      ),
+    };
+  }
+
+  private resolveDeliveryService(value: unknown): string | null {
+    if (value && typeof value === 'object') {
+      const named = value as Record<string, unknown>;
+      return this.pickString(named.name, named.title);
+    }
+    const code = this.pickNumber(value);
+    if (code === 2) return 'Собственными силами';
+    if (code === 5) return 'СДЭК';
+    return this.pickString(value);
+  }
+
+  private resolveDeliveryType(delivery: Record<string, unknown>): string | null {
+    const named = this.pickString(delivery.deliveryTypeName, delivery.typeName);
+    if (named) return named;
+    const code = this.pickNumber(delivery.deliveryType, delivery.type);
+    if (code === 0) return 'Курьер';
+    if (code === 1) return 'Самовывоз';
+    if (code === 2) return 'Почта';
+    if (code === 3) return 'Другой';
+    return null;
+  }
+
+  private extractOrderCustomField(
+    order: Record<string, unknown>,
+    match: (fieldName: string) => boolean,
+  ): string | null {
+    const fields = Array.isArray(order.customFields) ? order.customFields : [];
+    for (const raw of fields) {
+      if (!raw || typeof raw !== 'object') continue;
+      const field = raw as Record<string, unknown>;
+      const fieldName = String(field.fieldName ?? '')
+        .trim()
+        .toLocaleLowerCase('ru-RU');
+      if (!match(fieldName)) continue;
+      const asText = this.pickString(field.valueAsText);
+      if (asText) return asText;
+      if (typeof field.value === 'boolean') return field.value ? 'Да' : 'Нет';
+      const value = this.pickString(field.value);
       if (value) return value;
     }
     return null;

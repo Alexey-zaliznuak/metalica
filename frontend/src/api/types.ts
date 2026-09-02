@@ -116,6 +116,11 @@ export interface BluesalesOrderInfo {
   totalSum: number | null
   bsCreatedAt: string | null
   lastSyncedAt: string | null
+  deliveryService?: string | null
+  deliveryType?: string | null
+  comment?: string | null
+  urgency?: string | null
+  shippingDeadline?: string | null
 }
 
 export interface OrderAssignee {
