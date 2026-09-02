@@ -330,9 +330,9 @@ export class OrdersService {
   }
 
   /**
-   * Достаёт список позиций заказа (артикул + название + количество) из
-   * сырого ответа BlueSales (`rawPayload`). Структура ответа BlueSales
-   * формально не типизирована, а названия полей варьируются, поэтому
+   * Достаёт список позиций заказа (артикул + название + количество + размер +
+   * комментарий) из сырого ответа BlueSales (`rawPayload`). Структура ответа
+   * BlueSales формально не типизирована, а названия полей варьируются, поэтому
    * позиции и их атрибуты ищем перебором вероятных ключей (как это уже
    * сделано для дат/сумм/источников в bluesales-sync.service).
    */
@@ -340,6 +340,8 @@ export class OrdersService {
     article: string | null;
     name: string | null;
     quantity: number | null;
+    size: string | null;
+    comment: string | null;
   }> {
     if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
       return [];
@@ -370,8 +372,13 @@ export class OrdersService {
       return [];
     }
 
-    const result: Array<{ article: string | null; name: string | null; quantity: number | null }> =
-      [];
+    const result: Array<{
+      article: string | null;
+      name: string | null;
+      quantity: number | null;
+      size: string | null;
+      comment: string | null;
+    }> = [];
     for (const raw of positions) {
       if (!raw || typeof raw !== 'object') continue;
       const pos = raw as Record<string, unknown>;
@@ -426,11 +433,42 @@ export class OrdersService {
         nomenclature.name,
       );
       const quantity = this.pickNumber(pos.count, pos.quantity, pos.amount, pos.qty, pos.number);
+      const size = this.pickString(pos.size, pos.sizeName, goods.size, product.size);
+      const comment = this.extractPositionComment(pos);
 
       if (article === null && name === null) continue;
-      result.push({ article, name, quantity });
+      result.push({ article, name, quantity, size, comment });
     }
     return result;
+  }
+
+  /**
+   * Комментарий позиции: сначала прямые поля, затем кастомное поле
+   * «Комментарии» / «Примечание» из BlueSales.
+   */
+  private extractPositionComment(pos: Record<string, unknown>): string | null {
+    const direct = this.pickString(
+      pos.comment,
+      pos.comments,
+      pos.note,
+      pos.internalComments,
+    );
+    if (direct) return direct;
+
+    const fields = Array.isArray(pos.customFields) ? pos.customFields : [];
+    for (const raw of fields) {
+      if (!raw || typeof raw !== 'object') continue;
+      const field = raw as Record<string, unknown>;
+      const fieldName = String(field.fieldName ?? '')
+        .trim()
+        .toLocaleLowerCase('ru-RU');
+      if (!fieldName.includes('комментари') && !fieldName.includes('примечан')) {
+        continue;
+      }
+      const value = this.pickString(field.valueAsText, field.value);
+      if (value) return value;
+    }
+    return null;
   }
 
   private pickString(...values: unknown[]): string | null {

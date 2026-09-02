@@ -589,7 +589,6 @@ function OrderInfoPanel({
         Информация о заказе
       </SectionTitle>
       <Stack divider={<Divider flexItem />}>
-        <InfoRow label="Номер" value={order.orderNumber} />
         <InfoRow
           label="Менеджер ведения"
           value={order.deliveryManagerName?.trim() ? order.deliveryManagerName : dash}
@@ -682,7 +681,6 @@ function OrderInfoPanel({
             Данные BlueSales
           </SectionTitle>
           <Stack divider={<Divider flexItem />}>
-            <InfoRow label="№ в BS" value={bs.bsNumber ?? bs.bsOrderId} />
             <Box sx={{ py: 0.4 }}>
               <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
                 <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
@@ -837,7 +835,6 @@ function OrderInfoPanel({
                 </Alert>
               )}
             </Box>
-            <InfoRow label="CRM-статус" value={bs.crmStatus ?? dash} />
             <InfoRow
               label="Сумма"
               value={
@@ -845,10 +842,6 @@ function OrderInfoPanel({
                   ? `${bs.totalSum.toLocaleString('ru-RU')} ₽`
                   : dash
               }
-            />
-            <InfoRow
-              label="Создан в BS"
-              value={formatDateTime(bs.bsCreatedAt)}
             />
           </Stack>
         </Box>
@@ -1091,6 +1084,24 @@ function OrderArticlesPanel({
                     sx={{ display: 'block', wordBreak: 'break-word' }}
                   >
                     {item.name}
+                  </Typography>
+                )}
+                {item.size && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', wordBreak: 'break-word' }}
+                  >
+                    Размер: {item.size}
+                  </Typography>
+                )}
+                {item.comment && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', fontStyle: 'italic', wordBreak: 'break-word' }}
+                  >
+                    {item.comment}
                   </Typography>
                 )}
               </Box>

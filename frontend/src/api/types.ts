@@ -135,6 +135,8 @@ export interface OrderArticle {
   article: string | null
   name: string | null
   quantity: number | null
+  size?: string | null
+  comment?: string | null
 }
 
 export interface Order {
