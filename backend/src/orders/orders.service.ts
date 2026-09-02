@@ -1071,6 +1071,72 @@ export class OrdersService {
     return this.findOne(id);
   }
 
+  /**
+   * Сохраняет менеджерский комментарий заказа в BlueSales (`internalComments`)
+   * и сразу пишет его в rawPayload, чтобы карточка не ждала следующий синк.
+   */
+  async updateComment(id: number, comment: string, actor?: AuthUser) {
+    const nextComment = comment.trim();
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        source: true,
+        bluesalesInfo: {
+          select: { bsOrderId: true, rawPayload: true },
+        },
+      },
+    });
+    if (!order) {
+      throw new NotFoundException('Заказ не найден');
+    }
+    if (order.source !== OrderSource.BLUESALES || !order.bluesalesInfo) {
+      throw new BadRequestException('Комментарий доступен только для заказов BlueSales');
+    }
+    if (!this.bsApi.isConfigured) {
+      throw new BadRequestException('Синхронизация BlueSales отключена');
+    }
+
+    const raw =
+      order.bluesalesInfo.rawPayload &&
+      typeof order.bluesalesInfo.rawPayload === 'object' &&
+      !Array.isArray(order.bluesalesInfo.rawPayload)
+        ? (order.bluesalesInfo.rawPayload as Record<string, unknown>)
+        : {};
+    const prevComment = this.pickString(raw.internalComments);
+    const nextStored = nextComment || null;
+    if (prevComment === nextStored) {
+      return this.findOne(id);
+    }
+
+    await this.bsApi.setOrderInternalComments(order.bluesalesInfo.bsOrderId, nextComment);
+
+    const eventData = this.orderEvents.buildCreateManyData(id, actor?.id ?? null, [
+      {
+        field: 'comment',
+        oldValue: prevComment,
+        newValue: nextStored,
+      },
+    ]);
+    await this.prisma.$transaction([
+      this.prisma.bluesalesOrderInfo.update({
+        where: { orderId: id },
+        data: {
+          rawPayload: { ...raw, internalComments: nextComment } as Prisma.InputJsonValue,
+        },
+      }),
+      this.prisma.order.update({
+        where: { id },
+        data: { updatedAt: new Date() },
+      }),
+      ...(eventData.length > 0
+        ? [this.prisma.orderEvent.createMany({ data: eventData })]
+        : []),
+    ]);
+
+    return this.findOne(id);
+  }
+
   async updateCrmStatus(
     id: number,
     crmStatusId: number | null,

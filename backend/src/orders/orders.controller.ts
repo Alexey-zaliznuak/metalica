@@ -14,6 +14,7 @@ import { Role } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateOrderCommentDto } from './dto/update-order-comment.dto';
 import { UpdateCrmStatusDto } from './dto/update-crm-status.dto';
 import { ReorderOrderStatusesDto } from './dto/reorder-order-statuses.dto';
 import { UpdateOrderStatusSettingsDto } from './dto/update-order-status-settings.dto';
@@ -146,6 +147,15 @@ export class OrdersController {
   @Roles(Role.ADMIN)
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return this.orders.remove(id, user);
+  }
+
+  @Patch(':id/comment')
+  updateComment(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateOrderCommentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.orders.updateComment(id, dto.comment, user);
   }
 
   @Patch(':id/order-status')

@@ -770,4 +770,23 @@ export class BluesalesApiService {
         `statusId=${statusId}; response=${this.truncateLogValue(JSON.stringify(response))}`,
     );
   }
+
+  /**
+   * Пишет менеджерский комментарий заказа (`internalComments`) в BlueSales.
+   */
+  async setOrderInternalComments(
+    orderId: number,
+    comment: string,
+    priority: BsRequestPriority = 'interactive',
+  ): Promise<void> {
+    const payload = {
+      ids: [orderId],
+      internalComments: comment,
+    };
+    const response = await this.send<unknown>('orders.updateMany', payload, priority);
+    this.logger.log(
+      `BlueSales orders.updateMany: комментарий отправлен; orderId=${orderId}; ` +
+        `response=${this.truncateLogValue(JSON.stringify(response))}`,
+    );
+  }
 }

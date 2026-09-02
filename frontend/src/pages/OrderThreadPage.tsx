@@ -409,6 +409,7 @@ const EVENT_FIELD_LABELS: Record<string, string> = {
   orderNumber: 'номер заказа',
   title: 'название',
   note: 'примечание',
+  comment: 'комментарий',
   dialogLink: 'ссылку на диалог',
   sketchStartedAt: 'дату начала эскиза',
   sketchReadyAt: 'дату готовности эскиза',
@@ -845,7 +846,6 @@ function OrderInfoPanel({
             />
             <InfoRow label="Служба доставки" value={bs.deliveryService ?? dash} />
             <InfoRow label="Способ доставки" value={bs.deliveryType ?? dash} />
-            <InfoRow label="Комментарий" value={bs.comment ?? dash} />
             <InfoRow label="Срочность" value={bs.urgency ?? dash} />
             <InfoRow label="Дедлайн отправки" value={bs.shippingDeadline ?? dash} />
           </Stack>
@@ -1014,24 +1014,36 @@ function OrderArticlesPanel({
   articles,
   tags,
   noteDraft,
+  commentDraft,
+  canEditComment,
+  commentChanged,
   sketchStartedAt,
   sketchReadyAt,
   savingNote,
+  savingComment,
   savingSketchDates,
   onNoteDraftChange,
   onSaveNote,
+  onCommentDraftChange,
+  onSaveComment,
   onSaveSketchDates,
   inDrawer = false,
 }: {
   articles: OrderArticle[]
   tags: BluesalesTag[]
   noteDraft: string
+  commentDraft: string
+  canEditComment: boolean
+  commentChanged: boolean
   sketchStartedAt: string | null
   sketchReadyAt: string | null
   savingNote: boolean
+  savingComment: boolean
   savingSketchDates: boolean
   onNoteDraftChange: (value: string) => void
   onSaveNote: () => void
+  onCommentDraftChange: (value: string) => void
+  onSaveComment: () => void
   onSaveSketchDates: (startedAt: string | null, readyAt: string | null) => void
   inDrawer?: boolean
 }) {
@@ -1177,6 +1189,34 @@ function OrderArticlesPanel({
           </Button>
         </>
       )}
+      {canEditComment && (
+        <>
+          <Divider sx={{ my: 2 }} />
+          <SectionTitle icon={<EditNoteIcon fontSize="small" />}>Комментарий</SectionTitle>
+          <TextField
+            value={commentDraft}
+            onChange={(event) => onCommentDraftChange(event.target.value)}
+            placeholder="Комментарий менеджера в BlueSales"
+            multiline
+            minRows={3}
+            maxRows={8}
+            fullWidth
+            size="small"
+            disabled={savingComment}
+            inputProps={{ maxLength: 5000 }}
+          />
+          <Button
+            variant="contained"
+            size="small"
+            fullWidth
+            onClick={onSaveComment}
+            disabled={savingComment || !commentChanged}
+            sx={{ mt: 1 }}
+          >
+            {savingComment ? 'Сохранение…' : 'Сохранить комментарий'}
+          </Button>
+        </>
+      )}
       <Box sx={{ mt: 'auto', pt: 3 }}>
         <SketchDatesCard
           sketchStartedAt={sketchStartedAt}
@@ -1233,6 +1273,10 @@ export default function OrderThreadPage() {
   const [updatingDialogLink, setUpdatingDialogLink] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
   const [savingNote, setSavingNote] = useState(false)
+  const [commentDraft, setCommentDraft] = useState('')
+  const [savingComment, setSavingComment] = useState(false)
+  const commentDraftRef = useRef('')
+  const lastSavedCommentRef = useRef('')
   const [savingSketchDates, setSavingSketchDates] = useState(false)
   const [refreshingFromBs, setRefreshingFromBs] = useState(false)
   const [refreshLocked, setRefreshLocked] = useState(false)
@@ -1265,6 +1309,10 @@ export default function OrderThreadPage() {
         ])
       setOrder(orderRes.data)
       setNoteDraft(orderRes.data.note ?? '')
+      const incomingComment = orderRes.data.bluesalesInfo?.comment ?? ''
+      commentDraftRef.current = incomingComment
+      lastSavedCommentRef.current = incomingComment
+      setCommentDraft(incomingComment)
       setMetrics(metricsRes.data)
       setMessages(messagesRes.data.items)
       setEvents(eventsRes.data)
@@ -1356,6 +1404,12 @@ export default function OrderThreadPage() {
         client.get<OrderEvent[]>(`/orders/${orderId}/events`),
       ])
       setOrder(orderRes.data)
+      const incomingComment = orderRes.data.bluesalesInfo?.comment ?? ''
+      if (commentDraftRef.current === lastSavedCommentRef.current) {
+        commentDraftRef.current = incomingComment
+        lastSavedCommentRef.current = incomingComment
+        setCommentDraft(incomingComment)
+      }
       setMetrics(metricsRes.data)
       setEvents(eventsRes.data)
     } catch (err) {
@@ -1501,6 +1555,32 @@ export default function OrderThreadPage() {
       setSendError(describeApiError(err, 'Не удалось сохранить поле "Даилог BS"'))
     } finally {
       setUpdatingDialogLink(false)
+    }
+  }
+
+  const applyCommentDraft = (value: string) => {
+    commentDraftRef.current = value
+    setCommentDraft(value)
+  }
+
+  const handleSaveComment = async () => {
+    if (!order) return
+    setSavingComment(true)
+    try {
+      const { data } = await client.patch<Order>(`/orders/${orderId}/comment`, {
+        comment: commentDraft,
+      })
+      setOrder(data)
+      const saved = data.bluesalesInfo?.comment ?? ''
+      commentDraftRef.current = saved
+      lastSavedCommentRef.current = saved
+      setCommentDraft(saved)
+      void refreshEvents()
+    } catch (err) {
+      logApiError('сохранение комментария', err)
+      setSendError(describeApiError(err, 'Не удалось сохранить комментарий в BlueSales'))
+    } finally {
+      setSavingComment(false)
     }
   }
 
@@ -2276,13 +2356,21 @@ export default function OrderThreadPage() {
         articles={order.articles ?? []}
         tags={order.lead?.tags ?? []}
         noteDraft={noteDraft}
+        commentDraft={commentDraft}
+        canEditComment={order.source === 'BLUESALES'}
+        commentChanged={commentDraft.trim() !== (order.bluesalesInfo?.comment ?? '')}
         sketchStartedAt={order.sketchStartedAt}
         sketchReadyAt={order.sketchReadyAt}
         savingNote={savingNote}
+        savingComment={savingComment}
         savingSketchDates={savingSketchDates}
         onNoteDraftChange={setNoteDraft}
         onSaveNote={() => {
           void handleSaveNote()
+        }}
+        onCommentDraftChange={applyCommentDraft}
+        onSaveComment={() => {
+          void handleSaveComment()
         }}
         onSaveSketchDates={(startedAt, readyAt) => {
           void handleSaveSketchDates(startedAt, readyAt)
@@ -2323,13 +2411,21 @@ export default function OrderThreadPage() {
           articles={order.articles ?? []}
           tags={order.lead?.tags ?? []}
           noteDraft={noteDraft}
+          commentDraft={commentDraft}
+          canEditComment={order.source === 'BLUESALES'}
+          commentChanged={commentDraft.trim() !== (order.bluesalesInfo?.comment ?? '')}
           sketchStartedAt={order.sketchStartedAt}
           sketchReadyAt={order.sketchReadyAt}
           savingNote={savingNote}
+          savingComment={savingComment}
           savingSketchDates={savingSketchDates}
           onNoteDraftChange={setNoteDraft}
           onSaveNote={() => {
             void handleSaveNote()
+          }}
+          onCommentDraftChange={applyCommentDraft}
+          onSaveComment={() => {
+            void handleSaveComment()
           }}
           onSaveSketchDates={(startedAt, readyAt) => {
             void handleSaveSketchDates(startedAt, readyAt)
