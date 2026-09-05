@@ -102,6 +102,9 @@ model Order {
   note                  String?
   source                OrderSource         @default(MANUAL)
   messages              Message[]
+  finalSketchMessage    Message?            @relation("OrderFinalSketch", fields: [finalSketchMessageId], references: [id], onDelete: SetNull)
+  finalSketchMessageId  Int?                @unique
+  printPhoto            Attachment?         @relation("OrderPrintPhoto")
   revisions             Revision[]
   events                OrderEvent[]
   statusChanges         OrderStatusChange[]
@@ -365,6 +368,7 @@ model Message {
   id              Int              @id @default(autoincrement())
   order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
   orderId         Int
+  finalSketchFor  Order?           @relation("OrderFinalSketch")
   author          User             @relation(fields: [authorId], references: [id])
   authorId        Int
   body            String?
@@ -450,6 +454,8 @@ model Attachment {
   messageId     Int?
   chatMessage   ChatMessage? @relation(fields: [chatMessageId], references: [id], onDelete: Cascade)
   chatMessageId Int?
+  printPhotoOrder Order?       @relation("OrderPrintPhoto", fields: [printPhotoOrderId], references: [id], onDelete: Cascade)
+  printPhotoOrderId Int?       @unique
   objectKey     String
   filename      String
   mimeType      String?

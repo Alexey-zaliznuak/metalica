@@ -11,6 +11,17 @@ import {
 
 export class UpdateOrderDto {
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  finalSketchMessageId?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1024)
+  printPhotoKey?: string | null;
+
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(100)

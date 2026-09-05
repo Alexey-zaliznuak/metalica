@@ -50,6 +50,8 @@ import HistoryIcon from '@mui/icons-material/History'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import ScheduleIcon from '@mui/icons-material/Schedule'
+import PushPinIcon from '@mui/icons-material/PushPin'
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined'
 import { AxiosError } from 'axios'
 import { useNavigate, useParams } from 'react-router-dom'
 import client from '../api/client'
@@ -190,11 +192,17 @@ function MessageBubble({
   ownSide,
   onOpenImage,
   resolvedSeconds,
+  isFinalSketch,
+  updatingFinalSketch,
+  onToggleFinalSketch,
 }: {
   message: Message
   ownSide: boolean
   onOpenImage: (image: LightboxImage) => void
   resolvedSeconds?: number | null
+  isFinalSketch: boolean
+  updatingFinalSketch: boolean
+  onToggleFinalSketch: () => void
 }) {
   const isRequest = message.kind === 'REVISION_REQUEST'
   const isAnswer = message.kind === 'REVISION_ANSWER'
@@ -224,10 +232,15 @@ function MessageBubble({
 
   return (
     <Box
+      id={`order-message-${message.id}`}
+      tabIndex={-1}
       sx={{
         display: 'flex',
         justifyContent: ownSide ? 'flex-end' : 'flex-start',
         mb: 1.5,
+        scrollMarginBlock: 24,
+        borderRadius: 1.5,
+        '&:focus': { outline: `2px solid ${BRAND.main}`, outlineOffset: 4 },
       }}
     >
       <Stack
@@ -276,6 +289,14 @@ function MessageBubble({
               boxShadow: `0 4px 14px ${BRAND.deep}1f`,
             }}
           >
+            {isFinalSketch && (
+              <Chip
+                size="small"
+                icon={<PushPinIcon />}
+                label="Итоговый эскиз"
+                sx={{ mb: 1, bgcolor: '#fff', color: BRAND.deep, fontWeight: 700 }}
+              />
+            )}
             {(isRequest || isAnswer) && (
               <Box sx={{ mb: 0.8 }}>
                 <Chip
@@ -404,6 +425,15 @@ function MessageBubble({
                 </Typography>
               </Box>
             )}
+            <Button
+              size="small"
+              startIcon={isFinalSketch ? <PushPinIcon /> : <PushPinOutlinedIcon />}
+              disabled={updatingFinalSketch}
+              onClick={onToggleFinalSketch}
+              sx={{ mt: 0.5, color: 'inherit', fontSize: 11 }}
+            >
+              {isFinalSketch ? 'Снять отметку' : 'Пометить как итоговый эскиз'}
+            </Button>
           </Paper>
         </Box>
       </Stack>
@@ -413,6 +443,8 @@ function MessageBubble({
 
 // Человекочитаемые подписи полей заказа для системных событий лога.
 const EVENT_FIELD_LABELS: Record<string, string> = {
+  finalSketchMessage: 'итоговый эскиз',
+  printPhoto: 'фото для печати',
   sketchDesigner: 'художника эскиза',
   revisionDesigner: 'художника правок',
   orderStatus: 'статус заказа',
@@ -541,6 +573,10 @@ function OrderInfoPanel({
   onOrderStatusChange,
   onResponsibleChange,
   onDialogLinkChange,
+  savingPrintPhoto,
+  printPhotoError,
+  onPrintPhotoChange,
+  onOpenImage,
   inDrawer = false,
 }: {
   order: Order
@@ -557,6 +593,10 @@ function OrderInfoPanel({
     userId: number | '',
   ) => void
   onDialogLinkChange: (dialogLink: string) => void
+  savingPrintPhoto: boolean
+  printPhotoError: string | null
+  onPrintPhotoChange: (file: File | null) => void
+  onOpenImage: (image: LightboxImage) => void
   inDrawer?: boolean
 }) {
   const bs = order.bluesalesInfo
@@ -583,9 +623,10 @@ function OrderInfoPanel({
         inDrawer
           ? {
               width: '100%',
+              flexShrink: 0,
               p: 2,
               borderRadius: 0,
-              overflowY: 'auto',
+              overflowY: 'visible',
             }
           : {
               width: 320,
@@ -904,6 +945,73 @@ function OrderInfoPanel({
           </Typography>
         )}
       </Box>
+      <Box
+        sx={{ mt: 2 }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault()
+          if (!savingPrintPhoto && e.dataTransfer.files[0]) {
+            onPrintPhotoChange(e.dataTransfer.files[0])
+          }
+        }}
+        onPaste={(e) => {
+          if (!savingPrintPhoto && e.clipboardData.files[0]) {
+            e.preventDefault()
+            onPrintPhotoChange(e.clipboardData.files[0])
+          }
+        }}
+      >
+        <SectionTitle icon={<ImageIcon fontSize="small" />}>
+          Фото для печати
+        </SectionTitle>
+        {printPhotoError && <Alert severity="error" sx={{ mb: 1 }}>{printPhotoError}</Alert>}
+        {order.printPhoto ? (
+          isPdfAttachment(order.printPhoto) ? (
+            <PdfAttachmentPreview url={order.printPhoto.url} bytes={order.printPhoto.size} />
+          ) : isDngAttachment(order.printPhoto) ? (
+            <DngAttachmentPreview
+              url={order.printPhoto.url}
+              filename={order.printPhoto.filename}
+              bytes={order.printPhoto.size}
+            />
+          ) : (
+            <ImageAttachmentPreview
+              image={order.printPhoto}
+              onOpen={() => onOpenImage(order.printPhoto!)}
+            />
+          )
+        ) : (
+          <Typography variant="body2" color="text.secondary">Файл не прикреплён</Typography>
+        )}
+        <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+          <Button
+            component="label"
+            size="small"
+            disabled={savingPrintPhoto}
+            startIcon={savingPrintPhoto ? <CircularProgress size={16} /> : <ImageIcon />}
+          >
+            {savingPrintPhoto ? 'Сохранение…' : order.printPhoto ? 'Заменить' : 'Прикрепить'}
+            <input
+              type="file"
+              accept="image/*,.heic,.heif,application/pdf,.pdf,image/dng,image/x-adobe-dng,.dng"
+              hidden
+              disabled={savingPrintPhoto}
+              onChange={(e) => {
+                if (e.target.files?.[0]) onPrintPhotoChange(e.target.files[0])
+                e.target.value = ''
+              }}
+            />
+          </Button>
+          {order.printPhoto && (
+            <Button size="small" color="error" disabled={savingPrintPhoto} onClick={() => onPrintPhotoChange(null)}>
+              Убрать
+            </Button>
+          )}
+        </Stack>
+        <Typography variant="caption" color="text.secondary">
+          Один файл: изображение, PDF или DNG. Можно перетащить сюда.
+        </Typography>
+      </Box>
     </Paper>
   )
 }
@@ -1066,9 +1174,10 @@ function OrderArticlesPanel({
         inDrawer
           ? {
               width: '100%',
+              flexShrink: 0,
               p: 2,
               borderRadius: 0,
-              overflowY: 'auto',
+              overflowY: 'visible',
               display: 'flex',
               flexDirection: 'column',
             }
@@ -1266,6 +1375,14 @@ export default function OrderThreadPage() {
   const [sendError, setSendError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [lightbox, setLightbox] = useState<LightboxImage | null>(null)
+  const [updatingFinalSketch, setUpdatingFinalSketch] = useState(false)
+  const [jumpingToSketch, setJumpingToSketch] = useState(false)
+  const [sketchError, setSketchError] = useState<string | null>(null)
+  const [scrollTarget, setScrollTarget] = useState<{ id: number } | null>(null)
+  const [savingPrintPhoto, setSavingPrintPhoto] = useState(false)
+  const [printPhotoError, setPrintPhotoError] = useState<string | null>(null)
+  const jumpControllerRef = useRef<AbortController | null>(null)
+  const savingPrintPhotoRef = useRef(false)
   const [infoOpen, setInfoOpen] = useState(false)
 
   const [editOpen, setEditOpen] = useState(false)
@@ -1392,6 +1509,129 @@ export default function OrderThreadPage() {
       void loadOlder()
     }
   }, [hasMore, loadOlder])
+
+  const handleFinalSketchChange = async (messageId: number | null) => {
+    setUpdatingFinalSketch(true)
+    setSketchError(null)
+    try {
+      const { data } = await client.patch<Order>(`/orders/${orderId}`, {
+        finalSketchMessageId: messageId,
+      } satisfies UpdateOrderPayload)
+      setOrder((prev) => prev?.id === orderId ? { ...prev, finalSketchMessageId: data.finalSketchMessageId } : prev)
+      await refreshEvents()
+    } catch (err) {
+      logApiError('изменение итогового эскиза', err)
+      setSketchError(describeApiError(err, 'Не удалось изменить итоговый эскиз'))
+    } finally {
+      setUpdatingFinalSketch(false)
+    }
+  }
+
+  const handlePrintPhotoChange = async (file: File | null) => {
+    if (savingPrintPhotoRef.current) return
+    setPrintPhotoError(null)
+    if (file && !isSupportedAttachment(file)) {
+      setPrintPhotoError('Прикрепите изображение, PDF или DNG')
+      return
+    }
+    if (file && file.size > MAX_UPLOAD_BYTES) {
+      setPrintPhotoError(`Файл слишком большой: ${formatBytes(file.size)}. Максимум ${MAX_UPLOAD_MB} МБ`)
+      return
+    }
+    savingPrintPhotoRef.current = true
+    setSavingPrintPhoto(true)
+    try {
+      let printPhotoKey: string | null = null
+      if (file) {
+        const form = new FormData()
+        form.append('file', file)
+        const { data } = await client.post<UploadResponse>('/uploads', form)
+        printPhotoKey = data.key
+      }
+      const { data } = await client.patch<Order>(`/orders/${orderId}`, {
+        printPhotoKey,
+      } satisfies UpdateOrderPayload)
+      setOrder((prev) => prev?.id === orderId ? { ...prev, printPhoto: data.printPhoto } : prev)
+      await refreshEvents()
+    } catch (err) {
+      logApiError('сохранение фото для печати', err)
+      setPrintPhotoError(describeApiError(err, 'Не удалось сохранить фото для печати'))
+    } finally {
+      savingPrintPhotoRef.current = false
+      setSavingPrintPhoto(false)
+    }
+  }
+
+  const jumpToFinalSketch = async () => {
+    const targetId = order?.finalSketchMessageId
+    if (targetId == null || loadingOlderRef.current) return
+    const controller = new AbortController()
+    jumpControllerRef.current = controller
+    loadingOlderRef.current = true
+    setJumpingToSketch(true)
+    setSketchError(null)
+    pendingScrollBottomRef.current = false
+    try {
+      let found = messages.some((message) => message.id === targetId)
+      let cursor = nextCursor
+      let more = hasMore
+      const older: Message[] = []
+      // Keep a contiguous history so normal scrolling still works after the jump.
+      while (!found && more && cursor != null) {
+        const { data } = await client.get<MessagesPage<Message>>(`/orders/${orderId}/messages`, {
+          params: { limit: 100, before: cursor },
+          signal: controller.signal,
+        })
+        older.unshift(...data.items)
+        found = data.items.some((message) => message.id === targetId)
+        more = data.hasMore
+        if (data.nextCursor === cursor) break
+        cursor = data.nextCursor
+      }
+      if (controller.signal.aborted) return
+      if (!found) {
+        setSketchError('Итоговый эскиз не найден. Обновите страницу и попробуйте снова.')
+        return
+      }
+      if (older.length) {
+        setMessages((prev) => {
+          const existing = new Set(prev.map((message) => message.id))
+          return [...older.filter((message) => !existing.has(message.id)), ...prev]
+        })
+        setNextCursor(cursor)
+        setHasMore(more)
+      }
+      setScrollTarget({ id: targetId })
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        logApiError('переход к итоговому эскизу', err)
+        setSketchError(describeApiError(err, 'Не удалось загрузить итоговый эскиз'))
+      }
+    } finally {
+      if (jumpControllerRef.current === controller) {
+        jumpControllerRef.current = null
+        loadingOlderRef.current = false
+        setJumpingToSketch(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    setSketchError(null)
+    setPrintPhotoError(null)
+    setScrollTarget(null)
+    return () => { jumpControllerRef.current?.abort() }
+  }, [orderId])
+
+  useEffect(() => {
+    if (!scrollTarget) return
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(`order-message-${scrollTarget.id}`)
+      target?.focus({ preventScroll: true })
+      target?.scrollIntoView({ block: 'center', behavior: 'auto' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [scrollTarget])
 
   useEffect(() => {
     if (Number.isFinite(orderId)) {
@@ -2082,6 +2322,20 @@ export default function OrderThreadPage() {
       </Paper>
 
       {/* Message list */}
+      {sketchError && (
+        <Alert severity="error" sx={{ mb: 1 }} onClose={() => setSketchError(null)}>{sketchError}</Alert>
+      )}
+      {order.finalSketchMessageId != null && (
+        <Button
+          variant="outlined"
+          startIcon={jumpingToSketch ? <CircularProgress size={16} /> : <PushPinIcon />}
+          disabled={jumpingToSketch || loadingOlder}
+          onClick={() => void jumpToFinalSketch()}
+          sx={{ mb: 1, flexShrink: 0 }}
+        >
+          {jumpingToSketch ? 'Загрузка итогового эскиза…' : 'Перейти к итоговому эскизу'}
+        </Button>
+      )}
       <Paper
         ref={scrollRef}
         onScroll={handleScroll}
@@ -2127,6 +2381,11 @@ export default function OrderThreadPage() {
                 ownSide={isOwnSide(item.message.author.id, user?.id)}
                 onOpenImage={setLightbox}
                 resolvedSeconds={resolutionByRequestId.get(item.message.id) ?? null}
+                isFinalSketch={order.finalSketchMessageId === item.message.id}
+                updatingFinalSketch={updatingFinalSketch}
+                onToggleFinalSketch={() => void handleFinalSketchChange(
+                  order.finalSketchMessageId === item.message.id ? null : item.message.id,
+                )}
               />
             ) : (
               <SystemEventRow key={item.key} event={item.event} />
@@ -2350,6 +2609,10 @@ export default function OrderThreadPage() {
       {/* Right info panel (desktop) */}
       <OrderInfoPanel
         order={order}
+        savingPrintPhoto={savingPrintPhoto}
+        printPhotoError={printPhotoError}
+        onPrintPhotoChange={(file) => void handlePrintPhotoChange(file)}
+        onOpenImage={setLightbox}
         orderStatusOptions={orderStatusOptions}
         sketchDesignerAssignees={sketchDesignerAssignees}
         revisionDesignerAssignees={revisionDesignerAssignees}
@@ -2405,6 +2668,10 @@ export default function OrderThreadPage() {
         <OrderInfoPanel
           inDrawer
           order={order}
+          savingPrintPhoto={savingPrintPhoto}
+          printPhotoError={printPhotoError}
+          onPrintPhotoChange={(file) => void handlePrintPhotoChange(file)}
+          onOpenImage={setLightbox}
           orderStatusOptions={orderStatusOptions}
           sketchDesignerAssignees={sketchDesignerAssignees}
           revisionDesignerAssignees={revisionDesignerAssignees}

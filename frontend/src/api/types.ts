@@ -57,6 +57,8 @@ export interface UpdateUserPayload {
 }
 
 export interface UpdateOrderPayload {
+  finalSketchMessageId?: number | null
+  printPhotoKey?: string | null
   orderNumber?: string
   title?: string
   note?: string | null
@@ -146,6 +148,8 @@ export interface OrderArticle {
 
 export interface Order {
   id: number
+  finalSketchMessageId?: number | null
+  printPhoto?: Attachment | null
   orderNumber: string
   title: string | null
   note: string | null

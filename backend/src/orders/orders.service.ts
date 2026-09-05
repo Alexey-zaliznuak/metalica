@@ -23,6 +23,8 @@ import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { BluesalesSyncService } from '../bluesales/bluesales-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
+import { AttachmentsService } from '../storage/attachments.service';
+import { MAX_UPLOAD_BYTES } from '../storage/upload.config';
 
 @Injectable()
 export class OrdersService {
@@ -36,6 +38,7 @@ export class OrdersService {
     private storage: StorageService,
     private notifications: NotificationsService,
     private assignment: AssignmentService,
+    private attachments: AttachmentsService,
   ) {}
 
   private readonly userSelect = {
@@ -232,6 +235,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
+        printPhoto: true,
         sketchDesigner: { select: this.userSelect },
         revisionDesigner: { select: this.userSelect },
         lead: {
@@ -286,6 +290,10 @@ export class OrdersService {
     const { rawPayload, ...bluesalesInfo } = order.bluesalesInfo ?? {};
     return {
       ...base,
+      finalSketchMessageId: order.finalSketchMessageId,
+      printPhoto: order.printPhoto
+        ? (await this.attachments.serialize([order.printPhoto]))[0]
+        : null,
       source: order.source,
       dialogLink: order.dialogLink,
       deliveryManagerName: order.deliveryManagerName,
@@ -618,6 +626,7 @@ export class OrdersService {
     const existing = await this.prisma.order.findUnique({
       where: { id },
       include: {
+        printPhoto: true,
         sketchDesigner: { select: { id: true, name: true } },
         revisionDesigner: { select: { id: true, name: true } },
       },
@@ -633,6 +642,53 @@ export class OrdersService {
 
     const data: Prisma.OrderUpdateInput = {};
     const changes: OrderEventChange[] = [];
+
+    if (dto.finalSketchMessageId !== undefined) {
+      if (dto.finalSketchMessageId !== null) {
+        const message = await this.prisma.message.findFirst({
+          where: { id: dto.finalSketchMessageId, orderId: id },
+          select: { id: true },
+        });
+        if (!message) {
+          throw new BadRequestException('Сообщение не найдено в этом заказе');
+        }
+      }
+      data.finalSketchMessage = dto.finalSketchMessageId === null
+        ? { disconnect: true }
+        : { connect: { id: dto.finalSketchMessageId } };
+      changes.push({
+        field: 'finalSketchMessage',
+        oldValue: existing.finalSketchMessageId == null ? null : `Сообщение #${existing.finalSketchMessageId}`,
+        newValue: dto.finalSketchMessageId === null ? null : `Сообщение #${dto.finalSketchMessageId}`,
+      });
+    }
+
+    if (dto.printPhotoKey !== undefined) {
+      if (dto.printPhotoKey === null) {
+        if (existing.printPhoto) data.printPhoto = { delete: true };
+      } else {
+        const key = dto.printPhotoKey;
+        const stat = await this.storage.stat(key);
+        if (!stat) throw new BadRequestException('Загруженный файл не найден');
+        const supported = stat.mimeType?.startsWith('image/') ||
+          stat.mimeType === 'application/pdf' || /\.(heic|heif|pdf|dng)$/i.test(key);
+        if (!supported) throw new BadRequestException('Прикрепите изображение, PDF или DNG');
+        if (stat.size > MAX_UPLOAD_BYTES) throw new BadRequestException('Файл превышает допустимый размер');
+        const photo = {
+          objectKey: key,
+          filename: key.substring(key.lastIndexOf('/') + 1),
+          mimeType: stat.mimeType,
+          size: stat.size,
+          kind: 'print-photo',
+        };
+        data.printPhoto = { upsert: { create: photo, update: photo } };
+      }
+      changes.push({
+        field: 'printPhoto',
+        oldValue: existing.printPhoto?.filename ?? null,
+        newValue: dto.printPhotoKey?.split('/').pop() ?? null,
+      });
+    }
 
     if (dto.orderNumber !== undefined) {
       const orderNumber = dto.orderNumber.trim();
@@ -1290,7 +1346,7 @@ export class OrdersService {
     // Ключи объектов собираем до удаления: каскад унесёт строки Attachment,
     // и после этого узнать, какие файлы осиротели, будет уже нельзя.
     const attachments = await this.prisma.attachment.findMany({
-      where: { message: { orderId: id } },
+      where: { OR: [{ message: { orderId: id } }, { printPhotoOrderId: id }] },
       select: { objectKey: true },
     });
 
