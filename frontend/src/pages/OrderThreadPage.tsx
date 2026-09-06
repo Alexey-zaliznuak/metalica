@@ -575,7 +575,8 @@ function OrderInfoPanel({
   onDialogLinkChange,
   savingPrintPhoto,
   printPhotoError,
-  onPrintPhotoChange,
+  onAddPrintPhotos,
+  onRemovePrintPhoto,
   onOpenImage,
   inDrawer = false,
 }: {
@@ -595,7 +596,8 @@ function OrderInfoPanel({
   onDialogLinkChange: (dialogLink: string) => void
   savingPrintPhoto: boolean
   printPhotoError: string | null
-  onPrintPhotoChange: (file: File | null) => void
+  onAddPrintPhotos: (files: File[]) => void
+  onRemovePrintPhoto: (photoId: number) => void
   onOpenImage: (image: LightboxImage) => void
   inDrawer?: boolean
 }) {
@@ -946,18 +948,20 @@ function OrderInfoPanel({
         )}
       </Box>
       <Box
+        component="section"
+        aria-label="Фото для печати"
         sx={{ mt: 2 }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault()
-          if (!savingPrintPhoto && e.dataTransfer.files[0]) {
-            onPrintPhotoChange(e.dataTransfer.files[0])
+          if (!savingPrintPhoto && e.dataTransfer.files.length) {
+            onAddPrintPhotos(Array.from(e.dataTransfer.files))
           }
         }}
         onPaste={(e) => {
-          if (!savingPrintPhoto && e.clipboardData.files[0]) {
+          if (!savingPrintPhoto && e.clipboardData.files.length) {
             e.preventDefault()
-            onPrintPhotoChange(e.clipboardData.files[0])
+            onAddPrintPhotos(Array.from(e.clipboardData.files))
           }
         }}
       >
@@ -965,23 +969,31 @@ function OrderInfoPanel({
           Фото для печати
         </SectionTitle>
         {printPhotoError && <Alert severity="error" sx={{ mb: 1 }}>{printPhotoError}</Alert>}
-        {order.printPhoto ? (
-          isPdfAttachment(order.printPhoto) ? (
-            <PdfAttachmentPreview url={order.printPhoto.url} bytes={order.printPhoto.size} />
-          ) : isDngAttachment(order.printPhoto) ? (
-            <DngAttachmentPreview
-              url={order.printPhoto.url}
-              filename={order.printPhoto.filename}
-              bytes={order.printPhoto.size}
-            />
-          ) : (
-            <ImageAttachmentPreview
-              image={order.printPhoto}
-              onOpen={() => onOpenImage(order.printPhoto!)}
-            />
-          )
+        {(order.printPhotos?.length ?? 0) > 0 ? (
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+            {order.printPhotos!.map((photo) => (
+              <Box key={photo.id}>
+                {isPdfAttachment(photo) ? (
+                  <PdfAttachmentPreview url={photo.url} bytes={photo.size} />
+                ) : isDngAttachment(photo) ? (
+                  <DngAttachmentPreview url={photo.url} filename={photo.filename} bytes={photo.size} />
+                ) : (
+                  <ImageAttachmentPreview image={photo} onOpen={() => onOpenImage(photo)} />
+                )}
+                <Button
+                  size="small"
+                  color="error"
+                  disabled={savingPrintPhoto}
+                  onClick={() => onRemovePrintPhoto(photo.id)}
+                  aria-label={`Убрать ${photo.filename}`}
+                >
+                  Убрать
+                </Button>
+              </Box>
+            ))}
+          </Box>
         ) : (
-          <Typography variant="body2" color="text.secondary">Файл не прикреплён</Typography>
+          <Typography variant="body2" color="text.secondary">Файлы не прикреплены</Typography>
         )}
         <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
           <Button
@@ -990,26 +1002,22 @@ function OrderInfoPanel({
             disabled={savingPrintPhoto}
             startIcon={savingPrintPhoto ? <CircularProgress size={16} /> : <ImageIcon />}
           >
-            {savingPrintPhoto ? 'Сохранение…' : order.printPhoto ? 'Заменить' : 'Прикрепить'}
+            {savingPrintPhoto ? 'Сохранение…' : 'Добавить фото'}
             <input
               type="file"
+              multiple
               accept="image/*,.heic,.heif,application/pdf,.pdf,image/dng,image/x-adobe-dng,.dng"
               hidden
               disabled={savingPrintPhoto}
               onChange={(e) => {
-                if (e.target.files?.[0]) onPrintPhotoChange(e.target.files[0])
+                if (e.target.files?.length) onAddPrintPhotos(Array.from(e.target.files))
                 e.target.value = ''
               }}
             />
           </Button>
-          {order.printPhoto && (
-            <Button size="small" color="error" disabled={savingPrintPhoto} onClick={() => onPrintPhotoChange(null)}>
-              Убрать
-            </Button>
-          )}
         </Stack>
         <Typography variant="caption" color="text.secondary">
-          Один файл: изображение, PDF или DNG. Можно перетащить сюда.
+          Изображения, PDF или DNG. Можно выбрать или перетащить несколько файлов.
         </Typography>
       </Box>
     </Paper>
@@ -1527,31 +1535,34 @@ export default function OrderThreadPage() {
     }
   }
 
-  const handlePrintPhotoChange = async (file: File | null) => {
+  const handlePrintPhotosChange = async (files: File[], removePhotoId?: number) => {
     if (savingPrintPhotoRef.current) return
+    if (!files.length && removePhotoId === undefined) return
     setPrintPhotoError(null)
-    if (file && !isSupportedAttachment(file)) {
+    if (files.some((file) => !isSupportedAttachment(file))) {
       setPrintPhotoError('Прикрепите изображение, PDF или DNG')
       return
     }
-    if (file && file.size > MAX_UPLOAD_BYTES) {
-      setPrintPhotoError(`Файл слишком большой: ${formatBytes(file.size)}. Максимум ${MAX_UPLOAD_MB} МБ`)
+    const oversizedFile = files.find((file) => file.size > MAX_UPLOAD_BYTES)
+    if (oversizedFile) {
+      setPrintPhotoError(`Файл «${oversizedFile.name}» слишком большой: ${formatBytes(oversizedFile.size)}. Максимум ${MAX_UPLOAD_MB} МБ`)
       return
     }
     savingPrintPhotoRef.current = true
     setSavingPrintPhoto(true)
     try {
-      let printPhotoKey: string | null = null
-      if (file) {
+      const printPhotoKeys: string[] = []
+      for (const file of files) {
         const form = new FormData()
         form.append('file', file)
         const { data } = await client.post<UploadResponse>('/uploads', form)
-        printPhotoKey = data.key
+        printPhotoKeys.push(data.key)
       }
       const { data } = await client.patch<Order>(`/orders/${orderId}`, {
-        printPhotoKey,
+        printPhotoKeys,
+        removePrintPhotoIds: removePhotoId === undefined ? undefined : [removePhotoId],
       } satisfies UpdateOrderPayload)
-      setOrder((prev) => prev?.id === orderId ? { ...prev, printPhoto: data.printPhoto } : prev)
+      setOrder((prev) => prev?.id === orderId ? { ...prev, printPhotos: data.printPhotos } : prev)
       await refreshEvents()
     } catch (err) {
       logApiError('сохранение фото для печати', err)
@@ -2611,7 +2622,8 @@ export default function OrderThreadPage() {
         order={order}
         savingPrintPhoto={savingPrintPhoto}
         printPhotoError={printPhotoError}
-        onPrintPhotoChange={(file) => void handlePrintPhotoChange(file)}
+        onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
+        onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
         onOpenImage={setLightbox}
         orderStatusOptions={orderStatusOptions}
         sketchDesignerAssignees={sketchDesignerAssignees}
@@ -2670,8 +2682,12 @@ export default function OrderThreadPage() {
           order={order}
           savingPrintPhoto={savingPrintPhoto}
           printPhotoError={printPhotoError}
-          onPrintPhotoChange={(file) => void handlePrintPhotoChange(file)}
-          onOpenImage={setLightbox}
+          onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
+          onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
+          onOpenImage={(image) => {
+            setInfoOpen(false)
+            setLightbox(image)
+          }}
           orderStatusOptions={orderStatusOptions}
           sketchDesignerAssignees={sketchDesignerAssignees}
           revisionDesignerAssignees={revisionDesignerAssignees}

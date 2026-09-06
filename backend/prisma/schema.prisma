@@ -104,7 +104,7 @@ model Order {
   messages              Message[]
   finalSketchMessage    Message?            @relation("OrderFinalSketch", fields: [finalSketchMessageId], references: [id], onDelete: SetNull)
   finalSketchMessageId  Int?                @unique
-  printPhoto            Attachment?         @relation("OrderPrintPhoto")
+  printPhotos           Attachment[]        @relation("OrderPrintPhoto")
   revisions             Revision[]
   events                OrderEvent[]
   statusChanges         OrderStatusChange[]
@@ -455,7 +455,7 @@ model Attachment {
   chatMessage   ChatMessage? @relation(fields: [chatMessageId], references: [id], onDelete: Cascade)
   chatMessageId Int?
   printPhotoOrder Order?       @relation("OrderPrintPhoto", fields: [printPhotoOrderId], references: [id], onDelete: Cascade)
-  printPhotoOrderId Int?       @unique
+  printPhotoOrderId Int?
   objectKey     String
   filename      String
   mimeType      String?
@@ -467,6 +467,7 @@ model Attachment {
 
   @@index([messageId])
   @@index([chatMessageId])
+  @@index([printPhotoOrderId])
 }
 
 // In-app inbox. Chat-уведы дедупятся через unique(userId, dedupeKey),

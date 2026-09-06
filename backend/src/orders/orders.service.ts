@@ -235,7 +235,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
-        printPhoto: true,
+        printPhotos: { orderBy: { id: 'asc' } },
         sketchDesigner: { select: this.userSelect },
         revisionDesigner: { select: this.userSelect },
         lead: {
@@ -291,9 +291,7 @@ export class OrdersService {
     return {
       ...base,
       finalSketchMessageId: order.finalSketchMessageId,
-      printPhoto: order.printPhoto
-        ? (await this.attachments.serialize([order.printPhoto]))[0]
-        : null,
+      printPhotos: await this.attachments.serialize(order.printPhotos),
       source: order.source,
       dialogLink: order.dialogLink,
       deliveryManagerName: order.deliveryManagerName,
@@ -626,7 +624,7 @@ export class OrdersService {
     const existing = await this.prisma.order.findUnique({
       where: { id },
       include: {
-        printPhoto: true,
+        printPhotos: { orderBy: { id: 'asc' } },
         sketchDesigner: { select: { id: true, name: true } },
         revisionDesigner: { select: { id: true, name: true } },
       },
@@ -663,30 +661,40 @@ export class OrdersService {
       });
     }
 
-    if (dto.printPhotoKey !== undefined) {
-      if (dto.printPhotoKey === null) {
-        if (existing.printPhoto) data.printPhoto = { delete: true };
-      } else {
-        const key = dto.printPhotoKey;
+    if (dto.printPhotoKeys !== undefined || dto.removePrintPhotoIds !== undefined) {
+      const removeIds = [...new Set(dto.removePrintPhotoIds ?? [])];
+      const existingIds = new Set(existing.printPhotos.map((photo) => photo.id));
+      if (removeIds.some((photoId) => !existingIds.has(photoId))) {
+        throw new BadRequestException('Фото для печати не найдено в этом заказе');
+      }
+      const keys = [...new Set(dto.printPhotoKeys ?? [])];
+      const photos = await Promise.all(keys.map(async (key) => {
         const stat = await this.storage.stat(key);
         if (!stat) throw new BadRequestException('Загруженный файл не найден');
         const supported = stat.mimeType?.startsWith('image/') ||
           stat.mimeType === 'application/pdf' || /\.(heic|heif|pdf|dng)$/i.test(key);
         if (!supported) throw new BadRequestException('Прикрепите изображение, PDF или DNG');
         if (stat.size > MAX_UPLOAD_BYTES) throw new BadRequestException('Файл превышает допустимый размер');
-        const photo = {
+        return {
           objectKey: key,
           filename: key.substring(key.lastIndexOf('/') + 1),
           mimeType: stat.mimeType,
           size: stat.size,
           kind: 'print-photo',
         };
-        data.printPhoto = { upsert: { create: photo, update: photo } };
+      }));
+      // Add/remove only the requested attachments: concurrent additions stay intact.
+      if (photos.length || removeIds.length) {
+        data.printPhotos = {
+          ...(photos.length ? { create: photos } : {}),
+          ...(removeIds.length ? { deleteMany: { id: { in: removeIds } } } : {}),
+        };
       }
+      const remaining = existing.printPhotos.filter((photo) => !removeIds.includes(photo.id));
       changes.push({
         field: 'printPhoto',
-        oldValue: existing.printPhoto?.filename ?? null,
-        newValue: dto.printPhotoKey?.split('/').pop() ?? null,
+        oldValue: existing.printPhotos.map((photo) => photo.filename).join(', ') || null,
+        newValue: [...remaining, ...photos].map((photo) => photo.filename).join(', ') || null,
       });
     }
 

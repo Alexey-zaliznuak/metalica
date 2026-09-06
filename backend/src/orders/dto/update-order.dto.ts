@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsDateString,
   IsInt,
   IsOptional,
@@ -15,11 +16,18 @@ export class UpdateOrderDto {
   @Min(1)
   finalSketchMessageId?: number | null;
 
-  @IsOptional()
-  @IsString()
-  @MinLength(1)
-  @MaxLength(1024)
-  printPhotoKey?: string | null;
+  @ValidateIf((_, value) => value !== undefined)
+  @IsArray()
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(1024, { each: true })
+  printPhotoKeys?: string[];
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  removePrintPhotoIds?: number[];
 
   @IsOptional()
   @IsString()
