@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   ParseIntPipe,
   Param,
   Patch,
@@ -131,6 +132,15 @@ export class OrdersController {
   @Post(':id/refresh')
   refreshFromBluesales(@Param('id', ParseIntPipe) id: number) {
     return this.orders.requestBluesalesRefresh(id);
+  }
+
+  @Get(':id/attachments/:attachmentId/production')
+  @Header('Cache-Control', 'private, no-store')
+  downloadProductionImage(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+  ) {
+    return this.orders.downloadProductionImage(id, attachmentId);
   }
 
   @Patch(':id')

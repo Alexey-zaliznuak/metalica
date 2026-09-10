@@ -5,7 +5,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  StreamableFile,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { createReadStream } from 'fs';
+import { mkdtemp, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { productionImage } from './production-image';
 import {
   BluesalesOrderStatus,
   OrderSource,
@@ -313,6 +320,61 @@ export class OrdersService {
         : null,
       articles,
     };
+  }
+
+  async downloadProductionImage(id: number, attachmentId: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      select: { orderNumber: true, finalSketchMessageId: true, bluesalesInfo: { select: { rawPayload: true } } },
+    });
+    if (!order) throw new NotFoundException('Заказ не найден');
+    const attachment = await this.prisma.attachment.findFirst({
+      where: {
+        id: attachmentId,
+        OR: [
+          { printPhotoOrderId: id },
+          ...(order.finalSketchMessageId == null ? [] : [{ message: { id: order.finalSketchMessageId, orderId: id } }]),
+        ],
+      },
+    });
+    if (!attachment) throw new NotFoundException('Фото не найдено среди итоговых эскизов этого заказа');
+    if (attachment.mimeType === 'application/pdf' || /\.(pdf|dng)$/i.test(attachment.filename)) {
+      throw new BadRequestException('Для производства прикрепите растровое изображение вместо PDF или DNG');
+    }
+    const directory = await mkdtemp(join(tmpdir(), 'metalica-production-'));
+    const cleanup = () => rm(directory, { recursive: true, force: true }).catch((error) => {
+      this.logger.warn(`Не удалось удалить временный файл производства: ${error.message}`);
+    });
+    try {
+      const source = join(directory, 'source');
+      try {
+        await this.storage.downloadToFile(attachment.objectKey, source);
+      } catch (error) {
+        this.logger.warn(`Не удалось прочитать фото #${attachmentId}: ${error.message}`);
+        throw new ServiceUnavailableException('Не удалось прочитать исходное фото из хранилища. Попробуйте ещё раз');
+      }
+      const destination = join(directory, 'production.png');
+      let output: { size: number };
+      try {
+        const image = await productionImage(source, order.orderNumber, this.extractArticles(order.bluesalesInfo?.rawPayload));
+        output = await image.toFile(destination);
+      } catch (error) {
+        if (error instanceof BadRequestException) throw error;
+        this.logger.warn(`Не удалось подготовить фото #${attachmentId}: ${error.message}`);
+        throw new BadRequestException('Не удалось обработать фото. Используйте исправное изображение JPG, PNG, WebP, TIFF или AVIF');
+      }
+      const stream = createReadStream(destination);
+      stream.once('close', () => { void cleanup(); });
+      const filename = `production-${order.orderNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}-${attachmentId}.png`;
+      return new StreamableFile(stream, {
+        type: 'image/png',
+        disposition: `attachment; filename="${filename}"`,
+        length: output.size,
+      });
+    } catch (error) {
+      await cleanup();
+      throw error;
+    }
   }
 
   /** Ставит актуализацию заказа из BlueSales в интерактивную очередь. */

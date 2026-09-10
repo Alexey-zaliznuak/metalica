@@ -1,7 +1,8 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { Client as MinioClient } from 'minio';
 import { randomUUID } from 'crypto';
-import { createReadStream } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
 import { formatBytes } from './upload.config';
 
 interface UploadedFile {
@@ -118,6 +119,12 @@ export class StorageService implements OnModuleInit {
   async getUrl(objectKey: string): Promise<string> {
     const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/');
     return `${this.publicFilesBaseUrl}/${encodedKey}?v=${encodeURIComponent(this.publicFilesVersion)}`;
+  }
+
+  /** Read the stored original through the internal client, without a public URL or a RAM copy. */
+  async downloadToFile(objectKey: string, destination: string): Promise<void> {
+    const source = await this.internalClient.getObject(this.bucket, objectKey);
+    await pipeline(source, createWriteStream(destination));
   }
 
   /**
