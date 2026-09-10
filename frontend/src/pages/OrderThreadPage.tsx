@@ -64,6 +64,7 @@ import {
 } from '../api/errors'
 import AttachmentSizeBadge from '../components/AttachmentSizeBadge'
 import ProductionDownloadButton from '../components/ProductionDownloadButton'
+import AttachmentCard, { attachmentActionSx } from '../components/AttachmentCard'
 import DngAttachmentPreview, {
   isDngAttachment,
   isDngFile,
@@ -379,19 +380,30 @@ function MessageBubble({
                       bytes={att.size}
                     />
                   ) : (
-                    <Box key={att.id}>
-                      <ImageAttachmentPreview
-                        image={{ url: att.url, filename: att.filename, size: att.size }}
-                        lightControls={ownSide && !isRequest && !isAnswer}
-                        onOpen={() =>
-                          onOpenImage({
-                            url: att.url,
-                            filename: att.filename,
-                            size: att.size,
-                          })
-                        }
-                      />
-                      {isFinalSketch && <ProductionDownloadButton orderId={orderId} attachmentId={att.id} />}
+                    <Box key={att.id} sx={{ maxWidth: '100%', minWidth: 0 }}>
+                      {isFinalSketch ? (
+                        <AttachmentCard>
+                          <ImageAttachmentPreview
+                            image={att}
+                            fullWidth
+                            onOpen={() => onOpenImage(att)}
+                          />
+                          <Divider />
+                          <ProductionDownloadButton orderId={orderId} attachmentId={att.id} />
+                        </AttachmentCard>
+                      ) : (
+                        <ImageAttachmentPreview
+                          image={{ url: att.url, filename: att.filename, size: att.size }}
+                          lightControls={ownSide && !isRequest && !isAnswer}
+                          onOpen={() =>
+                            onOpenImage({
+                              url: att.url,
+                              filename: att.filename,
+                              size: att.size,
+                            })
+                          }
+                        />
+                      )}
                     </Box>
                   ),
                 )}
@@ -975,38 +987,51 @@ function OrderInfoPanel({
         </SectionTitle>
         {printPhotoError && <Alert severity="error" sx={{ mb: 1 }}>{printPhotoError}</Alert>}
         {(order.printPhotos?.length ?? 0) > 0 ? (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 1.5 }}>
             {order.printPhotos!.map((photo) => (
-              <Box key={photo.id}>
+              <AttachmentCard key={photo.id}>
                 {isPdfAttachment(photo) ? (
-                  <PdfAttachmentPreview url={photo.url} bytes={photo.size} />
+                  <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
+                    <PdfAttachmentPreview url={photo.url} bytes={photo.size} />
+                  </Box>
                 ) : isDngAttachment(photo) ? (
-                  <DngAttachmentPreview url={photo.url} filename={photo.filename} bytes={photo.size} />
+                  <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
+                    <DngAttachmentPreview url={photo.url} filename={photo.filename} bytes={photo.size} />
+                  </Box>
                 ) : (
-                  <ImageAttachmentPreview image={photo} onOpen={() => onOpenImage(photo)} />
+                  <ImageAttachmentPreview image={photo} fullWidth onOpen={() => onOpenImage(photo)} />
                 )}
                 {!isPdfAttachment(photo) && !isDngAttachment(photo) && (
-                  <ProductionDownloadButton orderId={order.id} attachmentId={photo.id} />
+                  <>
+                    <Divider />
+                    <ProductionDownloadButton orderId={order.id} attachmentId={photo.id} />
+                  </>
                 )}
+                <Divider />
                 <Button
+                  fullWidth
                   size="small"
                   color="error"
+                  startIcon={<DeleteOutlineIcon />}
+                  sx={attachmentActionSx}
                   disabled={savingPrintPhoto}
                   onClick={() => onRemovePrintPhoto(photo.id)}
                   aria-label={`Убрать ${photo.filename}`}
                 >
                   Убрать
                 </Button>
-              </Box>
+              </AttachmentCard>
             ))}
           </Box>
         ) : (
           <Typography variant="body2" color="text.secondary">Файлы не прикреплены</Typography>
         )}
-        <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+        <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
           <Button
             component="label"
             size="small"
+            variant="outlined"
+            sx={{ width: 240, maxWidth: '100%', minHeight: 36, fontSize: 12 }}
             disabled={savingPrintPhoto}
             startIcon={savingPrintPhoto ? <CircularProgress size={16} /> : <ImageIcon />}
           >
@@ -1024,7 +1049,7 @@ function OrderInfoPanel({
             />
           </Button>
         </Stack>
-        <Typography variant="caption" color="text.secondary">
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, lineHeight: 1.5 }}>
           Изображения, PDF или DNG. Можно выбрать или перетащить несколько файлов.
         </Typography>
       </Box>

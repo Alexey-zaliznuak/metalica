@@ -4,6 +4,7 @@ import DownloadIcon from '@mui/icons-material/Download'
 import { AxiosError } from 'axios'
 import client from '../api/client'
 import { describeApiError } from '../api/errors'
+import { attachmentActionSx } from './AttachmentCard'
 
 export default function ProductionDownloadButton({ orderId, attachmentId }: {
   orderId: number
@@ -45,17 +46,19 @@ export default function ProductionDownloadButton({ orderId, attachmentId }: {
   }
 
   return (
-    <Box sx={{ mt: 0.5, maxWidth: 280 }}>
+    <Box sx={{ width: '100%' }}>
       <Button
+        fullWidth
         size="small"
-        color="inherit"
+        color="primary"
+        sx={attachmentActionSx}
         disabled={downloading}
         onClick={() => void download()}
         startIcon={downloading ? <CircularProgress size={16} color="inherit" /> : <DownloadIcon />}
       >
         {downloading ? 'Подготовка файла…' : 'Скачать для производства'}
       </Button>
-      {error && <Alert severity="error" sx={{ mt: 0.5 }}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ m: 1, overflowWrap: 'anywhere' }}>{error}</Alert>}
     </Box>
   )
 }

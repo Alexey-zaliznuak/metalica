@@ -6,6 +6,7 @@ import LinkIcon from '@mui/icons-material/Link'
 import { Box, Button, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material'
 import { formatBytes } from '../api/errors'
 import AttachmentSizeBadge from './AttachmentSizeBadge'
+import { attachmentActionSx } from './AttachmentCard'
 
 export interface LightboxImage {
   url: string
@@ -22,6 +23,7 @@ interface ImageAttachmentPreviewProps {
   image: LightboxImage
   onOpen: () => void
   lightControls?: boolean
+  fullWidth?: boolean
 }
 
 function isHeicImage(filename: string): boolean {
@@ -120,6 +122,7 @@ export function ImageAttachmentPreview({
   image,
   onOpen,
   lightControls = false,
+  fullWidth = false,
 }: ImageAttachmentPreviewProps) {
   const [downloading, setDownloading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -146,20 +149,20 @@ export function ImageAttachmentPreview({
   }
 
   return (
-    <Box sx={{ width: 120 }}>
+    <Box sx={{ width: fullWidth ? '100%' : 120 }}>
       <Box sx={{ position: 'relative' }}>
         {loading || failed ? (
           <Box
             sx={{
-              width: 120,
-              height: 120,
+              width: fullWidth ? '100%' : 120,
+              height: fullWidth ? 180 : 120,
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
               gap: 1,
-              borderRadius: '4px 4px 0 0',
-              border: '1px solid rgba(0,0,0,0.12)',
+              borderRadius: fullWidth ? 0 : '4px 4px 0 0',
+              border: fullWidth ? 0 : '1px solid rgba(0,0,0,0.12)',
               borderBottom: 0,
               bgcolor: 'action.hover',
             }}
@@ -183,12 +186,13 @@ export function ImageAttachmentPreview({
             onClick={onOpen}
             sx={{
               display: 'block',
-              width: 120,
-              height: 120,
-              objectFit: 'cover',
-              borderRadius: '4px 4px 0 0',
+              width: fullWidth ? '100%' : 120,
+              height: fullWidth ? 180 : 120,
+              objectFit: fullWidth ? 'contain' : 'cover',
+              bgcolor: fullWidth ? 'action.hover' : undefined,
+              borderRadius: fullWidth ? 0 : '4px 4px 0 0',
               cursor: 'pointer',
-              border: '1px solid rgba(0,0,0,0.12)',
+              border: fullWidth ? 0 : '1px solid rgba(0,0,0,0.12)',
               borderBottom: 0,
             }}
           />
@@ -198,13 +202,13 @@ export function ImageAttachmentPreview({
       <Button
         fullWidth
         size="small"
-        variant="outlined"
+        variant={fullWidth ? 'text' : 'outlined'}
         startIcon={
           downloading ? <CircularProgress size={14} color="inherit" /> : <DownloadIcon />
         }
         disabled={downloading}
         onClick={() => void handleDownload()}
-        sx={{
+        sx={fullWidth ? attachmentActionSx : {
           minWidth: 0,
           height: 28,
           borderRadius: 0,
@@ -232,10 +236,10 @@ export function ImageAttachmentPreview({
       <Button
         fullWidth
         size="small"
-        variant="outlined"
+        variant={fullWidth ? 'text' : 'outlined'}
         startIcon={<LinkIcon />}
         onClick={() => void handleCopyLink()}
-        sx={{
+        sx={fullWidth ? attachmentActionSx : {
           minWidth: 0,
           height: 28,
           borderTop: 0,
