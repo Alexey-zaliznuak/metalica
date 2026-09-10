@@ -63,6 +63,7 @@ import {
   logApiError,
 } from '../api/errors'
 import AttachmentSizeBadge from '../components/AttachmentSizeBadge'
+import ProductionDownloadButton from '../components/ProductionDownloadButton'
 import DngAttachmentPreview, {
   isDngAttachment,
   isDngFile,
@@ -189,6 +190,7 @@ function isOwnSide(authorId: number, currentUserId: number | undefined): boolean
 
 function MessageBubble({
   message,
+  orderId,
   ownSide,
   onOpenImage,
   resolvedSeconds,
@@ -197,6 +199,7 @@ function MessageBubble({
   onToggleFinalSketch,
 }: {
   message: Message
+  orderId: number
   ownSide: boolean
   onOpenImage: (image: LightboxImage) => void
   resolvedSeconds?: number | null
@@ -376,18 +379,20 @@ function MessageBubble({
                       bytes={att.size}
                     />
                   ) : (
-                    <ImageAttachmentPreview
-                      key={att.id}
-                      image={{ url: att.url, filename: att.filename, size: att.size }}
-                      lightControls={ownSide && !isRequest && !isAnswer}
-                      onOpen={() =>
-                        onOpenImage({
-                          url: att.url,
-                          filename: att.filename,
-                          size: att.size,
-                        })
-                      }
-                    />
+                    <Box key={att.id}>
+                      <ImageAttachmentPreview
+                        image={{ url: att.url, filename: att.filename, size: att.size }}
+                        lightControls={ownSide && !isRequest && !isAnswer}
+                        onOpen={() =>
+                          onOpenImage({
+                            url: att.url,
+                            filename: att.filename,
+                            size: att.size,
+                          })
+                        }
+                      />
+                      {isFinalSketch && <ProductionDownloadButton orderId={orderId} attachmentId={att.id} />}
+                    </Box>
                   ),
                 )}
               </Box>
@@ -979,6 +984,9 @@ function OrderInfoPanel({
                   <DngAttachmentPreview url={photo.url} filename={photo.filename} bytes={photo.size} />
                 ) : (
                   <ImageAttachmentPreview image={photo} onOpen={() => onOpenImage(photo)} />
+                )}
+                {!isPdfAttachment(photo) && !isDngAttachment(photo) && (
+                  <ProductionDownloadButton orderId={order.id} attachmentId={photo.id} />
                 )}
                 <Button
                   size="small"
@@ -2393,6 +2401,7 @@ export default function OrderThreadPage() {
                 onOpenImage={setLightbox}
                 resolvedSeconds={resolutionByRequestId.get(item.message.id) ?? null}
                 isFinalSketch={order.finalSketchMessageId === item.message.id}
+                orderId={order.id}
                 updatingFinalSketch={updatingFinalSketch}
                 onToggleFinalSketch={() => void handleFinalSketchChange(
                   order.finalSketchMessageId === item.message.id ? null : item.message.id,
