@@ -24,7 +24,6 @@ export function productionArticleText(item: ProductionArticle): string {
     .filter(Boolean).join(' — ');
   return plainText([
     title,
-    item.size ? `Размер: ${item.size}` : null,
     item.quantity != null ? `×${item.quantity.toLocaleString('ru-RU')}` : null,
     item.comment,
   ].filter(Boolean).join(' · '));

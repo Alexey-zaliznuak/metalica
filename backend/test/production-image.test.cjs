@@ -90,10 +90,10 @@ test('uses the same grouping as the order page, preserving distinct sizes and co
   ] });
   assert.equal(merged.length, 4);
   assert.equal(productionArticleText(merged[0]), 'доп лицо · ×7');
-  assert.match(productionArticleText(merged[1]), /Размер: 30×40/);
-  assert.match(productionArticleText(merged[2]), /Размер: 40×60/);
+  assert.equal(productionArticleText(merged[1]), 'Упаковка · ×1');
+  assert.equal(productionArticleText(merged[2]), 'Упаковка · ×1');
   assert.match(productionArticleText(merged[3]), /Особая обработка/);
-  assert.equal(productionArticleText(article({ article: 'SKU-1', name: 'Модель А', size: '60×90', quantity: 2 })), 'SKU-1 — Модель А · Размер: 60×90 · ×2');
+  assert.equal(productionArticleText(article({ article: 'SKU-1', name: 'Модель А', size: '60×90', quantity: 2, comment: 'Упаковать отдельно' })), 'SKU-1 — Модель А · ×2 · Упаковать отдельно');
 });
 
 test('rejects corrupt and vector files instead of returning an unprocessed original', async () => {
