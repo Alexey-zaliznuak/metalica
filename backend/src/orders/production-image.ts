@@ -48,7 +48,7 @@ export async function productionHeader(width: number, orderNumber: string, artic
   const articleText = articles.map(productionArticleText).filter(Boolean).map(escapeMarkup).join('\n');
   const list = articleText ? await sharp({ text: {
     text: articleText,
-    font: `sans ${Math.max(1, Math.round(width * 0.024))}`,
+    font: `sans ${Math.max(1, Math.round(width * 0.0144))}`,
     width: articlesWidth,
     wrap: 'word-char',
     spacing: Math.max(1, Math.round(width * 0.007)),
