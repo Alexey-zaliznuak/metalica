@@ -4,9 +4,7 @@ export const BLUESALES_SYNC_TIME_ZONE =
 export type BluesalesSyncPhase =
   | 'day'
   | 'night'
-  | 'leads-only'
-  | 'nightly-orders'
-  | 'orders-only'
+  | 'paused'
   | 'morning';
 
 export interface BluesalesSyncSchedule {
@@ -16,11 +14,6 @@ export interface BluesalesSyncSchedule {
   ordersEnabled: boolean;
   leadsEnabled: boolean;
   pauseMultiplier: 1 | 3;
-}
-
-interface NightlyOrdersState {
-  running: boolean;
-  completedDateKey: string | null;
 }
 
 export interface ZonedDateParts {
@@ -65,50 +58,24 @@ export function syncDateKey(
 /**
  * Расписание фонового синка BlueSales:
  *  - 21:00–01:00 — заказы и лиды, паузы x3;
- *  - 01:00–02:00 — только лиды, паузы x3;
- *  - с 02:00 до завершения ночного прохода — обычный синк выключен;
- *  - после прохода до 06:00 — только заказы, паузы x3;
+ *  - 01:00–06:00 — все синки выключены;
  *  - 06:00–09:00 — заказы и лиды, паузы x3;
  *  - 09:00–21:00 — полный режим.
  */
 export function getBluesalesSyncSchedule(
-  now: Date,
-  nightlyOrders: NightlyOrdersState,
+  now = new Date(),
   timeZone = BLUESALES_SYNC_TIME_ZONE,
 ): BluesalesSyncSchedule {
   const { hour } = datePartsInZone(now, timeZone);
   const dateKey = syncDateKey(now, timeZone);
   const slow = hour >= 21 || hour < 9;
 
-  if (nightlyOrders.running) {
+  if (hour >= 1 && hour < 6) {
     return {
       dateKey,
       hour,
-      phase: 'nightly-orders',
+      phase: 'paused',
       ordersEnabled: false,
-      leadsEnabled: false,
-      pauseMultiplier: 3,
-    };
-  }
-
-  if (hour >= 1 && hour < 2) {
-    return {
-      dateKey,
-      hour,
-      phase: 'leads-only',
-      ordersEnabled: false,
-      leadsEnabled: true,
-      pauseMultiplier: 3,
-    };
-  }
-
-  if (hour >= 2 && hour < 6) {
-    const nightlyCompleted = nightlyOrders.completedDateKey === dateKey;
-    return {
-      dateKey,
-      hour,
-      phase: nightlyCompleted ? 'orders-only' : 'nightly-orders',
-      ordersEnabled: nightlyCompleted,
       leadsEnabled: false,
       pauseMultiplier: 3,
     };

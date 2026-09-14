@@ -7,6 +7,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Только успешные HTTP/API-ответы. Время очереди и повторных ожиданий не входит.
+model BluesalesRequestMetric {
+  id          BigInt   @id @default(autoincrement())
+  label       String   @db.VarChar(120)
+  method      String   @db.VarChar(120)
+  startedAt   DateTime @db.Timestamptz(3)
+  completedAt DateTime @db.Timestamptz(3)
+  durationMs  Int
+  periodStart DateTime @db.Timestamptz(3)
+
+  @@index([periodStart, label])
+  @@index([startedAt])
+}
+
 enum Role {
   MANAGER
   SKETCH_DESIGNER

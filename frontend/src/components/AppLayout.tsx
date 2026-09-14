@@ -3,6 +3,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ForumIcon from '@mui/icons-material/Forum'
 import GroupIcon from '@mui/icons-material/Group'
 import InsightsIcon from '@mui/icons-material/Insights'
+import SpeedIcon from '@mui/icons-material/Speed'
 import ListAltIcon from '@mui/icons-material/ListAlt'
 import LogoutIcon from '@mui/icons-material/Logout'
 import LowPriorityIcon from '@mui/icons-material/LowPriority'
@@ -59,6 +60,7 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Метрики',
     requiredScopes: ['METRICS_VIEW'],
   },
+  { to: '/dev-metrics', icon: <SpeedIcon />, label: 'API-метрики', adminOnly: true },
   {
     to: '/workload',
     icon: <AssignmentTurnedInIcon />,
@@ -221,7 +223,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       }}
     >
       <AppBar position="sticky" color="primary">
-        <Toolbar sx={{ gap: 1 }}>
+        <Toolbar sx={{ gap: 1, py: 0.5 }}>
           <IconButton
             color="inherit"
             edge="start"
@@ -273,7 +275,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <Stack
             direction="row"
             spacing={1}
-            sx={{ flexGrow: 1, display: { xs: 'none', md: 'flex' } }}
+            sx={{ flexGrow: 1, minWidth: 0, flexWrap: 'wrap', rowGap: 0.5, display: { xs: 'none', md: 'flex' } }}
           >
             {visibleNavItems.map((item) =>
               item.children ? (

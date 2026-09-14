@@ -10,6 +10,7 @@ import LoginPage from './pages/LoginPage'
 import OrdersPage from './pages/OrdersPage'
 import OrderThreadPage from './pages/OrderThreadPage'
 import MetricsPage from './pages/MetricsPage'
+import DevMetricsPage from './pages/DevMetricsPage'
 import RevisionAnalyticsPage from './pages/RevisionAnalyticsPage'
 import SketchAnalyticsPage from './pages/SketchAnalyticsPage'
 import UsersPage from './pages/UsersPage'
@@ -60,6 +61,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                     </AppLayout>
                   </ProtectedRoute>
                 }
+              />
+              <Route
+                path="/dev-metrics"
+                element={<ProtectedRoute requireAdmin><AppLayout><DevMetricsPage /></AppLayout></ProtectedRoute>}
               />
               <Route
                 path="/metrics/revisions"

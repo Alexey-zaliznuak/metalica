@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { performance } from 'perf_hooks';
+import { getBluesalesSyncSchedule } from './bluesales-sync.schedule';
+import { AsyncLocalStorage } from 'async_hooks';
+import { BluesalesMetricsService } from './bluesales-metrics.service';
 
 /**
  * Низкоуровневый клиент BlueSales — TS-порт питоновского RequestApi.
@@ -26,6 +29,8 @@ export class BluesalesConnectionError extends BluesalesHttpError {}
 export class BluesalesTimeoutError extends BluesalesHttpError {}
 /** Исчерпан лимит ожидания org-lock/сессии BlueSales — транзиентная. */
 export class BluesalesBusyError extends BluesalesError {}
+/** Плановая ночная пауза: повторить синк можно после 06:00. */
+export class BluesalesSyncPausedError extends BluesalesError {}
 
 /**
  * Приоритет запроса в очереди к BlueSales.
@@ -33,6 +38,12 @@ export class BluesalesBusyError extends BluesalesError {}
  *  - background  — фоновый синк (refresh-loop'ы, полный синк).
  */
 export type BsRequestPriority = 'interactive' | 'background';
+
+export interface BsRequestOptions {
+  priority?: BsRequestPriority;
+  respectSyncSchedule?: boolean;
+  label?: string;
+}
 
 interface BsQueueItem {
   run: () => Promise<unknown>;
@@ -131,6 +142,7 @@ const MAX_PAGE_SIZE = 500;
 
 @Injectable()
 export class BluesalesApiService {
+  private readonly requestLabels = new AsyncLocalStorage<string>();
   private readonly logger = new Logger(BluesalesApiService.name);
   private readonly login: string;
   private readonly passwordHash: string;
@@ -157,7 +169,10 @@ export class BluesalesApiService {
   /** Пауза перед повторной постановкой интерактивного запроса в очередь (мс). */
   private readonly interactiveRequeueDelayMs: number;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly metrics: BluesalesMetricsService,
+  ) {
     this.login = this.config.get<string>('BLUESALES_LOGIN', '');
     const password = this.config.get<string>('BLUESALES_PASSWORD', '');
     this.passwordHash = password ? this.hashPassword(password) : '';
@@ -303,6 +318,8 @@ export class BluesalesApiService {
     data?: unknown,
     attempt = 1,
     deadline = 0,
+    respectSyncSchedule = true,
+    label = method,
   ): Promise<T> {
     if (!this.isConfigured) {
       throw new BluesalesAuthError('BlueSales credentials are not configured');
@@ -321,12 +338,25 @@ export class BluesalesApiService {
 
     await this.waitForRequestGap();
 
+    // Проверяем после ожидания очереди/паузы и на каждой повторной попытке.
+    // Это останавливает и постраничные выгрузки, начатые до 01:00.
+    if (
+      respectSyncSchedule &&
+      (method === 'orders.get' || method === 'customers.get') &&
+      getBluesalesSyncSchedule().phase === 'paused'
+    ) {
+      throw new BluesalesSyncPausedError('Синхронизация BlueSales приостановлена с 01:00 до 06:00');
+    }
+
     // Таймаут на HTTP-запрос: без него зависший fetch держал бы очередь вечно.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     let text: string;
     let responseStatus = 0;
     const startedAt = Date.now();
+    const startedAtMonotonic = performance.now();
+    let durationMs = 0;
+    let completedAt = new Date(startedAt);
     const requestDescription = this.describeRequest(method, data);
     try {
       const response = await fetch(url, {
@@ -340,6 +370,8 @@ export class BluesalesApiService {
         throw new BluesalesHttpError(`Method ${method} not found!`);
       }
       text = await response.text();
+      durationMs = performance.now() - startedAtMonotonic;
+      completedAt = new Date();
     } catch (err) {
       if (err instanceof BluesalesError) {
         throw err;
@@ -419,7 +451,7 @@ export class BluesalesApiService {
                 `(попытка ${attempt}/${this.maxSessionRetries})`,
             );
             await this.sleep(waitMs);
-            return this.sendRaw<T>(method, data, attempt + 1, deadline);
+            return this.sendRaw<T>(method, data, attempt + 1, deadline, respectSyncSchedule, label);
           }
           this.logger.error(
             `BlueSales: другая сессия онлайн — исчерпан лимит ожидания ` +
@@ -441,7 +473,7 @@ export class BluesalesApiService {
               `(попытка ${attempt}/${this.maxBusyRetries})`,
           );
           await this.sleep(waitMs);
-          return this.sendRaw<T>(method, data, attempt + 1, deadline);
+          return this.sendRaw<T>(method, data, attempt + 1, deadline, respectSyncSchedule, label);
         }
         this.logger.error(
           `BlueSales: параллельный запрос — исчерпан лимит ожидания ` +
@@ -455,19 +487,37 @@ export class BluesalesApiService {
         : new BluesalesError(`${method}: ${errorText}`);
     }
 
+    // Записываем только успешную попытку, после проверки HTTP и ошибок API.
+    // Ошибка телеметрии не должна повторно отправить уже выполненную запись в BS.
+    try {
+      await this.metrics.recordSuccess({ label, method, startedAt: new Date(startedAt), completedAt, durationMs });
+    } catch (error) {
+      this.logger.error(`Не удалось сохранить время BlueSales (${label}): ${(error as Error).message}`);
+    }
     return parsed as T;
+  }
+
+  /** Метка наследуется всеми страницами/повторами; параллельные задачи изолированы. */
+  withLabel<T>(label: string, task: () => Promise<T>): Promise<T> {
+    return this.requestLabels.run(label, task);
   }
 
   /** Публичный отправитель — все вызовы проходят через приоритетную очередь. */
   send<T>(
     method: string,
     data?: unknown,
-    priority: BsRequestPriority = 'background',
+    options: BsRequestPriority | BsRequestOptions = 'background',
+    respectSyncSchedule?: boolean,
   ): Promise<T> {
+    const priority = typeof options === 'string' ? options : options.priority ?? 'background';
+    const obeySchedule = (typeof options === 'string' ? respectSyncSchedule : options.respectSyncSchedule) ?? priority === 'background';
+    // Захватываем контекст ДО очереди: её обработчик может принадлежать другой задаче.
+    const explicitLabel = typeof options === 'string' ? undefined : options.label;
+    const label = (explicitLabel ?? this.requestLabels.getStore() ?? method).trim().slice(0, 120) || method;
     const dispatch = () =>
       this.schedule(async () => {
         await this.waitIfPaused();
-        return this.sendRaw<T>(method, data);
+        return this.sendRaw<T>(method, data, 1, 0, obeySchedule, label);
       }, priority);
 
     // Интерактивные запросы не теряем: при транзиентной ошибке возвращаем их
@@ -566,6 +616,7 @@ export class BluesalesApiService {
   async getOrdersByIds(
     ids: number[],
     priority: BsRequestPriority = 'background',
+    respectSyncSchedule = priority === 'background',
   ): Promise<BsOrder[]> {
     if (ids.length === 0) return [];
     const result = await this.send<GetOrdersResponse>(
@@ -581,6 +632,7 @@ export class BluesalesApiService {
         startRowNumber: 0,
       },
       priority,
+      respectSyncSchedule,
     );
     return result.orders ?? [];
   }
