@@ -10,7 +10,6 @@ import LowPriorityIcon from '@mui/icons-material/LowPriority'
 import MenuBookIcon from '@mui/icons-material/MenuBook'
 import MenuIcon from '@mui/icons-material/Menu'
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
-import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing'
 import {
   AppBar,
   Avatar,
@@ -86,7 +85,14 @@ const NAV_ITEMS: NavItem[] = [
 
 const navButtonSx = {
   borderRadius: 999,
-  px: 2,
+  px: 1.25,
+  py: 0.75,
+  minWidth: 0,
+  flexShrink: 0,
+  fontSize: 13,
+  '& .MuiButton-startIcon': { mr: 0.75, ml: 0 },
+  '& .MuiButton-endIcon': { ml: 0.5, mr: 0 },
+  '& .MuiButton-icon > :nth-of-type(1)': { fontSize: 18 },
   whiteSpace: 'nowrap',
   opacity: 0.9,
   '&.active': {
@@ -223,50 +229,35 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       }}
     >
       <AppBar position="sticky" color="primary">
-        <Toolbar sx={{ gap: 1, py: 0.5 }}>
+        <Toolbar sx={{ gap: 0.75 }}>
           <IconButton
             color="inherit"
             edge="start"
             aria-label="Открыть меню"
             onClick={() => setDrawerOpen(true)}
-            sx={{ display: { xs: 'inline-flex', md: 'none' } }}
+            sx={{ display: { xs: 'inline-flex', lg: 'none' } }}
           >
             <MenuIcon />
           </IconButton>
 
           <Stack
             direction="row"
-            spacing={1.25}
             alignItems="center"
             component={NavLink}
             to="/orders"
             sx={{
-              mr: { xs: 0, md: 2 },
+              mr: { xs: 0, lg: 0.75 },
+              flexShrink: 0,
               whiteSpace: 'nowrap',
               textDecoration: 'none',
               color: 'inherit',
             }}
           >
-            <Box
-              sx={{
-                width: 34,
-                height: 34,
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                bgcolor: 'rgba(255,255,255,0.18)',
-                boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.25)',
-                flexShrink: 0,
-              }}
-            >
-              <PrecisionManufacturingIcon sx={{ fontSize: 20 }} />
-            </Box>
-            <Box sx={{ display: { xs: 'none', sm: 'block' }, lineHeight: 1.05 }}>
-              <Typography sx={{ fontWeight: 800, fontSize: 17 }}>
+            <Box sx={{ lineHeight: 1.05 }}>
+              <Typography sx={{ fontWeight: 800, fontSize: 16 }}>
                 Металлити
               </Typography>
-              <Typography sx={{ fontSize: 11, opacity: 0.8 }}>
+              <Typography sx={{ fontSize: 10, opacity: 0.8, display: { xs: 'none', sm: 'block' } }}>
                 заказы и правки
               </Typography>
             </Box>
@@ -274,8 +265,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
           <Stack
             direction="row"
-            spacing={1}
-            sx={{ flexGrow: 1, minWidth: 0, flexWrap: 'wrap', rowGap: 0.5, display: { xs: 'none', md: 'flex' } }}
+            spacing={0.25}
+            sx={{ flexGrow: 1, minWidth: 0, flexWrap: 'nowrap', display: { xs: 'none', lg: 'flex' } }}
           >
             {visibleNavItems.map((item) =>
               item.children ? (
@@ -292,27 +283,27 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </Stack>
 
           {/* Spacer for mobile/tablet where the horizontal nav is hidden */}
-          <Box sx={{ flexGrow: 1, display: { xs: 'block', md: 'none' } }} />
+          <Box sx={{ flexGrow: 1, display: { xs: 'block', lg: 'none' } }} />
 
           {user && (
             <Stack
               direction="row"
-              spacing={1.5}
+              spacing={0.75}
               alignItems="center"
-              sx={{ mr: 1 }}
+              sx={{ mr: 0.25, flexShrink: 0 }}
             >
               <Avatar
                 sx={{
-                  width: 34,
-                  height: 34,
+                  width: 30,
+                  height: 30,
                   bgcolor: 'secondary.main',
                   fontSize: 14,
                 }}
               >
                 {initials(user.name)}
               </Avatar>
-              <Box sx={{ display: { xs: 'none', sm: 'block' }, lineHeight: 1.1 }}>
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              <Box sx={{ display: { xs: 'none', sm: 'block', lg: 'none', xl: 'block' }, lineHeight: 1.1, maxWidth: 140 }}>
+                <Typography variant="body2" noWrap title={user.name} sx={{ fontWeight: 600, fontSize: 13 }}>
                   {user.name}
                 </Typography>
                 <Chip
@@ -333,10 +324,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             <Button
               color="inherit"
               onClick={handleLogout}
-              sx={{ minWidth: { xs: 40, sm: 'auto' }, px: { xs: 1, sm: 2 } }}
+              sx={{ minWidth: { xs: 36, sm: 'auto' }, px: 1, fontSize: 13, flexShrink: 0 }}
             >
-              <LogoutIcon fontSize="small" />
-              <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' }, ml: 1 }}>
+              <LogoutIcon sx={{ fontSize: 18 }} />
+              <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' }, ml: 0.75 }}>
                 Выйти
               </Box>
             </Button>
@@ -348,26 +339,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         anchor="left"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        sx={{ display: { xs: 'block', md: 'none' } }}
+        sx={{ display: { xs: 'block', lg: 'none' } }}
         PaperProps={{ sx: { width: 280 } }}
       >
         <Box sx={{ p: 2 }}>
           <Stack direction="row" spacing={1.25} alignItems="center">
-            <Box
-              sx={{
-                width: 38,
-                height: 38,
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff',
-                background: 'linear-gradient(135deg, #2C5EAD, #1591DC)',
-                flexShrink: 0,
-              }}
-            >
-              <PrecisionManufacturingIcon sx={{ fontSize: 22 }} />
-            </Box>
             <Box>
               <Typography sx={{ fontWeight: 800 }}>Металлити</Typography>
               <Typography variant="caption" color="text.secondary">
