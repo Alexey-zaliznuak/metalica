@@ -14,7 +14,7 @@ export function usageDateKey(start: Date): string {
 function syncWeight(at: number): number {
   const hour = new Date(at + 3 * HOUR_MS).getUTCHours();
   if (hour >= 1 && hour < 6) return 0;
-  return hour >= 21 || hour < 9 ? 1 / 3 : 1;
+  return hour < 9 ? 1 / 3 : 1;
 }
 
 /** Эквивалент времени в дневном режиме, с учётом паузы и замедления x3. */

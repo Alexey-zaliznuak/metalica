@@ -129,7 +129,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `BlueSales sync активен: cron "${FAST_SYNC_CRON}" + refresh-loop заказов + loop лидов` +
         ` + backfill "${BACKFILL_CRON}" за ${this.backfillDays} дн.` +
-        ` + ночные паузы x3 (21:00–09:00 ${BLUESALES_SYNC_TIME_ZONE})` +
+        ` + ночные паузы x3 (00:00–01:00 и 06:00–09:00 ${BLUESALES_SYNC_TIME_ZONE})` +
         ` + все синки выключены с 01:00 до 06:00` +
         (this.fullSyncOnStartup ? ` + полный синк при старте за ${this.fullSyncDays} дн.` : ''),
     );
@@ -1661,7 +1661,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * С 21:00 до 09:00 в часовом поясе синка фоновые обращения к BlueSales
+   * С 00:00 до 01:00 и с 06:00 до 09:00 в часовом поясе синка фоновые обращения к BlueSales
    * выполняются в три раза реже. Проверяем расписание перед каждой паузой, поэтому
    * переключение режима не требует перезапуска приложения.
    */

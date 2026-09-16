@@ -57,10 +57,10 @@ export function syncDateKey(
 
 /**
  * Расписание фонового синка BlueSales:
- *  - 21:00–01:00 — заказы и лиды, паузы x3;
+ *  - 00:00–01:00 — заказы и лиды, паузы x3;
  *  - 01:00–06:00 — все синки выключены;
  *  - 06:00–09:00 — заказы и лиды, паузы x3;
- *  - 09:00–21:00 — полный режим.
+ *  - 09:00–00:00 — полный режим.
  */
 export function getBluesalesSyncSchedule(
   now = new Date(),
@@ -68,7 +68,7 @@ export function getBluesalesSyncSchedule(
 ): BluesalesSyncSchedule {
   const { hour } = datePartsInZone(now, timeZone);
   const dateKey = syncDateKey(now, timeZone);
-  const slow = hour >= 21 || hour < 9;
+  const slow = hour < 9;
 
   if (hour >= 1 && hour < 6) {
     return {

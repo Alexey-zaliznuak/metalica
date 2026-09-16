@@ -145,7 +145,7 @@ export default function DevMetricsPage() {
           <Stack direction="row" spacing={2}><Typography variant="caption" sx={{ color: '#1591dc' }}>● Факт</Typography><Typography variant="caption" sx={{ color: '#8a77d8' }}>┄ Прогноз</Typography></Stack>
         </Stack>
         <UsageChart data={data} />
-        <Alert severity="info" icon={false} sx={{ mt: 1 }}>Прогноз приблизительный: темп за последний час, пауза 01:00–06:00 и замедление синков втрое в 06:00–09:00 и 21:00–01:00. Изменение нагрузки и ручные действия могут сдвинуть время.</Alert>
+        <Alert severity="info" icon={false} sx={{ mt: 1 }}>Прогноз приблизительный: темп за последний час, пауза 01:00–06:00 и замедление синков втрое в 06:00–09:00 и 00:00–01:00. Изменение нагрузки и ручные действия могут сдвинуть время.</Alert>
       </Card>
       <Card sx={{ p: { xs: 2, md: 3 } }}>
         <Typography variant="h6">На что уходит время</Typography>

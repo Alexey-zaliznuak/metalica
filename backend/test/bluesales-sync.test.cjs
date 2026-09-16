@@ -27,7 +27,9 @@ test('Moscow schedule stops at 01:00 and resumes at 06:00, keeping daytime and s
     ['08:59:59', 'morning', true, 3],
     ['09:00:00', 'day', true, 1],
     ['20:59:59', 'day', true, 1],
-    ['21:00:00', 'night', true, 3],
+    ['21:00:00', 'day', true, 1],
+    ['23:59:59.999', 'day', true, 1],
+    ['00:00:00', 'night', true, 3],
   ]) {
     const schedule = getBluesalesSyncSchedule(at(time));
     assert.equal(schedule.phase, phase, time);

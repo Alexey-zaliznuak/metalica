@@ -104,11 +104,13 @@ test('forecast estimates hour threshold, handles low usage and insufficient data
   assert.equal(usageForecast({ ...input, now: new Date('2026-09-16T01:00:00+03:00') }).status, 'closed');
 });
 
-test('forecast accounts for night pause and morning/evening slowdown', () => {
+test('forecast accounts for night pause and midnight/morning slowdown', () => {
   assert.equal(weightedSyncTime(at('01:00:00').getTime(), at('06:00:00').getTime()), 0);
   assert.equal(weightedSyncTime(at('06:00:00').getTime(), at('09:00:00').getTime()), HOUR_MS);
+  assert.equal(weightedSyncTime(at('21:00:00').getTime(), new Date('2026-09-16T00:00:00+03:00').getTime()), 3 * HOUR_MS);
+  assert.equal(weightedSyncTime(at('00:00:00').getTime(), at('01:00:00').getTime()), HOUR_MS / 3);
   const forecast = usageForecast({ now: at('21:00:00'), periodStart: at('01:00:00'), totalMs: 50 * 60_000, recentMs: 10 * 60_000, recentCount: 60, observedFrom: at('06:00:00') });
-  assert.equal(forecast.reachesAt.toISOString(), '2026-09-15T21:00:00.000Z'); // 00:00 МСК
+  assert.equal(forecast.reachesAt.toISOString(), '2026-09-15T19:00:00.000Z'); // 22:00 МСК
 });
 
 test('overview rejects invalid and future dates before querying the database', async () => {

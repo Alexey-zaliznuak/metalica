@@ -812,13 +812,24 @@ export class BluesalesApiService {
     statusId: number,
     priority: BsRequestPriority = 'interactive',
   ): Promise<void> {
+    return this.setOrdersStatus([orderId], statusId, priority);
+  }
+
+  /** Записывает один целевой статус пачке заказов. Каждый результат проверяет outbox. */
+  async setOrdersStatus(
+    ids: number[],
+    statusId: number,
+    priority: BsRequestPriority = 'interactive',
+  ): Promise<void> {
+    if (!ids.length) return;
+    if (ids.length > 500) throw new Error('BlueSales status batch exceeds 500 orders');
     const payload = {
-      ids: [orderId],
+      ids: [...new Set(ids)],
       orderStatus: { id: statusId },
     };
     const response = await this.send<unknown>('orders.updateMany', payload, priority);
     this.logger.log(
-      `BlueSales orders.updateMany: статус отправлен; orderId=${orderId}; ` +
+      `BlueSales orders.updateMany: статус отправлен; count=${payload.ids.length}; ` +
         `statusId=${statusId}; response=${this.truncateLogValue(JSON.stringify(response))}`,
     );
   }
