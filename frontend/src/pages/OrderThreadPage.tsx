@@ -596,6 +596,13 @@ function OrderInfoPanel({
   onOrderStatusChange,
   onResponsibleChange,
   onDialogLinkChange,
+  savingPrintPhoto,
+  printPhotoError,
+  textSize,
+  onTextSizeChange,
+  onAddPrintPhotos,
+  onRemovePrintPhoto,
+  onOpenImage,
   inDrawer = false,
 }: {
   order: Order
@@ -612,6 +619,13 @@ function OrderInfoPanel({
     userId: number | '',
   ) => void
   onDialogLinkChange: (dialogLink: string) => void
+  savingPrintPhoto: boolean
+  printPhotoError: string | null
+  textSize: 'standard' | 'small'
+  onTextSizeChange: (size: 'standard' | 'small') => void
+  onAddPrintPhotos: (files: File[]) => void
+  onRemovePrintPhoto: (photoId: number) => void
+  onOpenImage: (image: LightboxImage) => void
   inDrawer?: boolean
 }) {
   const bs = order.bluesalesInfo
@@ -960,6 +974,16 @@ function OrderInfoPanel({
           </Typography>
         )}
       </Box>
+      <PrintPhotosBar
+        order={order}
+        savingPrintPhoto={savingPrintPhoto}
+        printPhotoError={printPhotoError}
+        textSize={textSize}
+        onTextSizeChange={onTextSizeChange}
+        onAddPrintPhotos={onAddPrintPhotos}
+        onRemovePrintPhoto={onRemovePrintPhoto}
+        onOpenImage={onOpenImage}
+      />
     </Paper>
   )
 }
@@ -994,15 +1018,10 @@ function PrintPhotosBar({
   onOpenImage: (image: LightboxImage) => void
 }) {
   return (
-    <Paper
-      variant="outlined"
+    <Box
       component="section"
       aria-label="Фото для печати"
-      sx={{
-        flexShrink: 0,
-        p: 1.5,
-        borderRadius: 1.5,
-      }}
+      sx={{ mt: 2 }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()
@@ -1017,50 +1036,43 @@ function PrintPhotosBar({
         }
       }}
     >
-      <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        spacing={1}
-        alignItems={{ xs: 'stretch', sm: 'center' }}
-        justifyContent="space-between"
-        sx={{ mb: 1 }}
-      >
-        <SectionTitle icon={<ImageIcon fontSize="small" />}>
-          Фото для печати
-        </SectionTitle>
-        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
-          <ToggleButtonGroup
-            value={textSize}
-            exclusive
-            size="small"
-            aria-label="Размер текста на файле для производства"
-            onChange={(_, value) => {
-              if (value) onTextSizeChange(value)
-            }}
-          >
-            <ToggleButton value="standard">Стандарт</ToggleButton>
-            <ToggleButton value="small">Малый</ToggleButton>
-          </ToggleButtonGroup>
-          <Button
-            component="label"
-            size="small"
-            variant="outlined"
+      <SectionTitle icon={<ImageIcon fontSize="small" />}>
+        Фото для печати
+      </SectionTitle>
+      <Stack spacing={1} sx={{ mb: 1 }}>
+        <ToggleButtonGroup
+          value={textSize}
+          exclusive
+          size="small"
+          fullWidth
+          aria-label="Размер текста на файле для производства"
+          onChange={(_, value) => {
+            if (value) onTextSizeChange(value)
+          }}
+        >
+          <ToggleButton value="standard">Стандарт</ToggleButton>
+          <ToggleButton value="small">Малый</ToggleButton>
+        </ToggleButtonGroup>
+        <Button
+          component="label"
+          size="small"
+          variant="outlined"
+          disabled={savingPrintPhoto}
+          startIcon={savingPrintPhoto ? <CircularProgress size={16} /> : <ImageIcon />}
+        >
+          {savingPrintPhoto ? 'Сохранение…' : 'Добавить фото'}
+          <input
+            type="file"
+            multiple
+            accept="image/*,.heic,.heif,application/pdf,.pdf,image/dng,image/x-adobe-dng,.dng"
+            hidden
             disabled={savingPrintPhoto}
-            startIcon={savingPrintPhoto ? <CircularProgress size={16} /> : <ImageIcon />}
-          >
-            {savingPrintPhoto ? 'Сохранение…' : 'Добавить фото'}
-            <input
-              type="file"
-              multiple
-              accept="image/*,.heic,.heif,application/pdf,.pdf,image/dng,image/x-adobe-dng,.dng"
-              hidden
-              disabled={savingPrintPhoto}
-              onChange={(e) => {
-                if (e.target.files?.length) onAddPrintPhotos(Array.from(e.target.files))
-                e.target.value = ''
-              }}
-            />
-          </Button>
-        </Stack>
+            onChange={(e) => {
+              if (e.target.files?.length) onAddPrintPhotos(Array.from(e.target.files))
+              e.target.value = ''
+            }}
+          />
+        </Button>
       </Stack>
       {printPhotoError && <Alert severity="error" sx={{ mb: 1 }}>{printPhotoError}</Alert>}
       {(order.printPhotos?.length ?? 0) > 0 ? (
@@ -1068,8 +1080,7 @@ function PrintPhotosBar({
           sx={{
             display: 'flex',
             flexDirection: 'row',
-            flexWrap: 'nowrap',
-            overflowX: 'auto',
+            flexWrap: 'wrap',
             alignItems: 'flex-start',
             gap: 1,
             pb: 0.5,
@@ -1117,7 +1128,7 @@ function PrintPhotosBar({
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, lineHeight: 1.5 }}>
         Изображения, PDF или DNG. Можно выбрать или перетащить несколько файлов.
       </Typography>
-    </Paper>
+    </Box>
   )
 }
 
@@ -2295,9 +2306,10 @@ export default function OrderThreadPage() {
     <Box
       sx={{
         display: 'flex',
-        flexDirection: 'column',
+        flexDirection: 'row',
         gap: 2,
         flexGrow: 1,
+        alignItems: 'stretch',
         // Fill the viewport height under the AppBar so the messenger feels native.
         // AppBar is 56px on mobile / 64px from sm up; container padding differs too.
         height: {
@@ -2306,16 +2318,6 @@ export default function OrderThreadPage() {
         },
       }}
     >
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: 'row',
-          gap: 2,
-          flexGrow: 1,
-          minHeight: 0,
-          alignItems: 'stretch',
-        }}
-      >
       {/* Chat column */}
       <Box
         sx={{
@@ -2323,7 +2325,6 @@ export default function OrderThreadPage() {
           flexDirection: 'column',
           flexGrow: 1,
           minWidth: 0,
-          minHeight: 0,
         }}
       >
       {/* Header */}
@@ -2743,6 +2744,20 @@ export default function OrderThreadPage() {
       {/* Right info panel (desktop) */}
       <OrderInfoPanel
         order={order}
+        savingPrintPhoto={savingPrintPhoto}
+        printPhotoError={printPhotoError}
+        textSize={productionTextSize}
+        onTextSizeChange={(size) => {
+          setProductionTextSize(size)
+          try {
+            window.localStorage.setItem(PRODUCTION_TEXT_SIZE_KEY, size)
+          } catch {
+            /* ignore quota / private mode */
+          }
+        }}
+        onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
+        onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
+        onOpenImage={setLightbox}
         orderStatusOptions={orderStatusOptions}
         sketchDesignerAssignees={sketchDesignerAssignees}
         revisionDesignerAssignees={revisionDesignerAssignees}
@@ -2786,25 +2801,6 @@ export default function OrderThreadPage() {
           void handleSaveSketchDates(startedAt, readyAt)
         }}
       />
-      </Box>
-
-      <PrintPhotosBar
-        order={order}
-        savingPrintPhoto={savingPrintPhoto}
-        printPhotoError={printPhotoError}
-        textSize={productionTextSize}
-        onTextSizeChange={(size) => {
-          setProductionTextSize(size)
-          try {
-            window.localStorage.setItem(PRODUCTION_TEXT_SIZE_KEY, size)
-          } catch {
-            /* ignore quota / private mode */
-          }
-        }}
-        onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
-        onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
-        onOpenImage={setLightbox}
-      />
 
       {/* Info + articles panels as a drawer (mobile / tablet) */}
       <Drawer
@@ -2817,6 +2813,23 @@ export default function OrderThreadPage() {
         <OrderInfoPanel
           inDrawer
           order={order}
+          savingPrintPhoto={savingPrintPhoto}
+          printPhotoError={printPhotoError}
+          textSize={productionTextSize}
+          onTextSizeChange={(size) => {
+            setProductionTextSize(size)
+            try {
+              window.localStorage.setItem(PRODUCTION_TEXT_SIZE_KEY, size)
+            } catch {
+              /* ignore quota / private mode */
+            }
+          }}
+          onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
+          onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
+          onOpenImage={(image) => {
+            setInfoOpen(false)
+            setLightbox(image)
+          }}
           orderStatusOptions={orderStatusOptions}
           sketchDesignerAssignees={sketchDesignerAssignees}
           revisionDesignerAssignees={revisionDesignerAssignees}
