@@ -64,7 +64,6 @@ import {
 } from '../api/errors'
 import AttachmentSizeBadge from '../components/AttachmentSizeBadge'
 import ProductionDownloadButton from '../components/ProductionDownloadButton'
-import AttachmentCard, { attachmentActionSx } from '../components/AttachmentCard'
 import DngAttachmentPreview, {
   isDngAttachment,
   isDngFile,
@@ -93,6 +92,15 @@ import type {
 } from '../api/types'
 
 const MESSAGES_PAGE_SIZE = 30
+const PRODUCTION_TEXT_SIZE_KEY = 'metalica.productionTextSize'
+
+function readProductionTextSize(): 'standard' | 'small' {
+  try {
+    return window.localStorage.getItem(PRODUCTION_TEXT_SIZE_KEY) === 'small' ? 'small' : 'standard'
+  } catch {
+    return 'standard'
+  }
+}
 import { useAuth } from '../auth/AuthContext'
 import { BRAND, ACCENT } from '../theme'
 import {
@@ -189,24 +197,33 @@ function isOwnSide(authorId: number, currentUserId: number | undefined): boolean
   return authorId === currentUserId
 }
 
+function formatPinDate(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+  })
+}
+
 function MessageBubble({
   message,
-  orderId,
   ownSide,
   onOpenImage,
   resolvedSeconds,
-  isFinalSketch,
-  updatingFinalSketch,
-  onToggleFinalSketch,
+  isPinned,
+  updatingPinnedSketch,
+  onTogglePinnedSketch,
 }: {
   message: Message
-  orderId: number
   ownSide: boolean
   onOpenImage: (image: LightboxImage) => void
   resolvedSeconds?: number | null
-  isFinalSketch: boolean
-  updatingFinalSketch: boolean
-  onToggleFinalSketch: () => void
+  isPinned: boolean
+  updatingPinnedSketch: boolean
+  onTogglePinnedSketch: () => void
 }) {
   const isRequest = message.kind === 'REVISION_REQUEST'
   const isAnswer = message.kind === 'REVISION_ANSWER'
@@ -293,11 +310,11 @@ function MessageBubble({
               boxShadow: `0 4px 14px ${BRAND.deep}1f`,
             }}
           >
-            {isFinalSketch && (
+            {isPinned && (
               <Chip
                 size="small"
                 icon={<PushPinIcon />}
-                label="Итоговый эскиз"
+                label="Закреплено"
                 sx={{ mb: 1, bgcolor: '#fff', color: BRAND.deep, fontWeight: 700 }}
               />
             )}
@@ -381,29 +398,17 @@ function MessageBubble({
                     />
                   ) : (
                     <Box key={att.id} sx={{ maxWidth: '100%', minWidth: 0 }}>
-                      {isFinalSketch ? (
-                        <AttachmentCard>
-                          <ImageAttachmentPreview
-                            image={att}
-                            fullWidth
-                            onOpen={() => onOpenImage(att)}
-                          />
-                          <Divider />
-                          <ProductionDownloadButton orderId={orderId} attachmentId={att.id} />
-                        </AttachmentCard>
-                      ) : (
-                        <ImageAttachmentPreview
-                          image={{ url: att.url, filename: att.filename, size: att.size }}
-                          lightControls={ownSide && !isRequest && !isAnswer}
-                          onOpen={() =>
-                            onOpenImage({
-                              url: att.url,
-                              filename: att.filename,
-                              size: att.size,
-                            })
-                          }
-                        />
-                      )}
+                      <ImageAttachmentPreview
+                        image={{ url: att.url, filename: att.filename, size: att.size }}
+                        lightControls={ownSide && !isRequest && !isAnswer}
+                        onOpen={() =>
+                          onOpenImage({
+                            url: att.url,
+                            filename: att.filename,
+                            size: att.size,
+                          })
+                        }
+                      />
                     </Box>
                   ),
                 )}
@@ -444,12 +449,12 @@ function MessageBubble({
             )}
             <Button
               size="small"
-              startIcon={isFinalSketch ? <PushPinIcon /> : <PushPinOutlinedIcon />}
-              disabled={updatingFinalSketch}
-              onClick={onToggleFinalSketch}
+              startIcon={isPinned ? <PushPinIcon /> : <PushPinOutlinedIcon />}
+              disabled={updatingPinnedSketch}
+              onClick={onTogglePinnedSketch}
               sx={{ mt: 0.5, color: 'inherit', fontSize: 11 }}
             >
-              {isFinalSketch ? 'Снять отметку' : 'Пометить как итоговый эскиз'}
+              {isPinned ? 'Открепить' : 'Закрепить эскиз'}
             </Button>
           </Paper>
         </Box>
@@ -461,6 +466,7 @@ function MessageBubble({
 // Человекочитаемые подписи полей заказа для системных событий лога.
 const EVENT_FIELD_LABELS: Record<string, string> = {
   finalSketchMessage: 'итоговый эскиз',
+  pinnedSketch: 'закреплённый эскиз',
   printPhoto: 'фото для печати',
   sketchDesigner: 'художника эскиза',
   revisionDesigner: 'художника правок',
@@ -590,11 +596,6 @@ function OrderInfoPanel({
   onOrderStatusChange,
   onResponsibleChange,
   onDialogLinkChange,
-  savingPrintPhoto,
-  printPhotoError,
-  onAddPrintPhotos,
-  onRemovePrintPhoto,
-  onOpenImage,
   inDrawer = false,
 }: {
   order: Order
@@ -611,11 +612,6 @@ function OrderInfoPanel({
     userId: number | '',
   ) => void
   onDialogLinkChange: (dialogLink: string) => void
-  savingPrintPhoto: boolean
-  printPhotoError: string | null
-  onAddPrintPhotos: (files: File[]) => void
-  onRemovePrintPhoto: (photoId: number) => void
-  onOpenImage: (image: LightboxImage) => void
   inDrawer?: boolean
 }) {
   const bs = order.bluesalesInfo
@@ -964,74 +960,90 @@ function OrderInfoPanel({
           </Typography>
         )}
       </Box>
-      <Box
-        component="section"
-        aria-label="Фото для печати"
-        sx={{ mt: 2 }}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
+    </Paper>
+  )
+}
+
+const printPhotoActionSx = {
+  minWidth: 0,
+  height: 28,
+  borderTop: 0,
+  borderRadius: 0,
+  fontSize: 11,
+  lineHeight: 1,
+  textTransform: 'none',
+} as const
+
+function PrintPhotosBar({
+  order,
+  savingPrintPhoto,
+  printPhotoError,
+  textSize,
+  onTextSizeChange,
+  onAddPrintPhotos,
+  onRemovePrintPhoto,
+  onOpenImage,
+}: {
+  order: Order
+  savingPrintPhoto: boolean
+  printPhotoError: string | null
+  textSize: 'standard' | 'small'
+  onTextSizeChange: (size: 'standard' | 'small') => void
+  onAddPrintPhotos: (files: File[]) => void
+  onRemovePrintPhoto: (photoId: number) => void
+  onOpenImage: (image: LightboxImage) => void
+}) {
+  return (
+    <Paper
+      variant="outlined"
+      component="section"
+      aria-label="Фото для печати"
+      sx={{
+        flexShrink: 0,
+        p: 1.5,
+        borderRadius: 1.5,
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault()
+        if (!savingPrintPhoto && e.dataTransfer.files.length) {
+          onAddPrintPhotos(Array.from(e.dataTransfer.files))
+        }
+      }}
+      onPaste={(e) => {
+        if (!savingPrintPhoto && e.clipboardData.files.length) {
           e.preventDefault()
-          if (!savingPrintPhoto && e.dataTransfer.files.length) {
-            onAddPrintPhotos(Array.from(e.dataTransfer.files))
-          }
-        }}
-        onPaste={(e) => {
-          if (!savingPrintPhoto && e.clipboardData.files.length) {
-            e.preventDefault()
-            onAddPrintPhotos(Array.from(e.clipboardData.files))
-          }
-        }}
+          onAddPrintPhotos(Array.from(e.clipboardData.files))
+        }
+      }}
+    >
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1}
+        alignItems={{ xs: 'stretch', sm: 'center' }}
+        justifyContent="space-between"
+        sx={{ mb: 1 }}
       >
         <SectionTitle icon={<ImageIcon fontSize="small" />}>
           Фото для печати
         </SectionTitle>
-        {printPhotoError && <Alert severity="error" sx={{ mb: 1 }}>{printPhotoError}</Alert>}
-        {(order.printPhotos?.length ?? 0) > 0 ? (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: 1.5 }}>
-            {order.printPhotos!.map((photo) => (
-              <AttachmentCard key={photo.id}>
-                {isPdfAttachment(photo) ? (
-                  <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
-                    <PdfAttachmentPreview url={photo.url} bytes={photo.size} />
-                  </Box>
-                ) : isDngAttachment(photo) ? (
-                  <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
-                    <DngAttachmentPreview url={photo.url} filename={photo.filename} bytes={photo.size} />
-                  </Box>
-                ) : (
-                  <ImageAttachmentPreview image={photo} fullWidth onOpen={() => onOpenImage(photo)} />
-                )}
-                {!isPdfAttachment(photo) && !isDngAttachment(photo) && (
-                  <>
-                    <Divider />
-                    <ProductionDownloadButton orderId={order.id} attachmentId={photo.id} />
-                  </>
-                )}
-                <Divider />
-                <Button
-                  fullWidth
-                  size="small"
-                  color="error"
-                  startIcon={<DeleteOutlineIcon />}
-                  sx={attachmentActionSx}
-                  disabled={savingPrintPhoto}
-                  onClick={() => onRemovePrintPhoto(photo.id)}
-                  aria-label={`Убрать ${photo.filename}`}
-                >
-                  Убрать
-                </Button>
-              </AttachmentCard>
-            ))}
-          </Box>
-        ) : (
-          <Typography variant="body2" color="text.secondary">Файлы не прикреплены</Typography>
-        )}
-        <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
+          <ToggleButtonGroup
+            value={textSize}
+            exclusive
+            size="small"
+            aria-label="Размер текста на файле для производства"
+            onChange={(_, value) => {
+              if (value) onTextSizeChange(value)
+            }}
+          >
+            <ToggleButton value="standard">Стандарт</ToggleButton>
+            <ToggleButton value="small">Малый</ToggleButton>
+          </ToggleButtonGroup>
           <Button
             component="label"
             size="small"
             variant="outlined"
-            sx={{ width: 240, maxWidth: '100%', minHeight: 36, fontSize: 12 }}
             disabled={savingPrintPhoto}
             startIcon={savingPrintPhoto ? <CircularProgress size={16} /> : <ImageIcon />}
           >
@@ -1049,10 +1061,62 @@ function OrderInfoPanel({
             />
           </Button>
         </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, lineHeight: 1.5 }}>
-          Изображения, PDF или DNG. Можно выбрать или перетащить несколько файлов.
-        </Typography>
-      </Box>
+      </Stack>
+      {printPhotoError && <Alert severity="error" sx={{ mb: 1 }}>{printPhotoError}</Alert>}
+      {(order.printPhotos?.length ?? 0) > 0 ? (
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'row',
+            flexWrap: 'nowrap',
+            overflowX: 'auto',
+            alignItems: 'flex-start',
+            gap: 1,
+            pb: 0.5,
+          }}
+        >
+          {order.printPhotos!.map((photo) => (
+            <Box key={photo.id} sx={{ flexShrink: 0, width: 120 }}>
+              {isPdfAttachment(photo) ? (
+                <PdfAttachmentPreview url={photo.url} bytes={photo.size} />
+              ) : isDngAttachment(photo) ? (
+                <DngAttachmentPreview url={photo.url} filename={photo.filename} bytes={photo.size} />
+              ) : (
+                <ImageAttachmentPreview
+                  image={photo}
+                  onOpen={() => onOpenImage(photo)}
+                />
+              )}
+              {!isPdfAttachment(photo) && !isDngAttachment(photo) && (
+                <ProductionDownloadButton
+                  compact
+                  orderId={order.id}
+                  attachmentId={photo.id}
+                  textSize={textSize}
+                />
+              )}
+              <Button
+                fullWidth
+                size="small"
+                color="error"
+                variant="outlined"
+                startIcon={<DeleteOutlineIcon />}
+                sx={{ ...printPhotoActionSx, borderRadius: '0 0 4px 4px' }}
+                disabled={savingPrintPhoto}
+                onClick={() => onRemovePrintPhoto(photo.id)}
+                aria-label={`Убрать ${photo.filename}`}
+              >
+                Убрать
+              </Button>
+            </Box>
+          ))}
+        </Box>
+      ) : (
+        <Typography variant="body2" color="text.secondary">Файлы не прикреплены</Typography>
+      )}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, lineHeight: 1.5 }}>
+        Изображения, PDF или DNG. Можно выбрать или перетащить несколько файлов.
+      </Typography>
     </Paper>
   )
 }
@@ -1416,12 +1480,13 @@ export default function OrderThreadPage() {
   const [sendError, setSendError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [lightbox, setLightbox] = useState<LightboxImage | null>(null)
-  const [updatingFinalSketch, setUpdatingFinalSketch] = useState(false)
-  const [jumpingToSketch, setJumpingToSketch] = useState(false)
+  const [updatingPinnedSketch, setUpdatingPinnedSketch] = useState(false)
+  const [jumpingToSketchId, setJumpingToSketchId] = useState<number | null>(null)
   const [sketchError, setSketchError] = useState<string | null>(null)
   const [scrollTarget, setScrollTarget] = useState<{ id: number } | null>(null)
   const [savingPrintPhoto, setSavingPrintPhoto] = useState(false)
   const [printPhotoError, setPrintPhotoError] = useState<string | null>(null)
+  const [productionTextSize, setProductionTextSize] = useState<'standard' | 'small'>(readProductionTextSize)
   const jumpControllerRef = useRef<AbortController | null>(null)
   const savingPrintPhotoRef = useRef(false)
   const [infoOpen, setInfoOpen] = useState(false)
@@ -1551,20 +1616,20 @@ export default function OrderThreadPage() {
     }
   }, [hasMore, loadOlder])
 
-  const handleFinalSketchChange = async (messageId: number | null) => {
-    setUpdatingFinalSketch(true)
+  const handlePinnedSketchChange = async (messageId: number, pin: boolean) => {
+    setUpdatingPinnedSketch(true)
     setSketchError(null)
     try {
       const { data } = await client.patch<Order>(`/orders/${orderId}`, {
-        finalSketchMessageId: messageId,
+        ...(pin ? { pinSketchMessageId: messageId } : { unpinSketchMessageId: messageId }),
       } satisfies UpdateOrderPayload)
-      setOrder((prev) => prev?.id === orderId ? { ...prev, finalSketchMessageId: data.finalSketchMessageId } : prev)
+      setOrder((prev) => prev?.id === orderId ? { ...prev, pinnedSketches: data.pinnedSketches } : prev)
       await refreshEvents()
     } catch (err) {
-      logApiError('изменение итогового эскиза', err)
-      setSketchError(describeApiError(err, 'Не удалось изменить итоговый эскиз'))
+      logApiError('изменение закреплённого эскиза', err)
+      setSketchError(describeApiError(err, 'Не удалось изменить закрепление эскиза'))
     } finally {
-      setUpdatingFinalSketch(false)
+      setUpdatingPinnedSketch(false)
     }
   }
 
@@ -1606,13 +1671,13 @@ export default function OrderThreadPage() {
     }
   }
 
-  const jumpToFinalSketch = async () => {
-    const targetId = order?.finalSketchMessageId
-    if (targetId == null || loadingOlderRef.current) return
+  const jumpToPinnedSketch = async (targetId: number) => {
+    if (loadingOlderRef.current) return
+    jumpControllerRef.current?.abort()
     const controller = new AbortController()
     jumpControllerRef.current = controller
     loadingOlderRef.current = true
-    setJumpingToSketch(true)
+    setJumpingToSketchId(targetId)
     setSketchError(null)
     pendingScrollBottomRef.current = false
     try {
@@ -1634,7 +1699,7 @@ export default function OrderThreadPage() {
       }
       if (controller.signal.aborted) return
       if (!found) {
-        setSketchError('Итоговый эскиз не найден. Обновите страницу и попробуйте снова.')
+        setSketchError('Закреплённый эскиз не найден. Обновите страницу и попробуйте снова.')
         return
       }
       if (older.length) {
@@ -1648,14 +1713,14 @@ export default function OrderThreadPage() {
       setScrollTarget({ id: targetId })
     } catch (err) {
       if (!controller.signal.aborted) {
-        logApiError('переход к итоговому эскизу', err)
-        setSketchError(describeApiError(err, 'Не удалось загрузить итоговый эскиз'))
+        logApiError('переход к закреплённому эскизу', err)
+        setSketchError(describeApiError(err, 'Не удалось загрузить закреплённый эскиз'))
       }
     } finally {
       if (jumpControllerRef.current === controller) {
         jumpControllerRef.current = null
         loadingOlderRef.current = false
-        setJumpingToSketch(false)
+        setJumpingToSketchId(null)
       }
     }
   }
@@ -2230,10 +2295,9 @@ export default function OrderThreadPage() {
     <Box
       sx={{
         display: 'flex',
-        flexDirection: 'row',
+        flexDirection: 'column',
         gap: 2,
         flexGrow: 1,
-        alignItems: 'stretch',
         // Fill the viewport height under the AppBar so the messenger feels native.
         // AppBar is 56px on mobile / 64px from sm up; container padding differs too.
         height: {
@@ -2242,6 +2306,16 @@ export default function OrderThreadPage() {
         },
       }}
     >
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'row',
+          gap: 2,
+          flexGrow: 1,
+          minHeight: 0,
+          alignItems: 'stretch',
+        }}
+      >
       {/* Chat column */}
       <Box
         sx={{
@@ -2249,6 +2323,7 @@ export default function OrderThreadPage() {
           flexDirection: 'column',
           flexGrow: 1,
           minWidth: 0,
+          minHeight: 0,
         }}
       >
       {/* Header */}
@@ -2369,16 +2444,30 @@ export default function OrderThreadPage() {
       {sketchError && (
         <Alert severity="error" sx={{ mb: 1 }} onClose={() => setSketchError(null)}>{sketchError}</Alert>
       )}
-      {order.finalSketchMessageId != null && (
-        <Button
-          variant="outlined"
-          startIcon={jumpingToSketch ? <CircularProgress size={16} /> : <PushPinIcon />}
-          disabled={jumpingToSketch || loadingOlder}
-          onClick={() => void jumpToFinalSketch()}
+      {(order.pinnedSketches?.length ?? 0) > 0 && (
+        <Stack
+          direction="row"
+          spacing={0.75}
+          useFlexGap
+          flexWrap="wrap"
           sx={{ mb: 1, flexShrink: 0 }}
         >
-          {jumpingToSketch ? 'Загрузка итогового эскиза…' : 'Перейти к итоговому эскизу'}
-        </Button>
+          {order.pinnedSketches!.map((pin) => (
+            <Chip
+              key={pin.messageId}
+              size="small"
+              icon={
+                jumpingToSketchId === pin.messageId
+                  ? <CircularProgress size={14} color="inherit" />
+                  : <PushPinIcon />
+              }
+              label={`Закреплено ${pin.photoCount} фото ${formatPinDate(pin.createdAt)}`}
+              onClick={() => void jumpToPinnedSketch(pin.messageId)}
+              disabled={jumpingToSketchId != null || loadingOlder}
+              sx={{ fontWeight: 700 }}
+            />
+          ))}
+        </Stack>
       )}
       <Paper
         ref={scrollRef}
@@ -2425,12 +2514,12 @@ export default function OrderThreadPage() {
                 ownSide={isOwnSide(item.message.author.id, user?.id)}
                 onOpenImage={setLightbox}
                 resolvedSeconds={resolutionByRequestId.get(item.message.id) ?? null}
-                isFinalSketch={order.finalSketchMessageId === item.message.id}
-                orderId={order.id}
-                updatingFinalSketch={updatingFinalSketch}
-                onToggleFinalSketch={() => void handleFinalSketchChange(
-                  order.finalSketchMessageId === item.message.id ? null : item.message.id,
-                )}
+                isPinned={(order.pinnedSketches ?? []).some((pin) => pin.messageId === item.message.id)}
+                updatingPinnedSketch={updatingPinnedSketch}
+                onTogglePinnedSketch={() => {
+                  const pinned = (order.pinnedSketches ?? []).some((pin) => pin.messageId === item.message.id)
+                  void handlePinnedSketchChange(item.message.id, !pinned)
+                }}
               />
             ) : (
               <SystemEventRow key={item.key} event={item.event} />
@@ -2654,11 +2743,6 @@ export default function OrderThreadPage() {
       {/* Right info panel (desktop) */}
       <OrderInfoPanel
         order={order}
-        savingPrintPhoto={savingPrintPhoto}
-        printPhotoError={printPhotoError}
-        onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
-        onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
-        onOpenImage={setLightbox}
         orderStatusOptions={orderStatusOptions}
         sketchDesignerAssignees={sketchDesignerAssignees}
         revisionDesignerAssignees={revisionDesignerAssignees}
@@ -2702,6 +2786,25 @@ export default function OrderThreadPage() {
           void handleSaveSketchDates(startedAt, readyAt)
         }}
       />
+      </Box>
+
+      <PrintPhotosBar
+        order={order}
+        savingPrintPhoto={savingPrintPhoto}
+        printPhotoError={printPhotoError}
+        textSize={productionTextSize}
+        onTextSizeChange={(size) => {
+          setProductionTextSize(size)
+          try {
+            window.localStorage.setItem(PRODUCTION_TEXT_SIZE_KEY, size)
+          } catch {
+            /* ignore quota / private mode */
+          }
+        }}
+        onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
+        onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
+        onOpenImage={setLightbox}
+      />
 
       {/* Info + articles panels as a drawer (mobile / tablet) */}
       <Drawer
@@ -2714,14 +2817,6 @@ export default function OrderThreadPage() {
         <OrderInfoPanel
           inDrawer
           order={order}
-          savingPrintPhoto={savingPrintPhoto}
-          printPhotoError={printPhotoError}
-          onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
-          onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
-          onOpenImage={(image) => {
-            setInfoOpen(false)
-            setLightbox(image)
-          }}
           orderStatusOptions={orderStatusOptions}
           sketchDesignerAssignees={sketchDesignerAssignees}
           revisionDesignerAssignees={revisionDesignerAssignees}

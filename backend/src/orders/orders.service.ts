@@ -12,7 +12,7 @@ import { createReadStream } from 'fs';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { productionImage } from './production-image';
+import { productionImage, productionTextScale } from './production-image';
 import {
   BluesalesOrderStatus,
   OrderSource,
@@ -243,6 +243,17 @@ export class OrdersService {
       where: { id },
       include: {
         printPhotos: { orderBy: { id: 'asc' } },
+        pinnedSketches: {
+          orderBy: { message: { createdAt: 'desc' } },
+          include: {
+            message: {
+              select: {
+                createdAt: true,
+                _count: { select: { attachments: true } },
+              },
+            },
+          },
+        },
         sketchDesigner: { select: this.userSelect },
         revisionDesigner: { select: this.userSelect },
         lead: {
@@ -297,7 +308,8 @@ export class OrdersService {
     const { rawPayload, ...bluesalesInfo } = order.bluesalesInfo ?? {};
     return {
       ...base,
-      finalSketchMessageId: order.finalSketchMessageId,
+      finalSketchMessageId: order.pinnedSketches[0]?.messageId ?? null,
+      pinnedSketches: this.serializePinnedSketches(order.pinnedSketches),
       printPhotos: await this.attachments.serialize(order.printPhotos),
       source: order.source,
       dialogLink: order.dialogLink,
@@ -322,10 +334,14 @@ export class OrdersService {
     };
   }
 
-  async downloadProductionImage(id: number, attachmentId: number) {
+  async downloadProductionImage(id: number, attachmentId: number, textSize?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      select: { orderNumber: true, finalSketchMessageId: true, bluesalesInfo: { select: { rawPayload: true } } },
+      select: {
+        orderNumber: true,
+        pinnedSketches: { select: { messageId: true } },
+        bluesalesInfo: { select: { rawPayload: true } },
+      },
     });
     if (!order) throw new NotFoundException('Заказ не найден');
     const attachment = await this.prisma.attachment.findFirst({
@@ -333,7 +349,7 @@ export class OrdersService {
         id: attachmentId,
         OR: [
           { printPhotoOrderId: id },
-          ...(order.finalSketchMessageId == null ? [] : [{ message: { id: order.finalSketchMessageId, orderId: id } }]),
+          ...order.pinnedSketches.map((pin) => ({ message: { id: pin.messageId, orderId: id } })),
         ],
       },
     });
@@ -356,7 +372,13 @@ export class OrdersService {
       const destination = join(directory, 'production.png');
       let output: { size: number };
       try {
-        const image = await productionImage(source, order.orderNumber, this.extractArticles(order.bluesalesInfo?.rawPayload));
+        const image = await productionImage(
+          source,
+          order.orderNumber,
+          this.extractArticles(order.bluesalesInfo?.rawPayload),
+          this.extractOrderExtra(order.bluesalesInfo?.rawPayload).comment,
+          productionTextScale(textSize),
+        );
         output = await image.toFile(destination);
       } catch (error) {
         if (error instanceof BadRequestException) throw error;
@@ -687,6 +709,7 @@ export class OrdersService {
       where: { id },
       include: {
         printPhotos: { orderBy: { id: 'asc' } },
+        pinnedSketches: { select: { messageId: true } },
         sketchDesigner: { select: { id: true, name: true } },
         revisionDesigner: { select: { id: true, name: true } },
       },
@@ -703,24 +726,41 @@ export class OrdersService {
     const data: Prisma.OrderUpdateInput = {};
     const changes: OrderEventChange[] = [];
 
-    if (dto.finalSketchMessageId !== undefined) {
-      if (dto.finalSketchMessageId !== null) {
+    if (dto.pinSketchMessageId !== undefined || dto.unpinSketchMessageId !== undefined) {
+      const pinnedIds = new Set(existing.pinnedSketches.map((pin) => pin.messageId));
+      const pinId = dto.pinSketchMessageId;
+      const unpinId = dto.unpinSketchMessageId;
+      if (pinId !== undefined) {
         const message = await this.prisma.message.findFirst({
-          where: { id: dto.finalSketchMessageId, orderId: id },
+          where: { id: pinId, orderId: id },
           select: { id: true },
         });
         if (!message) {
           throw new BadRequestException('Сообщение не найдено в этом заказе');
         }
       }
-      data.finalSketchMessage = dto.finalSketchMessageId === null
-        ? { disconnect: true }
-        : { connect: { id: dto.finalSketchMessageId } };
-      changes.push({
-        field: 'finalSketchMessage',
-        oldValue: existing.finalSketchMessageId == null ? null : `Сообщение #${existing.finalSketchMessageId}`,
-        newValue: dto.finalSketchMessageId === null ? null : `Сообщение #${dto.finalSketchMessageId}`,
-      });
+      const willPin = pinId !== undefined && pinId !== unpinId && !pinnedIds.has(pinId);
+      const willUnpin = unpinId !== undefined && unpinId !== pinId && pinnedIds.has(unpinId);
+      if (willPin || willUnpin) {
+        data.pinnedSketches = {
+          ...(willPin && pinId !== undefined ? { create: { messageId: pinId } } : {}),
+          ...(willUnpin ? { deleteMany: { messageId: unpinId } } : {}),
+        };
+      }
+      if (willPin) {
+        changes.push({
+          field: 'pinnedSketch',
+          oldValue: null,
+          newValue: `Сообщение #${pinId}`,
+        });
+      }
+      if (willUnpin) {
+        changes.push({
+          field: 'pinnedSketch',
+          oldValue: `Сообщение #${unpinId}`,
+          newValue: null,
+        });
+      }
     }
 
     if (dto.printPhotoKeys !== undefined || dto.removePrintPhotoIds !== undefined) {
@@ -1507,6 +1547,19 @@ export class OrdersService {
       sketchStartedAt: order.sketchStartedAt,
       sketchReadyAt: order.sketchReadyAt,
     };
+  }
+
+  private serializePinnedSketches(
+    pins: Array<{
+      messageId: number;
+      message: { createdAt: Date; _count: { attachments: number } };
+    }>,
+  ) {
+    return pins.map((pin) => ({
+      messageId: pin.messageId,
+      createdAt: pin.message.createdAt,
+      photoCount: pin.message._count.attachments,
+    }));
   }
 
   private serializeOrderStatusSync(

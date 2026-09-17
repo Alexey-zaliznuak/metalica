@@ -6,9 +6,26 @@ import client from '../api/client'
 import { describeApiError } from '../api/errors'
 import { attachmentActionSx } from './AttachmentCard'
 
-export default function ProductionDownloadButton({ orderId, attachmentId }: {
+const compactActionSx = {
+  minWidth: 0,
+  height: 28,
+  borderTop: 0,
+  borderRadius: 0,
+  fontSize: 11,
+  lineHeight: 1,
+  textTransform: 'none',
+} as const
+
+export default function ProductionDownloadButton({
+  orderId,
+  attachmentId,
+  textSize = 'standard',
+  compact = false,
+}: {
   orderId: number
   attachmentId: number
+  textSize?: 'standard' | 'small'
+  compact?: boolean
 }) {
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -22,6 +39,7 @@ export default function ProductionDownloadButton({ orderId, attachmentId }: {
     try {
       const response = await client.get<Blob>(`/orders/${orderId}/attachments/${attachmentId}/production`, {
         responseType: 'blob',
+        params: { textSize },
       })
       const url = URL.createObjectURL(response.data)
       const link = document.createElement('a')
@@ -51,12 +69,13 @@ export default function ProductionDownloadButton({ orderId, attachmentId }: {
         fullWidth
         size="small"
         color="primary"
-        sx={attachmentActionSx}
+        variant={compact ? 'outlined' : 'text'}
+        sx={compact ? compactActionSx : attachmentActionSx}
         disabled={downloading}
         onClick={() => void download()}
         startIcon={downloading ? <CircularProgress size={16} color="inherit" /> : <DownloadIcon />}
       >
-        {downloading ? 'Подготовка файла…' : 'Скачать для производства'}
+        {downloading ? 'Подготовка…' : compact ? 'Для производства' : 'Скачать для производства'}
       </Button>
       {error && <Alert severity="error" sx={{ m: 1, overflowWrap: 'anywhere' }}>{error}</Alert>}
     </Box>

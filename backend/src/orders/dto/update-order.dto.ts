@@ -14,7 +14,12 @@ export class UpdateOrderDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  finalSketchMessageId?: number | null;
+  pinSketchMessageId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  unpinSketchMessageId?: number;
 
   @ValidateIf((_, value) => value !== undefined)
   @IsArray()

@@ -57,7 +57,8 @@ export interface UpdateUserPayload {
 }
 
 export interface UpdateOrderPayload {
-  finalSketchMessageId?: number | null
+  pinSketchMessageId?: number
+  unpinSketchMessageId?: number
   printPhotoKeys?: string[]
   removePrintPhotoIds?: number[]
   orderNumber?: string
@@ -147,9 +148,15 @@ export interface OrderArticle {
   comment?: string | null
 }
 
+export interface PinnedSketch {
+  messageId: number
+  createdAt: string
+  photoCount: number
+}
+
 export interface Order {
   id: number
-  finalSketchMessageId?: number | null
+  pinnedSketches?: PinnedSketch[]
   printPhotos?: Attachment[]
   orderNumber: string
   title: string | null

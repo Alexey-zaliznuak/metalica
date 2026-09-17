@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { writeFile, access } = require('node:fs/promises');
 const sharp = require('sharp');
-const { productionImage, productionHeader, productionArticleText } = require('../dist/orders/production-image');
+const { productionImage, productionHeader, productionArticleText, isShownOnProductionImage } = require('../dist/orders/production-image');
 const { OrdersService } = require('../dist/orders/orders.service');
 
 const article = (values) => ({ article: null, name: null, size: null, quantity: 1, comment: null, ...values });
@@ -66,6 +66,25 @@ test('number is mirrored within the left column, with downward arrows on both si
   }
 });
 
+test('prints the order comment above the mirrored number', async () => {
+  const empty = await productionHeader(1000, '1234567', []);
+  const blank = await productionHeader(1000, '1234567', [], '   ');
+  assert.equal(blank.height, empty.height);
+  const { buffer, height } = await productionHeader(1000, '1234567', [], 'Срочно, матовая');
+  assert.ok(height > empty.height);
+  const { data: normal, info } = await sharp({
+    text: { text: 'Срочно, матовая', font: 'sans 18', width: 300, wrap: 'word-char', rgba: true, dpi: 72 },
+  }).png().toBuffer({ resolveWithObject: true });
+  const number = await sharp({ text: { text: '1234567', font: 'sans 45', rgba: true, dpi: 72 } }).png().metadata();
+  const left = 65 + Math.floor((300 - info.width) / 2);
+  const top = height - 20 - number.height - 8 - info.height;
+  const comment = await sharp(buffer).extract({ left, top, width: info.width, height: info.height }).png().toBuffer();
+  const expected = await sharp(normal).flop().flatten({ background: 'white' }).raw().toBuffer();
+  const actual = await rawPixels(comment);
+  assert.equal(actual.length, expected.length);
+  assert.ok(actual.every((value, i) => Math.abs(value - expected[i]) <= 1), 'comment must sit above the mirrored number');
+});
+
 test('header scales with width and expands for long article lists without shrinking the photo', async () => {
   const small = await productionHeader(400, '1234567', articles);
   const large = await productionHeader(1600, '1234567', articles);
@@ -90,10 +109,40 @@ test('uses the same grouping as the order page, preserving distinct sizes and co
   ] });
   assert.equal(merged.length, 4);
   assert.equal(productionArticleText(merged[0]), 'доп лицо · ×7');
-  assert.equal(productionArticleText(merged[1]), 'Упаковка · ×1');
-  assert.equal(productionArticleText(merged[2]), 'Упаковка · ×1');
+  assert.equal(productionArticleText(merged[1]), 'Упаковка · 30×40 · ×1');
+  assert.equal(productionArticleText(merged[2]), 'Упаковка · 40×60 · ×1');
   assert.match(productionArticleText(merged[3]), /Особая обработка/);
-  assert.equal(productionArticleText(article({ article: 'SKU-1', name: 'Модель А', size: '60×90', quantity: 2, comment: 'Упаковать отдельно' })), 'SKU-1 — Модель А · ×2 · Упаковать отдельно');
+  assert.equal(productionArticleText(article({ article: 'SKU-1', name: 'Модель А', size: '60×90', quantity: 2, comment: 'Упаковать отдельно' })), 'SKU-1 — Модель А · 60×90 · ×2 · Упаковать отдельно');
+});
+
+test('keeps service SKUs off production photos and prints size next to the article', () => {
+  assert.equal(isShownOnProductionImage(article({ article: 'Работа художника в стиле Нейроарт' })), false);
+  assert.equal(isShownOnProductionImage(article({ name: 'Работа художника в стиле Нейроарт' })), false);
+  assert.equal(isShownOnProductionImage(article({ article: 'Картина на металле 40*60см' })), false);
+  assert.equal(isShownOnProductionImage(article({ article: 'картина на металле' })), false);
+  assert.equal(isShownOnProductionImage(article({ article: 'Упаковка №3', size: '40×60' })), true);
+  assert.equal(productionArticleText(article({ article: 'Упаковка №3', size: '40×60' })), 'Упаковка №3 · 40×60 · ×1');
+});
+
+test('small text size halves overlay fonts except the order number', async () => {
+  const standard = await productionHeader(1000, '1234567', articles, 'Срочно, матовая');
+  const small = await productionHeader(1000, '1234567', articles, 'Срочно, матовая', 0.5);
+  const numberOnly = await productionHeader(1000, '1234567', []);
+  assert.ok(small.height < standard.height);
+  const { info } = await sharp({ text: { text: '1234567', font: 'sans 45', rgba: true, dpi: 72 } })
+    .png().toBuffer({ resolveWithObject: true });
+  const left = 65 + Math.floor((300 - info.width) / 2);
+  const standardNumber = await sharp(standard.buffer).extract({
+    left, top: standard.height - 20 - info.height, width: info.width, height: info.height,
+  }).png().toBuffer();
+  const smallNumber = await sharp(small.buffer).extract({
+    left, top: small.height - 20 - info.height, width: info.width, height: info.height,
+  }).png().toBuffer();
+  const expected = await rawPixels(standardNumber);
+  const actual = await rawPixels(smallNumber);
+  assert.equal(actual.length, expected.length);
+  assert.ok(actual.every((value, i) => Math.abs(value - expected[i]) <= 1), 'order number must stay the same size');
+  assert.equal(numberOnly.height, (await productionHeader(1000, '1234567', [], null, 0.5)).height);
 });
 
 test('rejects corrupt and vector files instead of returning an unprocessed original', async () => {
@@ -101,12 +150,16 @@ test('rejects corrupt and vector files instead of returning an unprocessed origi
   await assert.rejects(productionImage(Buffer.from('<svg width="400" height="400"><rect width="400" height="400"/></svg>'), '123', []), /растровое/);
 });
 
-function setupDownload({ finalSketchMessageId = 25, found = true, storageError = false } = {}) {
+function setupDownload({ pinnedMessageId = 25, found = true, storageError = false } = {}) {
   let lookup;
   let sourcePath;
   let readCount = 0;
   const service = new OrdersService({
-    order: { findUnique: async () => ({ orderNumber: '29538603', finalSketchMessageId, bluesalesInfo: null }) },
+    order: { findUnique: async () => ({
+      orderNumber: '29538603',
+      pinnedSketches: pinnedMessageId == null ? [] : [{ messageId: pinnedMessageId }],
+      bluesalesInfo: null,
+    }) },
     attachment: { findFirst: async (input) => {
       lookup = input;
       return found ? { id: 7, objectKey: 'original.png', filename: 'original.png', mimeType: 'image/png' } : null;
@@ -123,14 +176,14 @@ function setupDownload({ finalSketchMessageId = 25, found = true, storageError =
   return { service, lookup: () => lookup, sourcePath: () => sourcePath, readCount: () => readCount };
 }
 
-test('download is scoped to this order’s print photos or its current final sketch', async () => {
+test('download is scoped to this order’s print photos or its pinned sketches', async () => {
   const state = setupDownload({ found: false });
   await assert.rejects(state.service.downloadProductionImage(10, 999), /этого заказа/);
   assert.deepEqual(state.lookup().where, { id: 999, OR: [
     { printPhotoOrderId: 10 }, { message: { id: 25, orderId: 10 } },
   ] });
   assert.equal(state.readCount(), 0);
-  const unmarked = setupDownload({ found: false, finalSketchMessageId: null });
+  const unmarked = setupDownload({ found: false, pinnedMessageId: null });
   await assert.rejects(unmarked.service.downloadProductionImage(10, 999));
   assert.deepEqual(unmarked.lookup().where.OR, [{ printPhotoOrderId: 10 }]);
 });

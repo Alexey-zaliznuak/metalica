@@ -139,8 +139,9 @@ export class OrdersController {
   downloadProductionImage(
     @Param('id', ParseIntPipe) id: number,
     @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @Query('textSize') textSize?: string,
   ) {
-    return this.orders.downloadProductionImage(id, attachmentId);
+    return this.orders.downloadProductionImage(id, attachmentId, textSize);
   }
 
   @Patch(':id')

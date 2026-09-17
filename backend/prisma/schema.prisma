@@ -116,8 +116,7 @@ model Order {
   note                  String?
   source                OrderSource         @default(MANUAL)
   messages              Message[]
-  finalSketchMessage    Message?            @relation("OrderFinalSketch", fields: [finalSketchMessageId], references: [id], onDelete: SetNull)
-  finalSketchMessageId  Int?                @unique
+  pinnedSketches        OrderPinnedSketch[]
   printPhotos           Attachment[]        @relation("OrderPrintPhoto")
   revisions             Revision[]
   events                OrderEvent[]
@@ -378,11 +377,25 @@ model ChatMessage {
   @@index([authorId, createdAt])
 }
 
+model OrderPinnedSketch {
+  id        Int      @id @default(autoincrement())
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId   Int
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderId, messageId])
+  @@index([orderId, createdAt])
+  @@index([messageId])
+}
+
 model Message {
   id              Int              @id @default(autoincrement())
   order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
   orderId         Int
-  finalSketchFor  Order?           @relation("OrderFinalSketch")
+  pinnedInOrders  OrderPinnedSketch[]
   author          User             @relation(fields: [authorId], references: [id])
   authorId        Int
   body            String?

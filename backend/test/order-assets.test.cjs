@@ -8,8 +8,8 @@ const { MAX_UPLOAD_BYTES } = require('../dist/storage/upload.config');
 
 const actor = { id: 1, role: 'MANAGER', scopes: [] };
 
-function setup({ photos = [], stat = { size: 123, mimeType: 'image/jpeg' } } = {}) {
-  const existing = { id: 10, finalSketchMessageId: 20, printPhotos: photos };
+function setup({ photos = [], pinnedSketches = [{ messageId: 20 }], stat = { size: 123, mimeType: 'image/jpeg' } } = {}) {
+  const existing = { id: 10, pinnedSketches, printPhotos: photos };
   const writes = [];
   const events = [];
   const prisma = {
@@ -18,7 +18,7 @@ function setup({ photos = [], stat = { size: 123, mimeType: 'image/jpeg' } } = {
       update: async (input) => { writes.push(input); return existing; },
     },
     message: {
-      findFirst: async ({ where }) => where.orderId === 10 && where.id === 21 ? { id: 21 } : null,
+      findFirst: async ({ where }) => where.orderId === 10 && (where.id === 20 || where.id === 21) ? { id: where.id } : null,
     },
   };
   const service = new OrdersService(
@@ -29,20 +29,21 @@ function setup({ photos = [], stat = { size: 123, mimeType: 'image/jpeg' } } = {
   return { service, writes, events };
 }
 
-test('a message from another order cannot become the final sketch', async () => {
+test('a message from another order cannot be pinned as a sketch', async () => {
   const { service, writes } = setup();
-  await assert.rejects(service.update(10, { finalSketchMessageId: 99 }, actor), /в этом заказе/);
+  await assert.rejects(service.update(10, { pinSketchMessageId: 99 }, actor), /в этом заказе/);
   assert.equal(writes.length, 0);
 });
 
-test('replacing and clearing the sketch updates the single order relation', async () => {
+test('pinning and unpinning sketches updates the order relation', async () => {
   const { service, writes, events } = setup();
-  await service.update(10, { finalSketchMessageId: 21 }, actor);
-  await service.update(10, { finalSketchMessageId: null }, actor);
-  assert.deepEqual(writes.map(({ data }) => data.finalSketchMessage), [
-    { connect: { id: 21 } }, { disconnect: true },
+  await service.update(10, { pinSketchMessageId: 21 }, actor);
+  await service.update(10, { unpinSketchMessageId: 20 }, actor);
+  assert.deepEqual(writes.map(({ data }) => data.pinnedSketches), [
+    { create: { messageId: 21 } }, { deleteMany: { messageId: 20 } },
   ]);
-  assert.equal(events[0][2][0].field, 'finalSketchMessage');
+  assert.equal(events[0][2][0].field, 'pinnedSketch');
+  assert.equal(events[1][2][0].field, 'pinnedSketch');
 });
 
 test('failed photo validation leaves previous photos intact', async () => {
@@ -113,14 +114,14 @@ test('empty arrays and unrelated updates leave existing photos unchanged', async
 
 test('API validates every key and removal ID and rejects null arrays', async () => {
   for (const payload of [
-    { finalSketchMessageId: -1 }, { finalSketchMessageId: '21' },
-    { finalSketchMessageId: 1.5 }, { printPhotoKeys: 'one.jpg' }, { printPhotoKeys: [''] },
+    { pinSketchMessageId: -1 }, { pinSketchMessageId: '21' },
+    { pinSketchMessageId: 1.5 }, { unpinSketchMessageId: 0 }, { printPhotoKeys: 'one.jpg' }, { printPhotoKeys: [''] },
     { printPhotoKeys: ['one.jpg', 1] }, { printPhotoKeys: null },
     { removePrintPhotoIds: null }, { removePrintPhotoIds: [1, -2] }, { removePrintPhotoIds: ['1'] },
   ]) {
     assert.ok((await validate(Object.assign(new UpdateOrderDto(), payload))).length > 0);
   }
   assert.equal((await validate(Object.assign(new UpdateOrderDto(), {
-    finalSketchMessageId: null, printPhotoKeys: ['one.jpg', 'two.jpg'], removePrintPhotoIds: [1, 2],
+    pinSketchMessageId: 21, unpinSketchMessageId: 20, printPhotoKeys: ['one.jpg', 'two.jpg'], removePrintPhotoIds: [1, 2],
   }))).length, 0);
 });
