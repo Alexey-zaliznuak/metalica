@@ -25,7 +25,8 @@ const currentDate = () => new Date(Math.floor((Date.now() + 2 * HOUR) / (24 * HO
 function UsageChart({ data }: { data: DevMetrics }) {
   const start = new Date(data.period.start).getTime()
   const now = Math.min(new Date(data.generatedAt).getTime(), start + 24 * HOUR)
-  const top = Math.max(60, data.summary.totalMs / 60_000, (data.forecast.projectedTotalMs ?? 0) / 60_000) * 1.15
+  const targetMs = data.summary.targetMs
+  const top = Math.max(targetMs / 60_000, data.summary.totalMs / 60_000, (data.forecast.projectedTotalMs ?? 0) / 60_000) * 1.15
   const x = (timestamp: number) => 52 + (timestamp - start) / (24 * HOUR) * 880
   const y = (ms: number) => 252 - (ms / 60_000) / top * 216
   const actual = [{ timestamp: start, ms: 0 }, ...data.hourly
@@ -44,8 +45,8 @@ function UsageChart({ data }: { data: DevMetrics }) {
           <text x={42} y={y(top * fraction * 60_000) + 4} textAnchor="end" fill="#75869a" fontSize={11}>{Math.round(top * fraction)}</text>
         </g>)}
         <text x={15} y={17} fill="#75869a" fontSize={11}>мин</text>
-        <line x1={52} x2={932} y1={y(HOUR)} y2={y(HOUR)} stroke="#e89b34" strokeDasharray="5 5" />
-        <text x={929} y={y(HOUR) - 7} textAnchor="end" fill="#bc7620" fontSize={11}>Ориентир · 60 минут</text>
+        <line x1={52} x2={932} y1={y(targetMs)} y2={y(targetMs)} stroke="#e89b34" strokeDasharray="5 5" />
+        <text x={929} y={y(targetMs) - 7} textAnchor="end" fill="#bc7620" fontSize={11}>Ориентир · 3 часа</text>
         <polygon points={`52,252 ${actualPoints} ${x(now)},252`} fill="url(#usage-area)" />
         <polyline points={actualPoints} stroke="#1591dc" strokeWidth={3} fill="none" strokeLinejoin="round" />
         {forecastPoints && <polyline points={forecastPoints} stroke="#8a77d8" strokeWidth={2.5} strokeDasharray="7 5" fill="none" />}
@@ -98,14 +99,14 @@ export default function DevMetricsPage() {
   const selectedDate = date || data?.period.date || currentDate()
   const shiftDate = (days: number) => chooseDate(new Date(new Date(`${selectedDate}T12:00:00Z`).getTime() + days * 24 * HOUR).toISOString().slice(0, 10))
   const forecast = data?.forecast
-  const forecastValue = forecast?.status === 'reached' ? 'Час уже набран'
+  const forecastValue = forecast?.status === 'reached' ? '3 часа уже набраны'
     : forecast?.status === 'will-reach' && forecast.reachesAt ? `≈ ${time(forecast.reachesAt)} МСК`
       : forecast?.status === 'below-target' ? 'Не достигнем'
         : forecast?.status === 'closed' ? 'Период завершён' : 'Мало данных'
   const forecastDetail = forecast?.projectedTotalMs != null
     ? `Ожидается ${duration(forecast.projectedTotalMs)} к 01:00`
     : forecast?.status === 'closed' ? 'Показаны фактические итоги суток'
-      : forecast?.status === 'reached' ? 'Суммарно набрано не менее 60 минут'
+      : forecast?.status === 'reached' ? 'Суммарно набрано не менее 3 часов'
         : 'Нужно ≥ 15 минут наблюдения и ≥ 5 успешных запросов'
 
   return <Stack spacing={3}>
@@ -134,14 +135,14 @@ export default function DevMetricsPage() {
     {!data && loading && <Box sx={{ py: 8, textAlign: 'center' }}><CircularProgress /></Box>}
     {data && <>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', lg: 'repeat(4, 1fr)' }, gap: 2 }}>
-        <Stat title="Использовано за сутки" value={duration(data.summary.totalMs)} detail={`${(data.summary.totalMs / HOUR * 100).toFixed(1)}% от одного часа`} />
-        <Stat title="Осталось до часа" value={duration(data.summary.remainingMs)} detail="Сумма времени успешных запросов" />
+        <Stat title="Использовано за сутки" value={duration(data.summary.totalMs)} detail={`${(data.summary.totalMs / data.summary.targetMs * 100).toFixed(1)}% от трёх часов`} />
+        <Stat title="Осталось до 3 часов" value={duration(data.summary.remainingMs)} detail="Сумма времени успешных запросов" />
         <Stat title="Успешные запросы" value={number(data.summary.count)} detail={`Средний запрос · ${duration(data.summary.averageMs)}`} />
-        <Stat title="Когда достигнем часа" value={forecastValue} detail={forecastDetail} />
+        <Stat title="Когда достигнем 3 часов" value={forecastValue} detail={forecastDetail} />
       </Box>
       <Card sx={{ p: { xs: 2, md: 3 } }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap" mb={2}>
-          <Box><Typography variant="h6">Накопленное время</Typography><Typography variant="body2" color="text.secondary">Как расходуется час в течение суток</Typography></Box>
+          <Box><Typography variant="h6">Накопленное время</Typography><Typography variant="body2" color="text.secondary">Как расходуются 3 часа в течение суток</Typography></Box>
           <Stack direction="row" spacing={2}><Typography variant="caption" sx={{ color: '#1591dc' }}>● Факт</Typography><Typography variant="caption" sx={{ color: '#8a77d8' }}>┄ Прогноз</Typography></Stack>
         </Stack>
         <UsageChart data={data} />

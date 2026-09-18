@@ -1,7 +1,7 @@
 export const USAGE_TIME_ZONE = 'Europe/Moscow';
 export const HOUR_MS = 3_600_000;
 export const DAY_MS = 24 * HOUR_MS;
-export const USAGE_TARGET_MS = HOUR_MS;
+export const USAGE_TARGET_MS = 3 * HOUR_MS;
 // 01:00 МСК = 22:00 UTC предыдущего дня. МСК использует UTC+3.
 export function usagePeriodStart(now: Date): Date {
   return new Date(Math.floor((now.getTime() + 2 * HOUR_MS) / DAY_MS) * DAY_MS - 2 * HOUR_MS);

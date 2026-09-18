@@ -93,14 +93,14 @@ test('stored request uses its start period even if completed after 01:00', async
   assert.equal(usageDateKey(saved.periodStart), '2026-09-14');
 });
 
-test('forecast estimates hour threshold, handles low usage and insufficient data', () => {
-  const input = { now: at('12:00:00'), periodStart: at('01:00:00'), totalMs: 30 * 60_000, recentMs: 10 * 60_000, recentCount: 60, observedFrom: at('06:00:00') };
+test('forecast estimates 3-hour threshold, handles low usage and insufficient data', () => {
+  const input = { now: at('12:00:00'), periodStart: at('01:00:00'), totalMs: 150 * 60_000, recentMs: 10 * 60_000, recentCount: 60, observedFrom: at('06:00:00') };
   const forecast = usageForecast(input);
   assert.equal(forecast.status, 'will-reach');
   assert.equal(forecast.reachesAt.getTime(), at('15:00:00').getTime());
   assert.equal(usageForecast({ ...input, recentMs: 1000 }).status, 'below-target');
   assert.equal(usageForecast({ ...input, recentCount: 2 }).status, 'insufficient-data');
-  assert.equal(usageForecast({ ...input, totalMs: HOUR_MS }).status, 'reached');
+  assert.equal(usageForecast({ ...input, totalMs: 3 * HOUR_MS }).status, 'reached');
   assert.equal(usageForecast({ ...input, now: new Date('2026-09-16T01:00:00+03:00') }).status, 'closed');
 });
 
@@ -109,7 +109,7 @@ test('forecast accounts for night pause and midnight/morning slowdown', () => {
   assert.equal(weightedSyncTime(at('06:00:00').getTime(), at('09:00:00').getTime()), HOUR_MS);
   assert.equal(weightedSyncTime(at('21:00:00').getTime(), new Date('2026-09-16T00:00:00+03:00').getTime()), 3 * HOUR_MS);
   assert.equal(weightedSyncTime(at('00:00:00').getTime(), at('01:00:00').getTime()), HOUR_MS / 3);
-  const forecast = usageForecast({ now: at('21:00:00'), periodStart: at('01:00:00'), totalMs: 50 * 60_000, recentMs: 10 * 60_000, recentCount: 60, observedFrom: at('06:00:00') });
+  const forecast = usageForecast({ now: at('21:00:00'), periodStart: at('01:00:00'), totalMs: 170 * 60_000, recentMs: 10 * 60_000, recentCount: 60, observedFrom: at('06:00:00') });
   assert.equal(forecast.reachesAt.toISOString(), '2026-09-15T19:00:00.000Z'); // 22:00 МСК
 });
 
