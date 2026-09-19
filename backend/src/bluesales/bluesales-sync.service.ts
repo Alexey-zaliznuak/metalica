@@ -21,10 +21,16 @@ import {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Cron быстрого инкрементального синка. Переопределяется через
+ * Cron быстрого инкрементального синка заказов. Переопределяется через
  * BLUESALES_FAST_SYNC_CRON (читается на этапе загрузки модуля).
  */
 const FAST_SYNC_CRON = process.env.BLUESALES_FAST_SYNC_CRON ?? '*/5 * * * *';
+
+/**
+ * Cron инкрементального синка лидов по дате последнего контакта.
+ * Переопределяется через BLUESALES_LEAD_SYNC_CRON (читается на этапе загрузки модуля).
+ */
+const LEAD_SYNC_CRON = process.env.BLUESALES_LEAD_SYNC_CRON ?? '*/30 * * * *';
 
 /** Сравнивает наборы id тегов без учёта порядка. */
 function sameTagIdSet(left: string[], right: string[]): boolean {
@@ -74,12 +80,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   /** Пауза между итерациями бэкфилла меток эскиза, когда работы нет (мс). */
   private readonly sketchBackfillIdleMs: number;
 
-  /** Защита от параллельного запуска быстрого синка. */
+  /** Защита от параллельного запуска быстрого синка заказов. */
   private fastSyncRunning = false;
+  /** Защита от параллельного запуска инкрементального синка лидов. */
+  private leadSyncRunning = false;
   /** Защита от параллельного запуска периодического добора. */
   private backfillRunning = false;
   /** Счётчики позволяют замедлить cron-задачи вместе с постоянными циклами. */
-  private readonly slowCronTicks = { fast: 0, backfill: 0 };
+  private readonly slowCronTicks = { fast: 0, lead: 0, backfill: 0 };
   /** Флаг остановки фонового цикла (выставляется при shutdown). */
   private loopActive = false;
   /** Ручные обновления с карточки заказа: id заказа → в работе по одному. */
@@ -127,7 +135,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     this.logger.log(
-      `BlueSales sync активен: cron "${FAST_SYNC_CRON}" + refresh-loop заказов + loop лидов` +
+      `BlueSales sync активен: cron заказов "${FAST_SYNC_CRON}" + cron лидов "${LEAD_SYNC_CRON}"` +
+        ` + refresh-loop заказов + loop лидов` +
         ` + backfill "${BACKFILL_CRON}" за ${this.backfillDays} дн.` +
         ` + ночные паузы x3 (00:00–01:00 и 06:00–09:00 ${BLUESALES_SYNC_TIME_ZONE})` +
         ` + все синки выключены с 01:00 до 06:00` +
@@ -242,108 +251,124 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     return raw === 'true' || raw === '1';
   }
 
-  // ─── Быстрый инкрементальный синк (каждые 5 минут) ────────────────────────
+  // ─── Быстрый инкрементальный синк заказов ─────────────────────────────────
 
   /**
-   * По cron тянет заказы за последние ~N минут (перекрытие) и досоздаёт новые,
-   * а также инкрементально подтягивает новых/активных лидов по дате последнего
-   * контакта (в т.ч. тех, у кого ещё нет заказа).
+   * По cron тянет заказы за последние ~N минут (перекрытие) и досоздаёт новые.
+   * Клиента из заказа всё равно upsert'ит; беззаказных лидов здесь нет —
+   * их забирает {@link handleLeadSync}.
    * Перекрытие исключает пропуск записей на границе интервалов.
    */
   @Cron(FAST_SYNC_CRON)
   async handleFastSync(): Promise<void> {
     if (!this.enabled || !this.api.isConfigured) return;
     const schedule = this.currentSyncSchedule();
-    if (!schedule.ordersEnabled && !schedule.leadsEnabled) return;
+    if (!schedule.ordersEnabled) return;
     if (this.fastSyncRunning) {
-      this.logger.debug('Быстрый синк ещё выполняется — пропуск');
+      this.logger.debug('Быстрый синк заказов ещё выполняется — пропуск');
       return;
     }
     if (!this.shouldRunScheduledSync('fast', schedule.pauseMultiplier)) return;
     this.fastSyncRunning = true;
     try {
-      await this.api.withLabel('fast-sync', () => this.runFastSync({
-        orders: schedule.ordersEnabled,
-        leads: schedule.leadsEnabled,
-      }));
+      await this.api.withLabel('fast-sync', () => this.runFastSync());
     } catch (err) {
-      this.logger.error(`Быстрый синк BS ошибка: ${(err as Error).message}`);
+      this.logger.error(`Быстрый синк заказов BS ошибка: ${(err as Error).message}`);
     } finally {
       this.fastSyncRunning = false;
     }
   }
 
-  async runFastSync(
-    options: { orders?: boolean; leads?: boolean } = {},
-  ): Promise<{ orders: number; leads: number }> {
+  async runFastSync(): Promise<{ orders: number }> {
     const schedule = this.currentSyncSchedule();
-    if (schedule.phase === 'paused') return { orders: 0, leads: 0 };
-    const syncOrders = (options.orders ?? true) && schedule.ordersEnabled;
-    const syncLeads = (options.leads ?? true) && schedule.leadsEnabled;
+    if (schedule.phase === 'paused' || !schedule.ordersEnabled) return { orders: 0 };
     const now = new Date();
     const dateFrom = new Date(now.getTime() - this.fastSyncOverlapMinutes * 60 * 1000);
 
     // Ответ описывает состояние BlueSales на момент запроса, поэтому метку
     // наблюдения фиксируем до сетевого вызова, а не после него.
     const statusObservedAt = new Date();
-    const bsOrders = syncOrders ? await this.api.getOrders(dateFrom, now) : [];
-    if (this.currentSyncSchedule().phase === 'paused') return { orders: 0, leads: 0 };
+    const bsOrders = await this.api.getOrders(dateFrom, now);
+    if (this.currentSyncSchedule().phase === 'paused') return { orders: 0 };
     const leadIds = new Set<number>();
     let synced = 0;
 
-    if (syncOrders) {
-      // См. refreshBatch: наблюдение датируем началом запроса, иначе постраничная
-      // выгрузка «состарит» данные, а метка времени останется свежей.
-      const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
-        where: { bsOrderId: { in: bsOrders.map((o) => o.id) } },
-        select: { bsOrderId: true, orderId: true },
-      });
-      const existingByBsId = new Map(existingInfos.map((info) => [info.bsOrderId, info]));
+    // См. refreshBatch: наблюдение датируем началом запроса, иначе постраничная
+    // выгрузка «состарит» данные, а метка времени останется свежей.
+    const existingInfos = await this.prisma.bluesalesOrderInfo.findMany({
+      where: { bsOrderId: { in: bsOrders.map((o) => o.id) } },
+      select: { bsOrderId: true, orderId: true },
+    });
+    const existingByBsId = new Map(existingInfos.map((info) => [info.bsOrderId, info]));
 
-      await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
+    await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
 
-      for (const bsOrder of bsOrders) {
-        if (!this.currentSyncSchedule().ordersEnabled) break;
-        try {
-          const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
-          if (leadId) leadIds.add(leadId);
-          await this.upsertOrder(
-            bsOrder,
-            leadId,
-            existingByBsId.get(bsOrder.id) ?? null,
-            statusObservedAt,
-          );
-          synced++;
-        } catch (err) {
-          this.logger.error(
-            `Быстрый синк: не удалось обработать BS#${bsOrder.id}: ${(err as Error).message}`,
-          );
-        }
+    for (const bsOrder of bsOrders) {
+      if (!this.currentSyncSchedule().ordersEnabled) break;
+      try {
+        const leadId = await this.upsertLead(bsOrder.customer ?? null, false);
+        if (leadId) leadIds.add(leadId);
+        await this.upsertOrder(
+          bsOrder,
+          leadId,
+          existingByBsId.get(bsOrder.id) ?? null,
+          statusObservedAt,
+        );
+        synced++;
+      } catch (err) {
+        this.logger.error(
+          `Быстрый синк: не удалось обработать BS#${bsOrder.id}: ${(err as Error).message}`,
+        );
       }
     }
 
-    // Инкрементальный синк новых/активных лидов по дате последнего контакта.
-    // Ловит тех, кто написал, но заказ ещё не оформил (синк заказов их не видит).
-    // BS фильтрует даты с точностью до дня, поэтому окно перекрытия фактически
-    // охватывает текущий (и при переходе через полночь — вчерашний) день.
-    const newLeads = syncLeads && this.currentSyncSchedule().leadsEnabled
-      ? await this.syncRecentLeads(dateFrom, now)
-      : 0;
-
     this.logger.log(
-      `Быстрый синк BS: заказов ${synced}/${bsOrders.length}, ` +
-        `лидов из заказов ${leadIds.size}, новых/активных лидов ${newLeads}`,
+      `Быстрый синк BS: заказов ${synced}/${bsOrders.length}, лидов из заказов ${leadIds.size}`,
     );
-    return { orders: synced, leads: leadIds.size + newLeads };
+    return { orders: synced };
   }
 
-  /** Инкрементальный синк лидов по дате последнего контакта за окно [from, to]. */
-  private async syncRecentLeads(from: Date, to: Date): Promise<number> {
+  // ─── Инкрементальный синк лидов ───────────────────────────────────────────
+
+  /**
+   * По cron подтягивает новых/активных лидов по дате последнего контакта
+   * (в т.ч. тех, у кого ещё нет заказа). BS фильтрует даты с точностью до дня,
+   * поэтому окно перекрытия фактически охватывает текущий (и при переходе
+   * через полночь — вчерашний) день.
+   */
+  @Cron(LEAD_SYNC_CRON)
+  async handleLeadSync(): Promise<void> {
+    if (!this.enabled || !this.api.isConfigured) return;
+    const schedule = this.currentSyncSchedule();
+    if (!schedule.leadsEnabled) return;
+    if (this.leadSyncRunning) {
+      this.logger.debug('Инкрементальный синк лидов ещё выполняется — пропуск');
+      return;
+    }
+    if (!this.shouldRunScheduledSync('lead', schedule.pauseMultiplier)) return;
+    this.leadSyncRunning = true;
+    try {
+      await this.api.withLabel('lead-fast-sync', () => this.runLeadSync());
+    } catch (err) {
+      this.logger.error(`Инкрементальный синк лидов BS ошибка: ${(err as Error).message}`);
+    } finally {
+      this.leadSyncRunning = false;
+    }
+  }
+
+  async runLeadSync(): Promise<{ leads: number }> {
+    const schedule = this.currentSyncSchedule();
+    if (schedule.phase === 'paused' || !schedule.leadsEnabled) return { leads: 0 };
+    const now = new Date();
+    const dateFrom = new Date(now.getTime() - this.fastSyncOverlapMinutes * 60 * 1000);
     const customers = await this.api.getCustomers({
-      lastContactFrom: from,
-      lastContactTo: to,
+      lastContactFrom: dateFrom,
+      lastContactTo: now,
     });
-    return this.upsertLeads(customers);
+    if (!this.currentSyncSchedule().leadsEnabled) return { leads: 0 };
+    const leads = await this.upsertLeads(customers);
+    this.logger.log(`Инкрементальный синк лидов BS: ${leads}/${customers.length}`);
+    return { leads };
   }
 
   // ─── Периодический добор «потеряшек» (раз в час) ──────────────────────────

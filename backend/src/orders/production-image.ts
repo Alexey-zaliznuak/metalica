@@ -59,6 +59,7 @@ export async function productionHeader(
   articles: ProductionArticle[],
   comment?: string | null,
   textScale = 1,
+  deliveryService?: string | null,
 ) {
   const padding = Math.max(1, Math.round(width * 0.02));
   const numberWidth = Math.max(1, Math.round(width * 0.30));
@@ -87,18 +88,29 @@ export async function productionHeader(
   const commentGap = commentBlock ? Math.max(1, Math.round(width * 0.008 * scale)) : 0;
   const articleText = articles.filter(isShownOnProductionImage)
     .map(productionArticleText).filter(Boolean).map(escapeMarkup).join('\n');
+  const bodyFont = Math.max(1, Math.round(width * 0.0144 * scale));
   const list = articleText ? await sharp({ text: {
     text: articleText,
-    font: `sans ${Math.max(1, Math.round(width * 0.0144 * scale))}`,
+    font: `sans ${bodyFont}`,
     width: articlesWidth,
     wrap: 'word-char',
     spacing: Math.max(1, Math.round(width * 0.007 * scale)),
     rgba: true,
     dpi: 72,
   } }).flop().png().toBuffer({ resolveWithObject: true }) : null;
+  const deliveryText = escapeMarkup(plainText(deliveryService ?? ''));
+  const deliverySource = deliveryText ? await sharp({ text: {
+    text: deliveryText,
+    font: `sans ${bodyFont}`,
+    rgba: true,
+    dpi: 72,
+  } }).flop().png().toBuffer({ resolveWithObject: true }) : null;
+  const delivery = deliverySource
+    ? await sharp(deliverySource.data).rotate(90).png().toBuffer({ resolveWithObject: true })
+    : null;
   const arrowHeight = Math.max(2, Math.round(width * 0.035));
   const leftStack = number.info.height + commentGap + (commentBlock?.info.height ?? 0);
-  const height = Math.max(leftStack, list?.info.height ?? 0, arrowHeight) + 2 * padding;
+  const height = Math.max(leftStack, list?.info.height ?? 0, arrowHeight, delivery?.info.height ?? 0) + 2 * padding;
   const bottom = height - Math.max(1, Math.round(width * 0.006));
   const stroke = Math.max(1, width * 0.002);
   const head = width * 0.006;
@@ -117,7 +129,14 @@ export async function productionHeader(
       top: numberTop - commentGap - commentBlock.info.height,
     });
   }
-  if (list) overlays.push({ input: list.data, left: articlesLeft, top: height - padding - list.info.height });
+  if (delivery) {
+    overlays.push({
+      input: delivery.data,
+      left: Math.round(width * 0.395 - head - delivery.info.width),
+      top: height - padding - delivery.info.height,
+    });
+  }
+  if (list) overlays.push({ input: list.data, left: width - padding - list.info.width, top: height - padding - list.info.height });
   const buffer = await sharp({ create: { width, height, channels: 3, background: 'white' } })
     .composite(overlays).png().toBuffer();
   return { buffer, height };
@@ -130,6 +149,7 @@ export async function productionImage(
   articles: ProductionArticle[],
   comment?: string | null,
   textScale = 1,
+  deliveryService?: string | null,
 ) {
   const photo = sharp(input, { limitInputPixels: MAX_PIXELS });
   const metadata = await photo.metadata();
@@ -140,7 +160,7 @@ export async function productionImage(
   const width = (rotated ? metadata.height : metadata.width) ?? 0;
   const height = (rotated ? metadata.width : metadata.height) ?? 0;
   if (width < 32 || height < 1) throw new BadRequestException('Изображение слишком маленькое');
-  const header = await productionHeader(width, orderNumber, articles, comment, textScale);
+  const header = await productionHeader(width, orderNumber, articles, comment, textScale, deliveryService);
   if (width * (height + header.height) > MAX_PIXELS) {
     throw new BadRequestException('Изображение с полем для производства превышает допустимый размер');
   }

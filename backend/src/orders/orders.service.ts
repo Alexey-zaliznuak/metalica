@@ -372,12 +372,14 @@ export class OrdersService {
       const destination = join(directory, 'production.png');
       let output: { size: number };
       try {
+        const extra = this.extractOrderExtra(order.bluesalesInfo?.rawPayload);
         const image = await productionImage(
           source,
           order.orderNumber,
           this.extractArticles(order.bluesalesInfo?.rawPayload),
-          this.extractOrderExtra(order.bluesalesInfo?.rawPayload).comment,
+          extra.comment,
           productionTextScale(textSize),
+          extra.deliveryService,
         );
         output = await image.toFile(destination);
       } catch (error) {

@@ -145,6 +145,41 @@ test('small text size halves overlay fonts except the order number', async () =>
   assert.equal(numberOnly.height, (await productionHeader(1000, '1234567', [], null, 0.5)).height);
 });
 
+async function rightmostInk(buffer) {
+  const { data, info } = await sharp(buffer).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let maxX = 0;
+  for (let y = 0; y < info.height; y++) {
+    for (let x = info.width - 1; x >= 0; x--) {
+      const offset = (y * info.width + x) * 3;
+      if (data[offset] < 250 || data[offset + 1] < 250 || data[offset + 2] < 250) {
+        if (x > maxX) maxX = x;
+        break;
+      }
+    }
+  }
+  return maxX;
+}
+
+test('keeps article text against the right edge in both text sizes', async () => {
+  const standard = await productionHeader(1000, '1234567', articles);
+  const small = await productionHeader(1000, '1234567', articles, null, 0.5);
+  const standardRight = await rightmostInk(standard.buffer);
+  const smallRight = await rightmostInk(small.buffer);
+  assert.ok(standardRight > 900, 'standard articles must sit on the right edge');
+  assert.ok(Math.abs(standardRight - smallRight) <= 8, 'small articles must keep the same right edge');
+});
+
+test('prints the delivery service beside the inner arrow', async () => {
+  const empty = await productionHeader(1000, '1234567', []);
+  const withService = await productionHeader(1000, '1234567', [], null, 1, 'СДЭК');
+  assert.ok(withService.height >= empty.height);
+  const region = { left: 368, top: 0, width: 20, height: withService.height };
+  const blank = await sharp(empty.buffer).extract({ ...region, height: empty.height }).removeAlpha().raw().toBuffer();
+  const labeled = await sharp(withService.buffer).extract(region).removeAlpha().raw().toBuffer();
+  assert.ok(blank.every((value) => value > 240), 'the gap beside the inner arrow starts empty');
+  assert.ok(labeled.some((value) => value < 30), 'delivery service must sit beside the inner arrow');
+});
+
 test('rejects corrupt and vector files instead of returning an unprocessed original', async () => {
   await assert.rejects(productionImage(Buffer.from('broken image'), '123', []));
   await assert.rejects(productionImage(Buffer.from('<svg width="400" height="400"><rect width="400" height="400"/></svg>'), '123', []), /растровое/);

@@ -43,8 +43,10 @@ test('cron, direct and startup syncs do no work during the pause', async (t) => 
   t.mock.timers.enable({ apis: ['Date'], now: at('02:00:00') });
   const service = syncService();
   await service.handleFastSync();
+  await service.handleLeadSync();
   await service.handleRecentBackfill();
-  assert.deepEqual(await service.runFastSync(), { orders: 0, leads: 0 });
+  assert.deepEqual(await service.runFastSync(), { orders: 0 });
+  assert.deepEqual(await service.runLeadSync(), { leads: 0 });
   await service.runFullSync();
   assert.equal(await service.syncOrdersWindow(at('00:00:00'), at('02:00:00')), 0);
   assert.equal(await service.syncLeadsWindow(at('00:00:00'), at('02:00:00')), 0);
@@ -94,7 +96,35 @@ test('an orders response arriving after 01:00 is not applied', async (t) => {
     t.mock.timers.setTime(at('01:00:00').getTime());
     return [{ id: 1 }];
   };
-  assert.deepEqual(await service.runFastSync(), { orders: 0, leads: 0 });
+  assert.deepEqual(await service.runFastSync(), { orders: 0 });
+});
+
+test('a leads response arriving after 01:00 is not applied', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: at('00:59:59') });
+  const service = syncService();
+  service.api.getCustomers = async () => {
+    t.mock.timers.setTime(at('01:00:00').getTime());
+    return [{ id: 1 }];
+  };
+  assert.deepEqual(await service.runLeadSync(), { leads: 0 });
+});
+
+test('order and lead incremental syncs use separate request labels', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: at('12:00:00') });
+  const labels = [];
+  const service = new BluesalesSyncService(
+    { isConfigured: true, withLabel: (label, task) => { labels.push(label); return task(); } },
+    forbidden,
+    config,
+    null,
+    null,
+  );
+  service.logger = { log() {}, error() {}, debug() {} };
+  service.runFastSync = async () => ({ orders: 0 });
+  service.runLeadSync = async () => ({ leads: 0 });
+  await service.handleFastSync();
+  await service.handleLeadSync();
+  assert.deepEqual(labels, ['fast-sync', 'lead-fast-sync']);
 });
 
 test('API blocks queued sync reads at the boundary and resumes at 06:00', async (t) => {

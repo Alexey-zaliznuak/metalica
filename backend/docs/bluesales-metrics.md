@@ -30,7 +30,8 @@ await api.withLabel('order-background-sync', () => api.getOrders(from, to));
 символов; не включайте в них персональные данные или идентификаторы заказов.
 
 Готовые метки синков: `order-background-sync`, `lead-background-sync`,
-`fast-sync`, `recent-backfill`, `startup-sync`, `order-manual-refresh`.
+`fast-sync`, `lead-fast-sync`, `recent-backfill`, `startup-sync`,
+`order-manual-refresh`.
 
 Прогноз использует темп за последний час, нормализованный по расписанию синков:
 01:00–06:00 — пауза, 06:00–09:00 и 00:00–01:00 — треть дневного темпа.
