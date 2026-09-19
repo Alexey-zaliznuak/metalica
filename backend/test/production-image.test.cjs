@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { writeFile, access } = require('node:fs/promises');
 const sharp = require('sharp');
-const { productionImage, productionHeader, productionArticleText, isShownOnProductionImage } = require('../dist/orders/production-image');
+const { productionImage, productionHeader, productionArticleText, isShownOnProductionImage, productionTextScale } = require('../dist/orders/production-image');
 const { OrdersService } = require('../dist/orders/orders.service');
 
 const article = (values) => ({ article: null, name: null, size: null, quantity: 1, comment: null, ...values });
@@ -122,6 +122,15 @@ test('keeps service SKUs off production photos and prints size next to the artic
   assert.equal(isShownOnProductionImage(article({ article: 'картина на металле' })), false);
   assert.equal(isShownOnProductionImage(article({ article: 'Упаковка №3', size: '40×60' })), true);
   assert.equal(productionArticleText(article({ article: 'Упаковка №3', size: '40×60' })), 'Упаковка №3 · 40×60 · ×1');
+});
+
+test('maps print sizes to overlay text scales', () => {
+  assert.equal(productionTextScale('30x40'), 1);
+  assert.equal(productionTextScale('standard'), 1);
+  assert.equal(productionTextScale(), 1);
+  assert.equal(productionTextScale('40x60'), 1 / 1.5);
+  assert.equal(productionTextScale('60x80'), 1 / 2);
+  assert.equal(productionTextScale('small'), 1 / 2);
 });
 
 test('small text size halves overlay fonts except the order number', async () => {

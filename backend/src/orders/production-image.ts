@@ -9,10 +9,12 @@ export interface ProductionArticle {
   comment: string | null;
 }
 
-export type ProductionTextSize = 'standard' | 'small';
+export type ProductionTextSize = '30x40' | '40x60' | '60x80';
 
 export function productionTextScale(size?: string | null): number {
-  return size === 'small' ? 0.5 : 1;
+  if (size === '40x60') return 1 / 1.5;
+  if (size === '60x80' || size === 'small') return 1 / 2;
+  return 1;
 }
 
 const MAX_PIXELS = 268402689;

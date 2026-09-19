@@ -19,12 +19,12 @@ const compactActionSx = {
 export default function ProductionDownloadButton({
   orderId,
   attachmentId,
-  textSize = 'standard',
+  textSize = '30x40',
   compact = false,
 }: {
   orderId: number
   attachmentId: number
-  textSize?: 'standard' | 'small'
+  textSize?: '30x40' | '40x60' | '60x80'
   compact?: boolean
 }) {
   const [downloading, setDownloading] = useState(false)

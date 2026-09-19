@@ -93,12 +93,21 @@ import type {
 
 const MESSAGES_PAGE_SIZE = 30
 const PRODUCTION_TEXT_SIZE_KEY = 'metalica.productionTextSize'
+const PRODUCTION_TEXT_SIZES = [
+  { value: '30x40', label: '30 × 40' },
+  { value: '40x60', label: '40 × 60' },
+  { value: '60x80', label: '60 × 80' },
+] as const
+type ProductionTextSize = (typeof PRODUCTION_TEXT_SIZES)[number]['value']
 
-function readProductionTextSize(): 'standard' | 'small' {
+function readProductionTextSize(): ProductionTextSize {
   try {
-    return window.localStorage.getItem(PRODUCTION_TEXT_SIZE_KEY) === 'small' ? 'small' : 'standard'
+    const stored = window.localStorage.getItem(PRODUCTION_TEXT_SIZE_KEY)
+    if (stored === '40x60' || stored === 'small') return '40x60'
+    if (stored === '60x80') return '60x80'
+    return '30x40'
   } catch {
-    return 'standard'
+    return '30x40'
   }
 }
 import { useAuth } from '../auth/AuthContext'
@@ -621,8 +630,8 @@ function OrderInfoPanel({
   onDialogLinkChange: (dialogLink: string) => void
   savingPrintPhoto: boolean
   printPhotoError: string | null
-  textSize: 'standard' | 'small'
-  onTextSizeChange: (size: 'standard' | 'small') => void
+  textSize: ProductionTextSize
+  onTextSizeChange: (size: ProductionTextSize) => void
   onAddPrintPhotos: (files: File[]) => void
   onRemovePrintPhoto: (photoId: number) => void
   onOpenImage: (image: LightboxImage) => void
@@ -1011,8 +1020,8 @@ function PrintPhotosBar({
   order: Order
   savingPrintPhoto: boolean
   printPhotoError: string | null
-  textSize: 'standard' | 'small'
-  onTextSizeChange: (size: 'standard' | 'small') => void
+  textSize: ProductionTextSize
+  onTextSizeChange: (size: ProductionTextSize) => void
   onAddPrintPhotos: (files: File[]) => void
   onRemovePrintPhoto: (photoId: number) => void
   onOpenImage: (image: LightboxImage) => void
@@ -1050,8 +1059,9 @@ function PrintPhotosBar({
             if (value) onTextSizeChange(value)
           }}
         >
-          <ToggleButton value="standard">Стандарт</ToggleButton>
-          <ToggleButton value="small">Малый</ToggleButton>
+          {PRODUCTION_TEXT_SIZES.map((size) => (
+            <ToggleButton key={size.value} value={size.value}>{size.label}</ToggleButton>
+          ))}
         </ToggleButtonGroup>
         <Button
           component="label"
@@ -1497,7 +1507,7 @@ export default function OrderThreadPage() {
   const [scrollTarget, setScrollTarget] = useState<{ id: number } | null>(null)
   const [savingPrintPhoto, setSavingPrintPhoto] = useState(false)
   const [printPhotoError, setPrintPhotoError] = useState<string | null>(null)
-  const [productionTextSize, setProductionTextSize] = useState<'standard' | 'small'>(readProductionTextSize)
+  const [productionTextSize, setProductionTextSize] = useState<ProductionTextSize>(readProductionTextSize)
   const jumpControllerRef = useRef<AbortController | null>(null)
   const savingPrintPhotoRef = useRef(false)
   const [infoOpen, setInfoOpen] = useState(false)
