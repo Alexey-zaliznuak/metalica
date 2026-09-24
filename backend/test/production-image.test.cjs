@@ -15,9 +15,9 @@ const articles = [
 ];
 const rawPixels = (input) => sharp(input).removeAlpha().raw().toBuffer();
 
-test('adds a white header without resizing, mirroring or changing photo pixels; preserves DPI', async () => {
-  const width = 800;
-  const height = 500;
+test('portrait photo keeps its pixels and DPI, with a header on the short top edge', async () => {
+  const width = 500;
+  const height = 800;
   const pixels = Buffer.alloc(width * height * 3);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const offset = (y * width + x) * 3;
@@ -37,14 +37,40 @@ test('adds a white header without resizing, mirroring or changing photo pixels; 
   assert.ok(corner.every((value) => value === 255));
 });
 
-test('honours EXIF orientation before adding the header', async () => {
+test('landscape photo gets a rotated header on the short left edge without changing photo pixels', async () => {
+  const width = 800;
+  const height = 500;
+  const pixels = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const offset = (y * width + x) * 3;
+    pixels[offset] = x % 256;
+    pixels[offset + 1] = y % 256;
+    pixels[offset + 2] = 70;
+  }
+  const input = await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  const result = await (await productionImage(input, '29538603', articles, null, 1, 'СДЭК / Самовывоз')).toBuffer();
+  const meta = await sharp(result).metadata();
+  const header = await productionHeader(height, '29538603', articles, null, 1, 'СДЭК / Самовывоз');
+  assert.equal(meta.width, width + header.height);
+  assert.equal(meta.height, height);
+  assert.ok(meta.width * meta.height < width * (height + header.height));
+  const photo = await sharp(result).extract({ left: header.height, top: 0, width, height }).removeAlpha().raw().toBuffer();
+  assert.deepEqual(photo, await rawPixels(input));
+  const actualHeader = await sharp(result).extract({ left: 0, top: 0, width: header.height, height }).removeAlpha().raw().toBuffer();
+  const expectedHeader = await sharp(header.buffer).rotate(270).removeAlpha().raw().toBuffer();
+  assert.deepEqual(actualHeader, expectedHeader);
+});
+
+test('EXIF orientation determines which edge gets the header', async () => {
   const input = await sharp({ create: { width: 240, height: 400, channels: 3, background: '#126a9e' } })
     .withMetadata({ orientation: 6 }).jpeg().toBuffer();
   const result = await (await productionImage(input, '1234567', [])).toBuffer();
   const metadata = await sharp(result).metadata();
-  assert.equal(metadata.width, 400);
+  const header = await productionHeader(240, '1234567', []);
+  assert.equal(metadata.width, 400 + header.height);
+  assert.equal(metadata.height, 240);
   assert.equal(metadata.orientation, 1);
-  const extracted = await sharp(result).extract({ left: 0, top: metadata.height - 240, width: 400, height: 240 }).removeAlpha().raw().toBuffer();
+  const extracted = await sharp(result).extract({ left: header.height, top: 0, width: 400, height: 240 }).removeAlpha().raw().toBuffer();
   assert.deepEqual(extracted, await sharp(input).rotate().removeAlpha().raw().toBuffer());
 });
 
@@ -178,15 +204,35 @@ test('keeps article text against the right edge in both text sizes', async () =>
   assert.ok(Math.abs(standardRight - smallRight) <= 8, 'small articles must keep the same right edge');
 });
 
-test('prints the delivery service beside the inner arrow', async () => {
+test('prints long delivery service horizontally above the number without changing its photo gap', async () => {
   const empty = await productionHeader(1000, '1234567', []);
-  const withService = await productionHeader(1000, '1234567', [], null, 1, 'СДЭК');
-  assert.ok(withService.height >= empty.height);
-  const region = { left: 368, top: 0, width: 20, height: withService.height };
-  const blank = await sharp(empty.buffer).extract({ ...region, height: empty.height }).removeAlpha().raw().toBuffer();
-  const labeled = await sharp(withService.buffer).extract(region).removeAlpha().raw().toBuffer();
-  assert.ok(blank.every((value) => value > 240), 'the gap beside the inner arrow starts empty');
-  assert.ok(labeled.some((value) => value < 30), 'delivery service must sit beside the inner arrow');
+  const label = 'Очень длинное название службы доставки и способа получения заказа клиентом';
+  const withService = await productionHeader(1000, '1234567', [], 'Матовая', 1, label);
+  const delivery = await sharp({ text: {
+    text: label, font: 'sans 14', width: 300, wrap: 'word-char', rgba: true, dpi: 72,
+  } }).flop().png().toBuffer({ resolveWithObject: true });
+  const number = await sharp({ text: { text: '1234567', font: 'sans 45', rgba: true, dpi: 72 } })
+    .png().toBuffer({ resolveWithObject: true });
+  const numberTop = withService.height - 20 - number.info.height;
+  const deliveryTop = numberTop - 8 - delivery.info.height;
+  const deliveryLeft = 65 + Math.floor((300 - delivery.info.width) / 2);
+  const actual = await sharp(withService.buffer).extract({
+    left: deliveryLeft, top: deliveryTop, width: delivery.info.width, height: delivery.info.height,
+  }).removeAlpha().raw().toBuffer();
+  const expected = await sharp(delivery.data).flatten({ background: 'white' }).raw().toBuffer();
+  assert.ok(actual.every((value, i) => Math.abs(value - expected[i]) <= 1));
+  assert.ok(delivery.info.width <= 300);
+  assert.ok(withService.height < 500, 'a long service should wrap instead of making a tall vertical strip');
+  const baseNumber = await sharp(empty.buffer).extract({
+    left: 65 + Math.floor((300 - number.info.width) / 2),
+    top: empty.height - 20 - number.info.height,
+    width: number.info.width, height: number.info.height,
+  }).removeAlpha().raw().toBuffer();
+  const labeledNumber = await sharp(withService.buffer).extract({
+    left: 65 + Math.floor((300 - number.info.width) / 2), top: numberTop,
+    width: number.info.width, height: number.info.height,
+  }).removeAlpha().raw().toBuffer();
+  assert.ok(labeledNumber.every((value, i) => Math.abs(value - baseNumber[i]) <= 1));
 });
 
 test('rejects corrupt and vector files instead of returning an unprocessed original', async () => {

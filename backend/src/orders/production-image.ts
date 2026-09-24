@@ -101,18 +101,19 @@ export async function productionHeader(
     dpi: 72,
   } }).flop().png().toBuffer({ resolveWithObject: true }) : null;
   const deliveryText = escapeMarkup(plainText(deliveryService ?? ''));
-  const deliverySource = deliveryText ? await sharp({ text: {
+  const delivery = deliveryText ? await sharp({ text: {
     text: deliveryText,
     font: `sans ${bodyFont}`,
+    width: numberWidth,
+    wrap: 'word-char',
     rgba: true,
     dpi: 72,
   } }).flop().png().toBuffer({ resolveWithObject: true }) : null;
-  const delivery = deliverySource
-    ? await sharp(deliverySource.data).rotate(90).png().toBuffer({ resolveWithObject: true })
-    : null;
+  const deliveryGap = delivery ? Math.max(1, Math.round(width * 0.008 * scale)) : 0;
   const arrowHeight = Math.max(2, Math.round(width * 0.035));
-  const leftStack = number.info.height + commentGap + (commentBlock?.info.height ?? 0);
-  const height = Math.max(leftStack, list?.info.height ?? 0, arrowHeight, delivery?.info.height ?? 0) + 2 * padding;
+  const leftStack = number.info.height + commentGap + (commentBlock?.info.height ?? 0)
+    + deliveryGap + (delivery?.info.height ?? 0);
+  const height = Math.max(leftStack, list?.info.height ?? 0, arrowHeight) + 2 * padding;
   const bottom = height - Math.max(1, Math.round(width * 0.006));
   const stroke = Math.max(1, width * 0.002);
   const head = width * 0.006;
@@ -124,18 +125,19 @@ export async function productionHeader(
     { input: number.data, left: numberLeft + Math.floor((numberWidth - number.info.width) / 2), top: numberTop },
     { input: Buffer.from(`<svg width="${width}" height="${height}"><g fill="none" stroke="black" stroke-width="${stroke}">${arrows}</g></svg>`), left: 0, top: 0 },
   ];
+  const deliveryTop = numberTop - deliveryGap - (delivery?.info.height ?? 0);
+  if (delivery) {
+    overlays.push({
+      input: delivery.data,
+      left: numberLeft + Math.floor((numberWidth - delivery.info.width) / 2),
+      top: deliveryTop,
+    });
+  }
   if (commentBlock) {
     overlays.push({
       input: commentBlock.data,
       left: numberLeft + Math.floor((numberWidth - commentBlock.info.width) / 2),
-      top: numberTop - commentGap - commentBlock.info.height,
-    });
-  }
-  if (delivery) {
-    overlays.push({
-      input: delivery.data,
-      left: Math.round(width * 0.395 - head - delivery.info.width),
-      top: height - padding - delivery.info.height,
+      top: deliveryTop - commentGap - commentBlock.info.height,
     });
   }
   if (list) overlays.push({ input: list.data, left: width - padding - list.info.width, top: height - padding - list.info.height });
@@ -144,7 +146,7 @@ export async function productionHeader(
   return { buffer, height };
 }
 
-/** Lossless PNG with the original photo dimensions and an added header above it. */
+/** Put the header along the shorter edge, keeping the photo at its original size. */
 export async function productionImage(
   input: string | Buffer,
   orderNumber: string,
@@ -162,13 +164,27 @@ export async function productionImage(
   const width = (rotated ? metadata.height : metadata.width) ?? 0;
   const height = (rotated ? metadata.width : metadata.height) ?? 0;
   if (width < 32 || height < 1) throw new BadRequestException('Изображение слишком маленькое');
-  const header = await productionHeader(width, orderNumber, articles, comment, textScale, deliveryService);
-  if (width * (height + header.height) > MAX_PIXELS) {
+  const sideHeader = width > height;
+  const header = await productionHeader(Math.min(width, height), orderNumber, articles, comment, textScale, deliveryService);
+  const outputWidth = width + (sideHeader ? header.height : 0);
+  const outputHeight = height + (sideHeader ? 0 : header.height);
+  if (outputWidth * outputHeight > MAX_PIXELS) {
     throw new BadRequestException('Изображение с полем для производства превышает допустимый размер');
   }
+  // The header's bottom edge faces the photo; a counterclockwise quarter-turn
+  // moves that edge to the right side of the strip and turns the arrows toward it.
+  const headerBuffer = sideHeader
+    ? await sharp(header.buffer).rotate(270).png().toBuffer()
+    : header.buffer;
   return photo.rotate()
-    .extend({ top: header.height, bottom: 0, left: 0, right: 0, background: 'white' })
-    .composite([{ input: header.buffer, left: 0, top: 0 }])
+    .extend({
+      top: sideHeader ? 0 : header.height,
+      bottom: 0,
+      left: sideHeader ? header.height : 0,
+      right: 0,
+      background: 'white',
+    })
+    .composite([{ input: headerBuffer, left: 0, top: 0 }])
     .withMetadata({ orientation: 1, ...(metadata.density ? { density: metadata.density } : {}) })
     .png();
 }
