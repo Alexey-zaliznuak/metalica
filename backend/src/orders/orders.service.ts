@@ -36,6 +36,10 @@ import { MAX_UPLOAD_BYTES } from '../storage/upload.config';
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
+  private readonly textSearchCache = new Map<
+    string,
+    { expiresAt: number; promise: Promise<Map<number, OrderSearchMatch>> }
+  >();
 
   constructor(
     private prisma: PrismaService,
@@ -91,14 +95,32 @@ export class OrdersService {
       and.push({ bluesalesInfo: { is: { orderStatusId: params.orderStatusId } } });
     }
 
-    const q = params.q?.trim();
+    const rawQuery = params.q?.trim();
+    const q = rawQuery && (
+      (rawQuery.match(/\d/g)?.length ?? 0) >= 4 ||
+      Array.from(rawQuery).length >= 6
+    ) ? rawQuery : null;
+    let searchMatches = new Map<number, OrderSearchMatch>();
     if (q) {
-      and.push({
-        OR: [
+      const exactOrder = await this.prisma.order.findUnique({
+        where: { orderNumber: q },
+        select: { id: true },
+      });
+      if (exactOrder) {
+        and.push({ id: exactOrder.id });
+      } else {
+        if (Array.from(q).length >= 6) {
+          searchMatches = await this.findTextMatches(q);
+        }
+        const or: Prisma.OrderWhereInput[] = [
           { orderNumber: { contains: q, mode: 'insensitive' } },
           { title: { contains: q, mode: 'insensitive' } },
-        ],
-      });
+        ];
+        if (searchMatches.size > 0) {
+          or.push({ id: { in: [...searchMatches.keys()] } });
+        }
+        and.push({ OR: or });
+      }
     }
 
     if (params.deliveryManagers?.length) {
@@ -169,13 +191,14 @@ export class OrdersService {
       this.computeStatsBatch(orderIds),
       this.lastMessagesBatch(orderIds),
     ]);
-    const items = orders.map((o) =>
-      this.buildOrderView(
+    const items = orders.map((o) => ({
+      ...this.buildOrderView(
         o,
         statsById.get(o.id) ?? { revisionCount: 0, openRevisions: 0, avgRevisionSeconds: null },
         lastMessageById.get(o.id) ?? null,
       ),
-    );
+      searchMatch: searchMatches.get(o.id) ?? null,
+    }));
 
     return {
       items,
@@ -184,6 +207,46 @@ export class OrdersService {
       limit,
       hasMore: skip + orders.length < total,
     };
+  }
+
+  private findTextMatches(q: string): Promise<Map<number, OrderSearchMatch>> {
+    const key = q.toLowerCase();
+    const cached = this.textSearchCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+    // Доска запрашивает все колонки отдельно; общий короткий кэш не даёт
+    // повторять полный текстовый поиск для каждой колонки и страницы.
+    const promise = this.prisma.$queryRaw<
+      Array<{ orderId: number; messageCount: number; comment: boolean }>
+    >`
+      SELECT matched."orderId",
+             SUM(matched."messageCount")::int AS "messageCount",
+             BOOL_OR(matched."comment") AS "comment"
+      FROM (
+        SELECT "orderId", COUNT(*)::int AS "messageCount", false AS "comment"
+        FROM "Message"
+        WHERE POSITION(LOWER(${q}) IN LOWER("body")) > 0
+        GROUP BY "orderId"
+        UNION ALL
+        SELECT "orderId", 0 AS "messageCount", true AS "comment"
+        FROM "BluesalesOrderInfo"
+        WHERE POSITION(LOWER(${q}) IN LOWER("rawPayload"->>'internalComments')) > 0
+      ) AS matched
+      GROUP BY matched."orderId"
+    `.then((matches) => new Map(matches.map((match) => [match.orderId, {
+      messageCount: match.messageCount,
+      comment: match.comment,
+    }]))).catch((error: unknown) => {
+      if (this.textSearchCache.get(key)?.promise === promise) {
+        this.textSearchCache.delete(key);
+      }
+      throw error;
+    });
+    this.textSearchCache.set(key, { expiresAt: Date.now() + 5_000, promise });
+    if (this.textSearchCache.size > 20) {
+      this.textSearchCache.delete(this.textSearchCache.keys().next().value!);
+    }
+    return promise;
   }
 
   /**
@@ -1729,6 +1792,11 @@ export class OrdersService {
     return result;
   }
 }
+
+type OrderSearchMatch = {
+  messageCount: number;
+  comment: boolean;
+};
 
 type OrderStats = {
   revisionCount: number;

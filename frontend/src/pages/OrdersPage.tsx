@@ -36,6 +36,8 @@ import {
   Typography,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
+import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline'
+import CheckIcon from '@mui/icons-material/Check'
 import EditNoteIcon from '@mui/icons-material/EditNote'
 import ViewWeekIcon from '@mui/icons-material/ViewWeek'
 import SyncAltIcon from '@mui/icons-material/SyncAlt'
@@ -131,7 +133,7 @@ function parseStringArray(value: unknown): string[] {
 function getActiveOrderSearchQuery(raw: string): string | null {
   const query = raw.trim()
   const digitCount = query.match(/\d/g)?.length ?? 0
-  return digitCount >= 4 ? query : null
+  return digitCount >= 4 || Array.from(query).length >= 6 ? query : null
 }
 
 function parseBoardSettings(raw: unknown): OrdersBoardSettings {
@@ -272,6 +274,30 @@ const OrderCard = memo(function OrderCard({
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1, minHeight: 20 }}>
         {order.title || 'Без названия'}
       </Typography>
+      {(order.searchMatch?.messageCount || order.searchMatch?.comment) && (
+        <Stack direction="row" spacing={0.75} sx={{ mb: 1 }}>
+          {(order.searchMatch?.messageCount ?? 0) > 0 && (
+            <Tooltip title="Количество сообщений в чате с искомой строкой поиска">
+              <Chip
+                size="small"
+                variant="outlined"
+                icon={<ChatBubbleOutlineIcon />}
+                label={order.searchMatch?.messageCount}
+              />
+            </Tooltip>
+          )}
+          {order.searchMatch?.comment && (
+            <Tooltip title="В комментарии к заказу есть искомая строка">
+              <Chip
+                size="small"
+                variant="outlined"
+                icon={<EditNoteIcon />}
+                label={<CheckIcon sx={{ fontSize: 16, verticalAlign: 'middle' }} />}
+              />
+            </Tooltip>
+          )}
+        </Stack>
+      )}
       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
         <Tooltip title={`Художник эскиза: ${sketchDesignerName}`}>
           <Chip
@@ -1281,14 +1307,20 @@ export default function OrdersPage() {
         minHeight: 0,
       }}
     >
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        spacing={{ xs: 1, md: 2 }}
+        alignItems={{ xs: 'stretch', md: 'center' }}
+        sx={{ mb: 2, minWidth: 0 }}
+      >
         <ShiftSwitch />
         <TextField
-          placeholder="Поиск по номеру (минимум 4 цифры)"
+          placeholder="Номер от 4 цифр или текст от 6 символов"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           size="small"
           fullWidth
+          sx={{ minWidth: 0 }}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
@@ -1301,16 +1333,21 @@ export default function OrdersPage() {
           variant="outlined"
           startIcon={<ViewWeekIcon />}
           onClick={() => setColumnsDialogOpen(true)}
-          sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+          sx={{ whiteSpace: 'nowrap', flexShrink: 0, width: { xs: '100%', md: 'auto' } }}
         >
           Колонки статусов
         </Button>
-        <Badge color="primary" badgeContent={activePeopleFilterCount} overlap="rectangular">
+        <Badge
+          color="primary"
+          badgeContent={activePeopleFilterCount}
+          overlap="rectangular"
+          sx={{ width: { xs: '100%', md: 'auto' } }}
+        >
           <Button
             variant="outlined"
             startIcon={<PeopleAltIcon />}
             onClick={() => setPeopleFilterOpen(true)}
-            sx={{ whiteSpace: 'nowrap' }}
+            sx={{ whiteSpace: 'nowrap', width: { xs: '100%', md: 'auto' } }}
           >
             Фильтры по людям
           </Button>

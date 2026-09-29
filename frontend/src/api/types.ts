@@ -177,6 +177,10 @@ export interface Order {
   revisionCount: number
   openRevisions: number
   lastMessageAt: string | null
+  searchMatch?: {
+    messageCount: number
+    comment: boolean
+  } | null
   createdAt: string
   sketchStartedAt: string | null
   sketchReadyAt: string | null
