@@ -102,6 +102,7 @@ interface BoardColumn {
 
 interface ColumnState {
   items: Order[]
+  query: string | null
   page: number
   total: number
   hasMore: boolean
@@ -112,6 +113,7 @@ interface ColumnState {
 
 const EMPTY_COLUMN_STATE: ColumnState = {
   items: [],
+  query: null,
   page: 0,
   total: 0,
   hasMore: false,
@@ -915,6 +917,7 @@ export default function OrdersPage() {
       }))
 
       const params = buildFilterParams()
+      const requestQuery = typeof params.q === 'string' ? params.q : null
       params.page = page
       params.limit = PAGE_SIZE
       if (columnId === NO_ORDER_STATUS_COLUMN_ID) params.noStatus = 'true'
@@ -957,6 +960,7 @@ export default function OrdersPage() {
             ...prev,
             [columnId]: {
               items,
+              query: requestQuery,
               page: data.page,
               total: data.total,
               hasMore: data.hasMore,
@@ -969,10 +973,27 @@ export default function OrdersPage() {
       } catch (err) {
         if (columnRequestVersionRef.current[columnId] !== requestVersion) return
         logApiError('загрузка колонки заказов', err)
-        setColumnData((prev) => ({
-          ...prev,
-          [columnId]: { ...(prev[columnId] ?? EMPTY_COLUMN_STATE), loading: false, loaded: true },
-        }))
+        setColumnData((prev) => {
+          const existing = prev[columnId] ?? EMPTY_COLUMN_STATE
+          return {
+            ...prev,
+            [columnId]: {
+              ...existing,
+              ...(replace && !preserveDepth
+                ? {
+                    items: [],
+                    query: requestQuery,
+                    page: 0,
+                    total: 0,
+                    hasMore: false,
+                    renderCount: RENDER_STEP,
+                  }
+                : {}),
+              loading: false,
+              loaded: true,
+            },
+          }
+        })
         setError(describeApiError(err, 'Не удалось загрузить заказы'))
       }
     },
@@ -995,7 +1016,7 @@ export default function OrdersPage() {
   }, [initialized, reloadAll])
 
   useEffect(() => {
-    if (!initialized || columnsToFetch.length === 0) return
+    if (!initialized || search.length > 0 || columnsToFetch.length === 0) return
 
     let cancelled = false
     let timer: number | undefined
@@ -1037,7 +1058,7 @@ export default function OrdersPage() {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [columnsToFetch, fetchColumnPage, initialized])
+  }, [columnsToFetch, fetchColumnPage, initialized, search])
 
   const pendingSyncOrderIds = useMemo(
     () =>
@@ -1289,14 +1310,19 @@ export default function OrdersPage() {
     })
   }
 
+  const searchResultsReady = activeSearchQuery !== null && searchBoardColumns.every(
+    (column) => columnData[column.id]?.query === activeSearchQuery,
+  )
+
   const visibleBoardColumns = useMemo(() => {
     if (!activeSearchQuery) return boardColumns
+    if (!searchResultsReady) return []
 
     return searchBoardColumns.filter((column) => {
       const state = columnData[column.id]
-      return state?.loading || (state?.total ?? 0) > 0
+      return state?.query === activeSearchQuery && state.total > 0
     })
-  }, [activeSearchQuery, boardColumns, columnData, searchBoardColumns])
+  }, [activeSearchQuery, boardColumns, columnData, searchBoardColumns, searchResultsReady])
 
   return (
     <Box
@@ -1392,6 +1418,14 @@ export default function OrdersPage() {
             <Button variant="outlined" onClick={() => setColumnsDialogOpen(true)}>
               Настроить колонки
             </Button>
+          </Box>
+        ) : activeSearchQuery && !searchResultsReady ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+            <CircularProgress />
+          </Box>
+        ) : activeSearchQuery && visibleBoardColumns.length === 0 ? (
+          <Box sx={{ textAlign: 'center', py: 8 }}>
+            <Typography color="text.secondary">Ничего не найдено</Typography>
           </Box>
         ) : (
           <Stack
