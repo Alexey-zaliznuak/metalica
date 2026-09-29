@@ -873,9 +873,13 @@ export default function OrdersPage() {
   ])
 
   const fetchColumnPage = useCallback(
-    async (columnId: number, page: number, replace: boolean) => {
+    async (columnId: number, page: number, replace: boolean, preserveDepth = false) => {
       const requestVersion = (columnRequestVersionRef.current[columnId] ?? 0) + 1
       columnRequestVersionRef.current[columnId] = requestVersion
+      // Автообновление должно сохранить уже загруженную глубину колонки.
+      const pageCount = replace && preserveDepth
+        ? Math.max(1, columnDataRef.current[columnId]?.page ?? 1)
+        : 1
       if (replace && page === 1) {
         lastColumnRefreshAtRef.current[columnId] = Date.now()
       }
@@ -900,13 +904,29 @@ export default function OrdersPage() {
       }
 
       try {
-        const { data } = await client.get<OrdersColumnResponse>('/orders', { params })
+        const responses = await Promise.all(
+          Array.from({ length: pageCount }, (_, index) =>
+            client.get<OrdersColumnResponse>('/orders', {
+              params: { ...params, page: replace ? index + 1 : page },
+            }),
+          ),
+        )
+        const data = responses[responses.length - 1].data
         setColumnData((prev) => {
           if (columnRequestVersionRef.current[columnId] !== requestVersion) return prev
           const existing = prev[columnId]
-          const items = replace ? data.items : [...(existing?.items ?? []), ...data.items]
-          const prevRender = replace ? 0 : existing?.renderCount ?? 0
-          const renderCount = Math.min(prevRender + RENDER_STEP, items.length)
+          const items = replace
+            ? responses.flatMap((response) => response.data.items)
+            : [...(existing?.items ?? []), ...data.items]
+          const desiredRenderCount = preserveDepth
+            ? existing?.renderCount ?? RENDER_STEP
+            : replace
+              ? RENDER_STEP
+              : (existing?.renderCount ?? 0) + RENDER_STEP
+          const renderCount = Math.min(
+            desiredRenderCount,
+            items.length,
+          )
           return {
             ...prev,
             [columnId]: {
@@ -915,7 +935,7 @@ export default function OrdersPage() {
               total: data.total,
               hasMore: data.hasMore,
               loading: false,
-              renderCount: Math.max(renderCount, Math.min(RENDER_STEP, items.length)),
+              renderCount,
               loaded: true,
             },
           }
@@ -963,23 +983,24 @@ export default function OrdersPage() {
       if (cancelled) return
 
       const column = columnsToFetch[nextColumnIndex]
+      const state = columnDataRef.current[column.id]
       const lastRefreshAt = lastColumnRefreshAtRef.current[column.id] ?? 0
       const remainingCooldown =
-        MIN_COLUMN_REFRESH_INTERVAL_MS - (Date.now() - lastRefreshAt)
+        MIN_COLUMN_REFRESH_INTERVAL_MS * Math.max(1, state?.page ?? 1) -
+        (Date.now() - lastRefreshAt)
 
       if (remainingCooldown > 0) {
         scheduleNext(remainingCooldown)
         return
       }
 
-      const state = columnDataRef.current[column.id]
       if (state?.loading) {
         scheduleNext(COLUMN_REFRESH_STEP_MS)
         return
       }
 
       nextColumnIndex = (nextColumnIndex + 1) % columnsToFetch.length
-      await fetchColumnPage(column.id, 1, true)
+      await fetchColumnPage(column.id, 1, true, true)
 
       if (!cancelled) scheduleNext(COLUMN_REFRESH_STEP_MS)
     }
