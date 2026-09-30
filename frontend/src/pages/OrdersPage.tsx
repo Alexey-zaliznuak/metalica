@@ -952,10 +952,9 @@ export default function OrdersPage() {
             : replace
               ? RENDER_STEP
               : (existing?.renderCount ?? 0) + RENDER_STEP
-          const renderCount = Math.min(
-            desiredRenderCount,
-            items.length,
-          )
+          const renderCount = items.length === 0
+            ? 0
+            : Math.min(Math.max(desiredRenderCount, RENDER_STEP), items.length)
           return {
             ...prev,
             [columnId]: {
