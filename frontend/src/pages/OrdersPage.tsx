@@ -1015,11 +1015,13 @@ export default function OrdersPage() {
   }, [initialized, reloadAll])
 
   useEffect(() => {
-    if (!initialized || search.length > 0 || columnsToFetch.length === 0) return
+    if (!initialized || (search.length > 0 && !activeSearchQuery) || columnsToFetch.length === 0) return
 
     let cancelled = false
     let timer: number | undefined
     let nextColumnIndex = 0
+    const refreshMultiplier = activeSearchQuery ? 2 : 1
+    const refreshStep = COLUMN_REFRESH_STEP_MS * refreshMultiplier
 
     const scheduleNext = (delay: number) => {
       timer = window.setTimeout(() => void refreshNext(), delay)
@@ -1032,7 +1034,7 @@ export default function OrdersPage() {
       const state = columnDataRef.current[column.id]
       const lastRefreshAt = lastColumnRefreshAtRef.current[column.id] ?? 0
       const remainingCooldown =
-        MIN_COLUMN_REFRESH_INTERVAL_MS * Math.max(1, state?.page ?? 1) -
+        MIN_COLUMN_REFRESH_INTERVAL_MS * refreshMultiplier * Math.max(1, state?.page ?? 1) -
         (Date.now() - lastRefreshAt)
 
       if (remainingCooldown > 0) {
@@ -1041,23 +1043,23 @@ export default function OrdersPage() {
       }
 
       if (state?.loading) {
-        scheduleNext(COLUMN_REFRESH_STEP_MS)
+        scheduleNext(refreshStep)
         return
       }
 
       nextColumnIndex = (nextColumnIndex + 1) % columnsToFetch.length
       await fetchColumnPage(column.id, 1, true, true)
 
-      if (!cancelled) scheduleNext(COLUMN_REFRESH_STEP_MS)
+      if (!cancelled) scheduleNext(refreshStep)
     }
 
-    scheduleNext(COLUMN_REFRESH_STEP_MS)
+    scheduleNext(refreshStep)
 
     return () => {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [columnsToFetch, fetchColumnPage, initialized, search])
+  }, [activeSearchQuery, columnsToFetch, fetchColumnPage, initialized, search])
 
   const pendingSyncOrderIds = useMemo(
     () =>

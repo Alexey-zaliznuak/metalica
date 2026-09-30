@@ -242,7 +242,7 @@ export class OrdersService {
       }
       throw error;
     });
-    this.textSearchCache.set(key, { expiresAt: Date.now() + 5_000, promise });
+    this.textSearchCache.set(key, { expiresAt: Date.now() + 9_000, promise });
     if (this.textSearchCache.size > 20) {
       this.textSearchCache.delete(this.textSearchCache.keys().next().value!);
     }
