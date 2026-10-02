@@ -63,7 +63,7 @@ export class OrdersService {
    * Пагинированная выборка заказов для ОДНОЙ колонки доски.
    * Колонка задаётся либо конкретным статусом заказа (`orderStatusId`), либо
    * флагом `noStatus` (заказы без статуса / без данных BlueSales). Поиск и
-   * фильтры «по людям» применяются на сервере, чтобы пагинация была корректной.
+   * фильтры применяются на сервере, чтобы пагинация была корректной.
    */
   async findAll(params: {
     orderStatusId?: number;
@@ -74,6 +74,7 @@ export class OrdersService {
     sketchDesigners?: string[];
     revisionDesigners?: string[];
     ignoreDesigners?: boolean;
+    withoutPinnedSketches?: boolean;
     page?: number;
     limit?: number;
   }) {
@@ -138,6 +139,10 @@ export class OrdersService {
       if (params.revisionDesigners?.length) {
         and.push({ revisionDesigner: { is: { name: { in: params.revisionDesigners } } } });
       }
+    }
+
+    if (params.withoutPinnedSketches) {
+      and.push({ pinnedSketches: { none: {} } });
     }
 
     const where: Prisma.OrderWhereInput = and.length > 0 ? { AND: and } : {};

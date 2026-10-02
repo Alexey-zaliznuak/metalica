@@ -65,3 +65,21 @@ test('text shorter than six characters does not activate search', async () => {
   assert.equal(calls.raw, 0);
   assert.deepEqual(calls.where, {});
 });
+
+test('orders without pinned sketches use the same relation filter for count and pagination', async () => {
+  const { service, calls } = setup();
+  let listWhere;
+  service.prisma.order.findMany = async ({ where }) => { listWhere = where; return []; };
+  await service.findAll({ withoutPinnedSketches: true, orderStatusId: 3, ignoreDesigners: true });
+  assert.deepEqual(calls.where.AND, [
+    { bluesalesInfo: { is: { orderStatusId: 3 } } },
+    { pinnedSketches: { none: {} } },
+  ]);
+  assert.deepEqual(listWhere, calls.where);
+});
+
+test('disabled pinned sketch filter leaves all orders available', async () => {
+  const { service, calls } = setup();
+  await service.findAll({ withoutPinnedSketches: false });
+  assert.deepEqual(calls.where, {});
+});

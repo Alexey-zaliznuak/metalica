@@ -208,6 +208,7 @@ export interface OrdersBoardSettings {
   selectedRevisionDesigners: string[]
   showNoOrderStatusColumn: boolean
   disableDesignerFilterForSketch: boolean
+  withoutPinnedSketches: boolean
 }
 
 export interface OrdersColumnResponse {

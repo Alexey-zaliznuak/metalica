@@ -92,6 +92,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedRevisionDesigners: [],
   showNoOrderStatusColumn: true,
   disableDesignerFilterForSketch: false,
+  withoutPinnedSketches: false,
 }
 
 interface BoardColumn {
@@ -183,6 +184,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     selectedRevisionDesigners,
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
+    withoutPinnedSketches: raw.withoutPinnedSketches === true,
   }
 }
 
@@ -628,6 +630,7 @@ export default function OrdersPage() {
   const [selectedSketchDesigners, setSelectedSketchDesigners] = useState<string[]>([])
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [disableDesignerFilterForSketch, setDisableDesignerFilterForSketch] = useState(false)
+  const [withoutPinnedSketches, setWithoutPinnedSketches] = useState(false)
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [sketchDesigners, setSketchDesigners] = useState<
     OrderAssigneesResponse['sketchDesigners']
@@ -747,6 +750,7 @@ export default function OrdersPage() {
     setSelectedRevisionDesigners(parsed.selectedRevisionDesigners)
     setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
     setDisableDesignerFilterForSketch(parsed.disableDesignerFilterForSketch)
+    setWithoutPinnedSketches(parsed.withoutPinnedSketches)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -770,6 +774,7 @@ export default function OrdersPage() {
         selectedRevisionDesigners,
         showNoOrderStatusColumn,
         disableDesignerFilterForSketch,
+        withoutPinnedSketches,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -781,6 +786,7 @@ export default function OrdersPage() {
     selectedOrderStatusIds,
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
+    withoutPinnedSketches,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -842,17 +848,19 @@ export default function OrdersPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'))
   }, [revisionDesigners])
 
-  const activePeopleFilterCount = useMemo(
+  const activeFilterCount = useMemo(
     () =>
       selectedDeliveryManagers.length +
       selectedOnboardingManagers.length +
       selectedSketchDesigners.length +
-      selectedRevisionDesigners.length,
+      selectedRevisionDesigners.length +
+      Number(withoutPinnedSketches),
     [
       selectedDeliveryManagers,
       selectedOnboardingManagers,
       selectedSketchDesigners,
       selectedRevisionDesigners,
+      withoutPinnedSketches,
     ],
   )
 
@@ -891,6 +899,7 @@ export default function OrdersPage() {
     if (selectedSketchDesigners.length) params.sketchDesigners = selectedSketchDesigners
     if (selectedRevisionDesigners.length)
       params.revisionDesigners = selectedRevisionDesigners
+    if (withoutPinnedSketches) params.withoutPinnedSketches = true
     return params
   }, [
     activeSearchQuery,
@@ -898,6 +907,7 @@ export default function OrdersPage() {
     selectedOnboardingManagers,
     selectedSketchDesigners,
     selectedRevisionDesigners,
+    withoutPinnedSketches,
   ])
 
   const fetchColumnPage = useCallback(
@@ -1366,7 +1376,7 @@ export default function OrdersPage() {
         </Button>
         <Badge
           color="primary"
-          badgeContent={activePeopleFilterCount}
+          badgeContent={activeFilterCount}
           overlap="rectangular"
           sx={{ width: { xs: '100%', md: 'auto' } }}
         >
@@ -1376,7 +1386,7 @@ export default function OrdersPage() {
             onClick={() => setPeopleFilterOpen(true)}
             sx={{ whiteSpace: 'nowrap', width: { xs: '100%', md: 'auto' } }}
           >
-            Фильтры по людям
+            Фильтры
           </Button>
         </Badge>
       </Stack>
@@ -1468,10 +1478,10 @@ export default function OrdersPage() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>Фильтры по людям</DialogTitle>
+        <DialogTitle>Фильтры</DialogTitle>
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
-            Заказы можно отфильтровать по менеджерам и художникам. Пустой фильтр —
+            Заказы можно отфильтровать по менеджерам, художникам и наличию закреплённых эскизов. Пустой фильтр —
             без ограничения.
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 1 }}>
@@ -1527,6 +1537,15 @@ export default function OrdersPage() {
             <FormControlLabel
               control={
                 <Checkbox
+                  checked={withoutPinnedSketches}
+                  onChange={(e) => setWithoutPinnedSketches(e.target.checked)}
+                />
+              }
+              label="Только заказы без закреплённого эскиза"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
                   checked={disableDesignerFilterForSketch}
                   onChange={(e) => setDisableDesignerFilterForSketch(e.target.checked)}
                 />
@@ -1548,12 +1567,13 @@ export default function OrdersPage() {
         <DialogActions>
           <Button
             color="inherit"
-            disabled={activePeopleFilterCount === 0}
+            disabled={activeFilterCount === 0}
             onClick={() => {
               setSelectedDeliveryManagers([])
               setSelectedOnboardingManagers([])
               setSelectedSketchDesigners([])
               setSelectedRevisionDesigners([])
+              setWithoutPinnedSketches(false)
             }}
           >
             Сбросить
