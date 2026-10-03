@@ -40,6 +40,8 @@ export class OrdersController {
     @Query('revisionDesigners') revisionDesigners?: string | string[],
     @Query('ignoreDesigners') ignoreDesigners?: string,
     @Query('withoutPinnedSketches') withoutPinnedSketches?: string,
+    @Query('shippingDeadlineFrom') shippingDeadlineFrom?: string,
+    @Query('shippingDeadlineTo') shippingDeadlineTo?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -63,6 +65,8 @@ export class OrdersController {
       revisionDesigners: toArray(revisionDesigners),
       ignoreDesigners: ignoreDesigners === 'true' || ignoreDesigners === '1',
       withoutPinnedSketches: withoutPinnedSketches === 'true' || withoutPinnedSketches === '1',
+      shippingDeadlineFrom,
+      shippingDeadlineTo,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });

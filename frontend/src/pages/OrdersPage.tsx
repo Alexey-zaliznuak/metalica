@@ -93,6 +93,8 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   showNoOrderStatusColumn: true,
   disableDesignerFilterForSketch: false,
   withoutPinnedSketches: false,
+  shippingDeadlineFrom: '',
+  shippingDeadlineTo: '',
 }
 
 interface BoardColumn {
@@ -185,6 +187,8 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
     withoutPinnedSketches: raw.withoutPinnedSketches === true,
+    shippingDeadlineFrom: typeof raw.shippingDeadlineFrom === 'string' ? raw.shippingDeadlineFrom : '',
+    shippingDeadlineTo: typeof raw.shippingDeadlineTo === 'string' ? raw.shippingDeadlineTo : '',
   }
 }
 
@@ -631,6 +635,8 @@ export default function OrdersPage() {
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [disableDesignerFilterForSketch, setDisableDesignerFilterForSketch] = useState(false)
   const [withoutPinnedSketches, setWithoutPinnedSketches] = useState(false)
+  const [shippingDeadlineFrom, setShippingDeadlineFrom] = useState('')
+  const [shippingDeadlineTo, setShippingDeadlineTo] = useState('')
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [sketchDesigners, setSketchDesigners] = useState<
     OrderAssigneesResponse['sketchDesigners']
@@ -751,6 +757,8 @@ export default function OrdersPage() {
     setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
     setDisableDesignerFilterForSketch(parsed.disableDesignerFilterForSketch)
     setWithoutPinnedSketches(parsed.withoutPinnedSketches)
+    setShippingDeadlineFrom(parsed.shippingDeadlineFrom)
+    setShippingDeadlineTo(parsed.shippingDeadlineTo)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -775,6 +783,8 @@ export default function OrdersPage() {
         showNoOrderStatusColumn,
         disableDesignerFilterForSketch,
         withoutPinnedSketches,
+        shippingDeadlineFrom,
+        shippingDeadlineTo,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -787,6 +797,8 @@ export default function OrdersPage() {
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
     withoutPinnedSketches,
+    shippingDeadlineFrom,
+    shippingDeadlineTo,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -854,13 +866,16 @@ export default function OrdersPage() {
       selectedOnboardingManagers.length +
       selectedSketchDesigners.length +
       selectedRevisionDesigners.length +
-      Number(withoutPinnedSketches),
+      Number(withoutPinnedSketches) +
+      Number(Boolean(shippingDeadlineFrom || shippingDeadlineTo)),
     [
       selectedDeliveryManagers,
       selectedOnboardingManagers,
       selectedSketchDesigners,
       selectedRevisionDesigners,
       withoutPinnedSketches,
+      shippingDeadlineFrom,
+      shippingDeadlineTo,
     ],
   )
 
@@ -900,6 +915,8 @@ export default function OrdersPage() {
     if (selectedRevisionDesigners.length)
       params.revisionDesigners = selectedRevisionDesigners
     if (withoutPinnedSketches) params.withoutPinnedSketches = true
+    if (shippingDeadlineFrom) params.shippingDeadlineFrom = shippingDeadlineFrom
+    if (shippingDeadlineTo) params.shippingDeadlineTo = shippingDeadlineTo
     return params
   }, [
     activeSearchQuery,
@@ -908,6 +925,8 @@ export default function OrdersPage() {
     selectedSketchDesigners,
     selectedRevisionDesigners,
     withoutPinnedSketches,
+    shippingDeadlineFrom,
+    shippingDeadlineTo,
   ])
 
   const fetchColumnPage = useCallback(
@@ -1481,8 +1500,8 @@ export default function OrdersPage() {
         <DialogTitle>Фильтры</DialogTitle>
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
-            Заказы можно отфильтровать по менеджерам, художникам и наличию закреплённых эскизов. Пустой фильтр —
-            без ограничения.
+            Заказы можно отфильтровать по менеджерам, художникам, наличию
+            закреплённых эскизов и дедлайну отправки. Пустой фильтр — без ограничения.
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
@@ -1534,6 +1553,31 @@ export default function OrdersPage() {
               )}
             />
             <Divider />
+            <Typography variant="body2">Дедлайн отправки</Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <TextField
+                type="date"
+                label="От"
+                size="small"
+                fullWidth
+                value={shippingDeadlineFrom}
+                onChange={(e) => setShippingDeadlineFrom(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ max: shippingDeadlineTo || undefined, 'aria-label': 'Дедлайн отправки от' }}
+              />
+              <TextField
+                type="date"
+                label="До"
+                size="small"
+                fullWidth
+                value={shippingDeadlineTo}
+                onChange={(e) => setShippingDeadlineTo(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ min: shippingDeadlineFrom || undefined, 'aria-label': 'Дедлайн отправки до' }}
+                error={Boolean(shippingDeadlineFrom && shippingDeadlineTo && shippingDeadlineFrom > shippingDeadlineTo)}
+                helperText={shippingDeadlineFrom && shippingDeadlineTo && shippingDeadlineFrom > shippingDeadlineTo ? 'Дата «До» должна быть не раньше даты «От»' : undefined}
+              />
+            </Stack>
             <FormControlLabel
               control={
                 <Checkbox
@@ -1574,6 +1618,8 @@ export default function OrdersPage() {
               setSelectedSketchDesigners([])
               setSelectedRevisionDesigners([])
               setWithoutPinnedSketches(false)
+              setShippingDeadlineFrom('')
+              setShippingDeadlineTo('')
             }}
           >
             Сбросить

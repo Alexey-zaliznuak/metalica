@@ -75,9 +75,16 @@ export class OrdersService {
     revisionDesigners?: string[];
     ignoreDesigners?: boolean;
     withoutPinnedSketches?: boolean;
+    shippingDeadlineFrom?: string;
+    shippingDeadlineTo?: string;
     page?: number;
     limit?: number;
   }) {
+    const from = this.parseDeadlineFilterDate(params.shippingDeadlineFrom);
+    const to = this.parseDeadlineFilterDate(params.shippingDeadlineTo);
+    if (from && to && from > to) {
+      throw new BadRequestException('Дата «До» должна быть не раньше даты «От»');
+    }
     const and: Prisma.OrderWhereInput[] = [];
 
     if (params.noStatus) {
@@ -143,6 +150,34 @@ export class OrdersService {
 
     if (params.withoutPinnedSketches) {
       and.push({ pinnedSketches: { none: {} } });
+    }
+
+    if (from || to) {
+      const matches = await this.prisma.$queryRaw<Array<{ orderId: number }>>`
+        SELECT DISTINCT info."orderId"
+        FROM "BluesalesOrderInfo" AS info
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(info."rawPayload"->'customFields') = 'array'
+            THEN info."rawPayload"->'customFields' ELSE '[]'::jsonb END
+        ) AS field
+        CROSS JOIN LATERAL (
+          SELECT CASE
+            WHEN BTRIM(field->>'value') ~ '^[0-9]{2}[.][0-9]{2}[.][0-9]{4}$'
+              THEN SUBSTRING(BTRIM(field->>'value'), 7, 4) || '-' ||
+                   SUBSTRING(BTRIM(field->>'value'), 4, 2) || '-' ||
+                   SUBSTRING(BTRIM(field->>'value'), 1, 2)
+            WHEN BTRIM(field->>'value') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+              THEN BTRIM(field->>'value')
+            ELSE NULL
+          END AS deadline
+        ) AS parsed
+        WHERE LOWER(field->>'fieldName') LIKE '%дедлайн%'
+          AND LOWER(field->>'fieldName') LIKE '%отправ%'
+          AND parsed.deadline IS NOT NULL
+          AND (${from}::text IS NULL OR parsed.deadline >= ${from}::text)
+          AND (${to}::text IS NULL OR parsed.deadline <= ${to}::text)
+      `;
+      and.push({ id: { in: matches.map((match) => match.orderId) } });
     }
 
     const where: Prisma.OrderWhereInput = and.length > 0 ? { AND: and } : {};
@@ -212,6 +247,18 @@ export class OrdersService {
       limit,
       hasMore: skip + orders.length < total,
     };
+  }
+
+  private parseDeadlineFilterDate(value?: string): string | null {
+    if (!value) return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException('Дата дедлайна должна быть в формате YYYY-MM-DD');
+    }
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+      throw new BadRequestException('Некорректная дата дедлайна');
+    }
+    return value;
   }
 
   private findTextMatches(q: string): Promise<Map<number, OrderSearchMatch>> {

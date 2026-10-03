@@ -83,3 +83,51 @@ test('disabled pinned sketch filter leaves all orders available', async () => {
   await service.findAll({ withoutPinnedSketches: false });
   assert.deepEqual(calls.where, {});
 });
+
+test('shipping deadline range filters count and paginated items together', async () => {
+  const { service, calls } = setup({ matches: [{ orderId: 7 }, { orderId: 9 }] });
+  let listWhere;
+  let sql;
+  let values;
+  service.prisma.order.findMany = async ({ where }) => { listWhere = where; return []; };
+  service.prisma.$queryRaw = async (strings, ...params) => {
+    sql = strings.join('?');
+    values = params;
+    return [{ orderId: 7 }, { orderId: 9 }];
+  };
+  await service.findAll({ shippingDeadlineFrom: '2026-10-01', shippingDeadlineTo: '2026-10-03', withoutPinnedSketches: true });
+  assert.deepEqual(calls.where.AND, [
+    { pinnedSketches: { none: {} } },
+    { id: { in: [7, 9] } },
+  ]);
+  assert.deepEqual(listWhere, calls.where);
+  assert.deepEqual(values, ['2026-10-01', '2026-10-01', '2026-10-03', '2026-10-03']);
+  assert.match(sql, /parsed.deadline >=/);
+  assert.match(sql, /parsed.deadline <=/);
+});
+
+test('shipping deadline accepts either boundary and returns no orders for no matches', async () => {
+  for (const params of [
+    { shippingDeadlineFrom: '2026-10-01' },
+    { shippingDeadlineTo: '2026-10-03' },
+    { shippingDeadlineFrom: '2026-10-03', shippingDeadlineTo: '2026-10-03' },
+  ]) {
+    const { service, calls } = setup();
+    await service.findAll(params);
+    assert.deepEqual(calls.where, { AND: [{ id: { in: [] } }] });
+    assert.equal(calls.raw, 1);
+  }
+});
+
+test('shipping deadline rejects invalid dates and reversed ranges before querying', async () => {
+  for (const params of [
+    { shippingDeadlineFrom: '03.10.2026' },
+    { shippingDeadlineTo: '2026-02-30' },
+    { shippingDeadlineFrom: '2026-10-04', shippingDeadlineTo: '2026-10-03' },
+  ]) {
+    const { service, calls } = setup();
+    await assert.rejects(service.findAll(params), (error) => error.getStatus() === 400);
+    assert.equal(calls.raw, 0);
+    assert.equal(calls.where, null);
+  }
+});
