@@ -10,6 +10,9 @@ import { attachmentActionSx } from './AttachmentCard'
 
 export interface LightboxImage {
   url: string
+  thumbnailUrl?: string | null
+  previewUrl?: string | null
+  previewStatus?: string
   filename: string
   size?: number | null
 }
@@ -30,15 +33,14 @@ function isHeicImage(filename: string): boolean {
   return /\.(heic|heif)$/i.test(filename)
 }
 
-function useRenderableImageUrl(image: LightboxImage) {
-  const isHeic = isHeicImage(image.filename)
-  const [previewUrl, setPreviewUrl] = useState(isHeic ? '' : image.url)
+function useRenderableImageUrl(url: string | null, isHeic = false) {
+  const [previewUrl, setPreviewUrl] = useState(isHeic ? '' : url)
   const [loading, setLoading] = useState(isHeic)
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     if (!isHeic) {
-      setPreviewUrl(image.url)
+      setPreviewUrl(url)
       setLoading(false)
       setFailed(false)
       return
@@ -52,7 +54,8 @@ function useRenderableImageUrl(image: LightboxImage) {
 
     void (async () => {
       try {
-        const response = await fetch(image.url)
+        if (!url) throw new Error('Нет ссылки на оригинал')
+        const response = await fetch(url)
         if (!response.ok) throw new Error(`Не удалось загрузить HEIC: ${response.status}`)
 
         const { heicTo } = await import('heic-to')
@@ -76,9 +79,9 @@ function useRenderableImageUrl(image: LightboxImage) {
       active = false
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [image.url, isHeic])
+  }, [url, isHeic])
 
-  return { previewUrl, loading, failed }
+  return { previewUrl, loading, failed, onError: () => setFailed(true) }
 }
 
 async function downloadImage(image: LightboxImage) {
@@ -126,7 +129,7 @@ export function ImageAttachmentPreview({
 }: ImageAttachmentPreviewProps) {
   const [downloading, setDownloading] = useState(false)
   const [copied, setCopied] = useState(false)
-  const { previewUrl, loading, failed } = useRenderableImageUrl(image)
+  const { previewUrl, failed, onError } = useRenderableImageUrl(image.thumbnailUrl ?? null)
 
   const handleDownload = async () => {
     if (downloading) return
@@ -151,8 +154,18 @@ export function ImageAttachmentPreview({
   return (
     <Box sx={{ width: fullWidth ? '100%' : 120 }}>
       <Box sx={{ position: 'relative' }}>
-        {loading || failed ? (
+        {!previewUrl || failed ? (
           <Box
+            role="button"
+            tabIndex={0}
+            aria-label={`Открыть ${image.filename}`}
+            onClick={onOpen}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onOpen()
+              }
+            }}
             sx={{
               width: fullWidth ? '100%' : 120,
               height: fullWidth ? 180 : 120,
@@ -165,15 +178,14 @@ export function ImageAttachmentPreview({
               border: fullWidth ? 0 : '1px solid rgba(0,0,0,0.12)',
               borderBottom: 0,
               bgcolor: 'action.hover',
+              cursor: 'pointer',
+              p: 1,
+              boxSizing: 'border-box',
             }}
           >
-            {loading ? (
-              <CircularProgress size={28} />
-            ) : (
-              <ImageIcon color="action" fontSize="large" />
-            )}
-            <Typography variant="caption">
-              {loading ? 'Обработка HEIC…' : 'Не удалось показать HEIC'}
+            <ImageIcon color="action" fontSize="large" />
+            <Typography variant="caption" textAlign="center">
+              {image.previewStatus === 'pending' ? 'Превью готовится…' : 'Превью недоступно'}
             </Typography>
           </Box>
         ) : (
@@ -183,6 +195,7 @@ export function ImageAttachmentPreview({
             alt={image.filename}
             loading="lazy"
             decoding="async"
+            onError={onError}
             onClick={onOpen}
             sx={{
               display: 'block',
@@ -267,7 +280,13 @@ export function ImageAttachmentPreview({
 
 export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
   const [downloading, setDownloading] = useState(false)
-  const { previewUrl, loading, failed } = useRenderableImageUrl(image)
+  const [showOriginal, setShowOriginal] = useState(false)
+  const { previewUrl, loading, failed, onError } = useRenderableImageUrl(
+    showOriginal ? image.url : image.previewUrl ?? null,
+    showOriginal && isHeicImage(image.filename),
+  )
+
+  useEffect(() => setShowOriginal(false), [image.url])
 
   const handleDownload = async () => {
     if (downloading) return
@@ -323,6 +342,16 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
           gap: 0.5,
         }}
       >
+        <Button
+          size="small"
+          onClick={(event) => {
+            event.stopPropagation()
+            setShowOriginal((value) => !value)
+          }}
+          sx={{ color: '#fff', textTransform: 'none' }}
+        >
+          {showOriginal ? 'Показать превью' : 'Открыть оригинал'}
+        </Button>
         <Tooltip title="Скачать">
           <span>
             <IconButton
@@ -354,12 +383,17 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
 
       {loading ? (
         <CircularProgress color="inherit" />
-      ) : failed ? (
-        <Typography color="white">Не удалось отобразить HEIC-файл</Typography>
+      ) : failed || !previewUrl ? (
+        <Typography color="white">
+          {showOriginal ? 'Не удалось отобразить оригинал. Его можно скачать.'
+            : image.previewStatus === 'pending' ? 'Превью готовится. Оригинал доступен для просмотра и скачивания.'
+              : 'Превью недоступно. Оригинал можно открыть или скачать.'}
+        </Typography>
       ) : (
         <Box
           component="img"
           src={previewUrl}
+          onError={onError}
           alt={image.filename}
           onClick={(event) => event.stopPropagation()}
           sx={{

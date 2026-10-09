@@ -57,6 +57,7 @@ export interface UpdateUserPayload {
 }
 
 export interface UpdateOrderPayload {
+  productionTextSize?: '30x40' | '40x60' | '60x80'
   pinSketchMessageId?: number
   unpinSketchMessageId?: number
   printPhotoKeys?: string[]
@@ -247,6 +248,9 @@ export type MessageKind = 'NORMAL' | 'REVISION_REQUEST' | 'REVISION_ANSWER'
 export interface Attachment {
   id: number
   url: string
+  thumbnailUrl: string | null
+  previewUrl: string | null
+  previewStatus: string
   filename: string
   mimeType: string | null
   /** null, если хранилище не отдало метаданные объекта. */

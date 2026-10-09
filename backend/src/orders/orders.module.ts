@@ -6,10 +6,11 @@ import { AssignmentModule } from '../assignment/assignment.module';
 import { BluesalesModule } from '../bluesales/bluesales.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderStatusOutboxProcessor } from './order-status-outbox.processor';
+import { ProductionFilesService } from './production-files.service';
 
 @Module({
   imports: [AssignmentModule, BluesalesModule, NotificationsModule],
-  providers: [OrdersService, OrderEventsService, OrderStatusOutboxProcessor],
+  providers: [OrdersService, OrderEventsService, OrderStatusOutboxProcessor, ProductionFilesService],
   controllers: [OrdersController],
   exports: [OrdersService],
 })

@@ -8,7 +8,7 @@ const { MAX_UPLOAD_BYTES } = require('../dist/storage/upload.config');
 
 const actor = { id: 1, role: 'MANAGER', scopes: [] };
 
-function setup({ photos = [], pinnedSketches = [{ messageId: 20 }], stat = { size: 123, mimeType: 'image/jpeg' } } = {}) {
+function setup({ photos = [], pinnedSketches = [{ messageId: 20 }], stat = { size: 123, mimeType: 'image/jpeg' }, productionFiles } = {}) {
   const existing = { id: 10, pinnedSketches, printPhotos: photos };
   const writes = [];
   const events = [];
@@ -21,13 +21,33 @@ function setup({ photos = [], pinnedSketches = [{ messageId: 20 }], stat = { siz
       findFirst: async ({ where }) => where.orderId === 10 && (where.id === 20 || where.id === 21) ? { id: where.id } : null,
     },
   };
+  prisma.$transaction = async (operation) => operation(prisma);
   const service = new OrdersService(
     prisma, { record: async (...args) => events.push(args) }, null, null,
     { stat: async (key) => typeof stat === 'function' ? stat(key) : stat }, null, null, null,
+    productionFiles || { queueOrder: async () => {}, scheduleDeletion: async () => {} }, { processBatch: async () => {} },
   );
   service.findOne = async () => existing;
   return { service, writes, events };
 }
+
+test('photo attachment queues the selected size and removal schedules cache deletion before the cascade', async () => {
+  const actions = [];
+  const productionFiles = {
+    queueOrder: async (...args) => actions.push(['queue', ...args]),
+    scheduleDeletion: async (tx, where) => {
+      assert.equal(writes.length, 1, 'cleanup must be scheduled before deleting the photo');
+      actions.push(['delete', where]);
+      assert.ok(tx.order);
+    },
+  };
+  const { service, writes } = setup({ photos: [{ id: 1, filename: 'one.jpg' }], productionFiles });
+  await service.update(10, { printPhotoKeys: ['two.jpg'], productionTextSize: '60x80' }, actor);
+  assert.deepEqual(actions[0], ['queue', 10, '60x80']);
+  await service.update(10, { removePrintPhotoIds: [1] }, actor);
+  assert.deepEqual(actions[1], ['delete', { orderId: 10, attachmentId: { in: [1] } }]);
+  assert.equal(writes.length, 2);
+});
 
 test('a message from another order cannot be pinned as a sketch', async () => {
   const { service, writes } = setup();
@@ -96,6 +116,17 @@ test('duplicate keys in a batch create one attachment per file', async () => {
   assert.equal(writes[0].data.printPhotos.create.length, 1);
 });
 
+test('production photos retain the preview keys generated during upload', async () => {
+  const previews = { thumbnailKey: 'photo.jpg.thumbnail-v1.webp', previewKey: 'photo.jpg.preview-v1.webp', previewStatus: 'ready' };
+  const { service, writes } = setup({ stat: { size: 30_000_000, mimeType: 'image/jpeg', previews } });
+  await service.update(10, { printPhotoKeys: ['photo.jpg'] }, actor);
+  const photo = writes[0].data.printPhotos.create[0];
+  assert.equal(photo.thumbnailKey, previews.thumbnailKey);
+  assert.equal(photo.previewKey, previews.previewKey);
+  assert.equal(photo.previewStatus, 'ready');
+  assert.equal(photo.objectKey, 'photo.jpg');
+});
+
 test('HEIC, HEIF, PDF and DNG accept the same fallback extensions as chat', async () => {
   for (const extension of ['HEIC', 'heif', 'pdf', 'dng']) {
     const { service, writes } = setup({ stat: { size: 10, mimeType: 'application/octet-stream' } });
@@ -118,6 +149,7 @@ test('API validates every key and removal ID and rejects null arrays', async () 
     { pinSketchMessageId: 1.5 }, { unpinSketchMessageId: 0 }, { printPhotoKeys: 'one.jpg' }, { printPhotoKeys: [''] },
     { printPhotoKeys: ['one.jpg', 1] }, { printPhotoKeys: null },
     { removePrintPhotoIds: null }, { removePrintPhotoIds: [1, -2] }, { removePrintPhotoIds: ['1'] },
+    { productionTextSize: 'bogus' }, { productionTextSize: null },
   ]) {
     assert.ok((await validate(Object.assign(new UpdateOrderDto(), payload))).length > 0);
   }

@@ -408,14 +408,10 @@ function MessageBubble({
                   ) : (
                     <Box key={att.id} sx={{ maxWidth: '100%', minWidth: 0 }}>
                       <ImageAttachmentPreview
-                        image={{ url: att.url, filename: att.filename, size: att.size }}
+                        image={att}
                         lightControls={ownSide && !isRequest && !isAnswer}
                         onOpen={() =>
-                          onOpenImage({
-                            url: att.url,
-                            filename: att.filename,
-                            size: att.size,
-                          })
+                          onOpenImage(att)
                         }
                       />
                     </Box>
@@ -1679,6 +1675,7 @@ export default function OrderThreadPage() {
       }
       const { data } = await client.patch<Order>(`/orders/${orderId}`, {
         printPhotoKeys,
+        productionTextSize,
         removePrintPhotoIds: removePhotoId === undefined ? undefined : [removePhotoId],
       } satisfies UpdateOrderPayload)
       setOrder((prev) => prev?.id === orderId ? { ...prev, printPhotos: data.printPhotos } : prev)

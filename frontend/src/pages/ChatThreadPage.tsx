@@ -613,17 +613,9 @@ export default function ChatThreadPage() {
                           ) : (
                             <ImageAttachmentPreview
                               key={attachment.id}
-                              image={{
-                                url: attachment.url,
-                                filename: attachment.filename,
-                                size: attachment.size,
-                              }}
+                              image={attachment}
                               onOpen={() =>
-                                setLightbox({
-                                  url: attachment.url,
-                                  filename: attachment.filename,
-                                  size: attachment.size,
-                                })
+                                setLightbox(attachment)
                               }
                             />
                           ),

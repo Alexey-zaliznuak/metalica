@@ -176,7 +176,7 @@ export async function productionImage(
   const headerBuffer = sideHeader
     ? await sharp(header.buffer).rotate(270).png().toBuffer()
     : header.buffer;
-  return photo.rotate()
+  const output = photo.rotate()
     .extend({
       top: sideHeader ? 0 : header.height,
       bottom: 0,
@@ -186,5 +186,9 @@ export async function productionImage(
     })
     .composite([{ input: headerBuffer, left: 0, top: 0 }])
     .withMetadata({ orientation: 1, ...(metadata.density ? { density: metadata.density } : {}) })
-    .png();
+    .png({ adaptiveFiltering: true, compressionLevel: 6 });
+  // Compositing adds alpha even to an opaque RGB original. Keep real source
+  // transparency, but avoid storing a redundant channel for opaque sources.
+  if (!metadata.hasAlpha) output.removeAlpha();
+  return output;
 }

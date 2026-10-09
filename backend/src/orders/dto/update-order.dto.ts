@@ -2,6 +2,7 @@ import {
   IsArray,
   IsDateString,
   IsInt,
+  IsIn,
   IsOptional,
   IsString,
   MaxLength,
@@ -11,6 +12,10 @@ import {
 } from 'class-validator';
 
 export class UpdateOrderDto {
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(['30x40', '40x60', '60x80'])
+  productionTextSize?: '30x40' | '40x60' | '60x80';
+
   @IsOptional()
   @IsInt()
   @Min(1)

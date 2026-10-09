@@ -152,6 +152,25 @@ export class OrdersController {
     return this.orders.downloadProductionImage(id, attachmentId, textSize);
   }
 
+  @Get(':id/attachments/:attachmentId/production/status')
+  @Header('Cache-Control', 'private, no-store')
+  productionFileStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @Query('textSize') textSize?: string,
+  ) {
+    return this.orders.productionFileStatus(id, attachmentId, textSize);
+  }
+
+  @Post(':id/attachments/:attachmentId/production')
+  prepareProductionFile(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @Query('textSize') textSize?: string,
+  ) {
+    return this.orders.productionFileStatus(id, attachmentId, textSize, true);
+  }
+
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,

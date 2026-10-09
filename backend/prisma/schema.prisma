@@ -118,6 +118,7 @@ model Order {
   messages              Message[]
   pinnedSketches        OrderPinnedSketch[]
   printPhotos           Attachment[]        @relation("OrderPrintPhoto")
+  productionFiles       ProductionFile[]
   revisions             Revision[]
   events                OrderEvent[]
   statusChanges         OrderStatusChange[]
@@ -489,12 +490,55 @@ model Attachment {
   // null у вложений, загруженных до появления колонки: размер дотягивается
   // из хранилища при первой отдаче сообщения.
   size          Int?
+  thumbnailKey  String?
+  previewKey    String?
+  previewStatus String       @default("pending")
+  previewAttempts Int        @default(0)
+  productionFiles ProductionFile[]
   kind          String       @default("attachment")
   createdAt     DateTime     @default(now())
 
   @@index([messageId])
   @@index([chatMessageId])
   @@index([printPhotoOrderId])
+  @@index([previewStatus, id])
+}
+
+model ProductionFile {
+  id             Int        @id @default(autoincrement())
+  order          Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId        Int
+  attachment     Attachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  attachmentId   Int
+  textSize       String
+  fingerprint    String
+  sourceKey      String
+  // Snapshot of the fields actually printed in the header.
+  parameters     Json
+  status         String     @default("pending")
+  objectKey      String?
+  size           Int?
+  attempts       Int        @default(0)
+  runToken       String?
+  leaseUntil     DateTime?
+  nextAttemptAt  DateTime   @default(now())
+  error          String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([orderId, attachmentId, textSize])
+  @@index([status, nextAttemptAt])
+}
+
+// Survives deletion of orders/attachments and retries MinIO cleanup after outages.
+model StoredFileDeletion {
+  objectKey      String   @id
+  generation     Int      @default(0)
+  attempts       Int      @default(0)
+  nextAttemptAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([nextAttemptAt])
 }
 
 // In-app inbox. Chat-уведы дедупятся через unique(userId, dedupeKey),

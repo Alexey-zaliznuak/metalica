@@ -5,14 +5,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  StreamableFile,
-  ServiceUnavailableException,
 } from '@nestjs/common';
-import { createReadStream } from 'fs';
-import { mkdtemp, rm } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { productionImage, productionTextScale } from './production-image';
+import { ProductionFilesService } from './production-files.service';
+import { StorageCleanupService } from '../storage/storage-cleanup.service';
+import { productionOrderData } from './production-order-data';
 import { deliveryTypeSql } from './delivery-type';
 import {
   BluesalesOrderStatus,
@@ -51,6 +47,8 @@ export class OrdersService {
     private notifications: NotificationsService,
     private assignment: AssignmentService,
     private attachments: AttachmentsService,
+    private productionFiles: ProductionFilesService,
+    private storageCleanup: StorageCleanupService,
   ) {}
 
   private readonly userSelect = {
@@ -468,70 +466,11 @@ export class OrdersService {
   }
 
   async downloadProductionImage(id: number, attachmentId: number, textSize?: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
-      select: {
-        orderNumber: true,
-        pinnedSketches: { select: { messageId: true } },
-        bluesalesInfo: { select: { rawPayload: true } },
-      },
-    });
-    if (!order) throw new NotFoundException('Заказ не найден');
-    const attachment = await this.prisma.attachment.findFirst({
-      where: {
-        id: attachmentId,
-        OR: [
-          { printPhotoOrderId: id },
-          ...order.pinnedSketches.map((pin) => ({ message: { id: pin.messageId, orderId: id } })),
-        ],
-      },
-    });
-    if (!attachment) throw new NotFoundException('Фото не найдено среди итоговых эскизов этого заказа');
-    if (attachment.mimeType === 'application/pdf' || /\.(pdf|dng)$/i.test(attachment.filename)) {
-      throw new BadRequestException('Для производства прикрепите растровое изображение вместо PDF или DNG');
-    }
-    const directory = await mkdtemp(join(tmpdir(), 'metalica-production-'));
-    const cleanup = () => rm(directory, { recursive: true, force: true }).catch((error) => {
-      this.logger.warn(`Не удалось удалить временный файл производства: ${error.message}`);
-    });
-    try {
-      const source = join(directory, 'source');
-      try {
-        await this.storage.downloadToFile(attachment.objectKey, source);
-      } catch (error) {
-        this.logger.warn(`Не удалось прочитать фото #${attachmentId}: ${error.message}`);
-        throw new ServiceUnavailableException('Не удалось прочитать исходное фото из хранилища. Попробуйте ещё раз');
-      }
-      const destination = join(directory, 'production.png');
-      let output: { size: number };
-      try {
-        const extra = this.extractOrderExtra(order.bluesalesInfo?.rawPayload);
-        const image = await productionImage(
-          source,
-          order.orderNumber,
-          this.extractArticles(order.bluesalesInfo?.rawPayload),
-          extra.comment,
-          productionTextScale(textSize),
-          extra.deliveryService,
-        );
-        output = await image.toFile(destination);
-      } catch (error) {
-        if (error instanceof BadRequestException) throw error;
-        this.logger.warn(`Не удалось подготовить фото #${attachmentId}: ${error.message}`);
-        throw new BadRequestException('Не удалось обработать фото. Используйте исправное изображение JPG, PNG, WebP, TIFF или AVIF');
-      }
-      const stream = createReadStream(destination);
-      stream.once('close', () => { void cleanup(); });
-      const filename = `production-${order.orderNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}-${attachmentId}.png`;
-      return new StreamableFile(stream, {
-        type: 'image/png',
-        disposition: `attachment; filename="${filename}"`,
-        length: output.size,
-      });
-    } catch (error) {
-      await cleanup();
-      throw error;
-    }
+    return this.productionFiles.download(id, attachmentId, textSize);
+  }
+
+  async productionFileStatus(id: number, attachmentId: number, textSize?: string, retry = false) {
+    return this.productionFiles.status(id, attachmentId, textSize, retry);
   }
 
   /** Ставит актуализацию заказа из BlueSales в интерактивную очередь. */
@@ -563,174 +502,8 @@ export class OrdersService {
    * позиции и их атрибуты ищем перебором вероятных ключей (как это уже
    * сделано для дат/сумм/источников в bluesales-sync.service).
    */
-  private extractArticles(rawPayload: Prisma.JsonValue | null | undefined): Array<{
-    article: string | null;
-    name: string | null;
-    quantity: number | null;
-    size: string | null;
-    comment: string | null;
-  }> {
-    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
-      return [];
-    }
-    const order = rawPayload as Record<string, unknown>;
-
-    const positionsKeys = [
-      'goodsPositions',
-      'orderProducts',
-      'products',
-      'orderItems',
-      'items',
-      'positions',
-      'goods',
-      'lines',
-      'productList',
-      'orderProductList',
-    ];
-    let positions: unknown[] = [];
-    for (const key of positionsKeys) {
-      const value = order[key];
-      if (Array.isArray(value) && value.length > 0) {
-        positions = value;
-        break;
-      }
-    }
-    if (positions.length === 0) {
-      return [];
-    }
-
-    const result: Array<{
-      article: string | null;
-      name: string | null;
-      quantity: number | null;
-      size: string | null;
-      comment: string | null;
-    }> = [];
-    for (const raw of positions) {
-      if (!raw || typeof raw !== 'object') continue;
-      const pos = raw as Record<string, unknown>;
-      const product =
-        pos.product && typeof pos.product === 'object'
-          ? (pos.product as Record<string, unknown>)
-          : {};
-      const nomenclature =
-        pos.nomenclature && typeof pos.nomenclature === 'object'
-          ? (pos.nomenclature as Record<string, unknown>)
-          : {};
-      // В ответе BlueSales позиция товара называется `goods`, а артикул лежит
-      // в поле `marking` (см. order_raw_payload.json).
-      const goods =
-        pos.goods && typeof pos.goods === 'object'
-          ? (pos.goods as Record<string, unknown>)
-          : {};
-
-      const article = this.pickString(
-        pos.marking,
-        pos.article,
-        pos.articul,
-        pos.vendorCode,
-        pos.sku,
-        pos.code,
-        pos.productArticle,
-        pos.productCode,
-        goods.marking,
-        goods.article,
-        goods.articul,
-        goods.vendorCode,
-        goods.sku,
-        goods.code,
-        product.article,
-        product.articul,
-        product.vendorCode,
-        product.sku,
-        product.code,
-        nomenclature.article,
-        nomenclature.articul,
-        nomenclature.vendorCode,
-        nomenclature.code,
-      );
-      const name = this.pickString(
-        pos.name,
-        pos.productName,
-        pos.title,
-        goods.name,
-        goods.title,
-        product.name,
-        product.title,
-        nomenclature.name,
-      );
-      const quantity = this.pickNumber(pos.count, pos.quantity, pos.amount, pos.qty, pos.number);
-      const size = this.pickString(pos.size, pos.sizeName, goods.size, product.size);
-      const comment = this.extractPositionComment(pos);
-
-      if (article === null && name === null) continue;
-      result.push({ article, name, quantity, size, comment });
-    }
-    return this.mergePlainArticles(result);
-  }
-
-  /**
-   * Склеивает одинаковые артикулы в одну строку с суммой количества.
-   * Только позиции без размера и без комментария: у «доп лицо ×4» в BS
-   * часто четыре отдельные строки по 1 шт, а упаковка с размером/комментом
-   * должна остаться отдельными строками.
-   */
-  private mergePlainArticles(
-    items: Array<{
-      article: string | null;
-      name: string | null;
-      quantity: number | null;
-      size: string | null;
-      comment: string | null;
-    }>,
-  ) {
-    const merged: typeof items = [];
-    const indexByKey = new Map<string, number>();
-    for (const item of items) {
-      if (item.size !== null || item.comment !== null) {
-        merged.push(item);
-        continue;
-      }
-      const key = `${item.article ?? ''}\0${item.name ?? ''}`;
-      const existingIndex = indexByKey.get(key);
-      if (existingIndex === undefined) {
-        indexByKey.set(key, merged.length);
-        merged.push({ ...item });
-        continue;
-      }
-      const existing = merged[existingIndex];
-      existing.quantity = (existing.quantity ?? 1) + (item.quantity ?? 1);
-    }
-    return merged;
-  }
-
-  /**
-   * Комментарий позиции: сначала прямые поля, затем кастомное поле
-   * «Комментарии» / «Примечание» из BlueSales.
-   */
-  private extractPositionComment(pos: Record<string, unknown>): string | null {
-    const direct = this.pickString(
-      pos.comment,
-      pos.comments,
-      pos.note,
-      pos.internalComments,
-    );
-    if (direct) return direct;
-
-    const fields = Array.isArray(pos.customFields) ? pos.customFields : [];
-    for (const raw of fields) {
-      if (!raw || typeof raw !== 'object') continue;
-      const field = raw as Record<string, unknown>;
-      const fieldName = String(field.fieldName ?? '')
-        .trim()
-        .toLocaleLowerCase('ru-RU');
-      if (!fieldName.includes('комментари') && !fieldName.includes('примечан')) {
-        continue;
-      }
-      const value = this.pickString(field.valueAsText, field.value);
-      if (value) return value;
-    }
-    return null;
+  private extractArticles(rawPayload: Prisma.JsonValue | null | undefined) {
+    return productionOrderData.extractArticles(rawPayload);
   }
 
   /**
@@ -917,6 +690,7 @@ export class OrdersService {
           filename: key.substring(key.lastIndexOf('/') + 1),
           mimeType: stat.mimeType,
           size: stat.size,
+          ...stat.previews,
           kind: 'print-photo',
         };
       }));
@@ -1063,10 +837,23 @@ export class OrdersService {
         nextId === null ? { disconnect: true } : { connect: { id: nextId } };
     }
 
-    await this.prisma.order.update({
-      where: { id },
-      data,
-    });
+    const removingPhotos = (dto.removePrintPhotoIds?.length ?? 0) > 0;
+    if (removingPhotos || dto.unpinSketchMessageId !== undefined) {
+      await this.prisma.$transaction(async (tx) => {
+        if (removingPhotos) await this.productionFiles.scheduleDeletion(tx, {
+          orderId: id, attachmentId: { in: dto.removePrintPhotoIds },
+        });
+        if (dto.unpinSketchMessageId !== undefined) await this.productionFiles.scheduleDeletion(tx, {
+          orderId: id, attachment: { messageId: dto.unpinSketchMessageId, printPhotoOrderId: null },
+        });
+        await tx.order.update({ where: { id }, data });
+      });
+      void this.storageCleanup.processBatch();
+    } else {
+      await this.prisma.order.update({ where: { id }, data });
+    }
+    try { await this.productionFiles.queueOrder(id, dto.productionTextSize); }
+    catch (error) { this.logger.warn(`Очередь производства заказа #${id} будет восстановлена в фоне: ${error.message}`); }
     await this.orderEvents.record(id, actor.id, changes);
     return this.findOne(id);
   }
@@ -1595,7 +1382,11 @@ export class OrdersService {
       select: { objectKey: true },
     });
 
-    await this.prisma.order.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      await this.productionFiles.scheduleDeletion(tx, { orderId: id });
+      await tx.order.delete({ where: { id } });
+    });
+    void this.storageCleanup.processBatch();
 
     // Единственный след удаления: сам заказ вместе с логом событий стёрт.
     this.logger.warn(

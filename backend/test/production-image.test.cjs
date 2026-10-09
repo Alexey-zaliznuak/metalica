@@ -1,7 +1,6 @@
 // Run after npm run build: node --test test/production-image.test.cjs
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { writeFile, access } = require('node:fs/promises');
 const sharp = require('sharp');
 const { productionImage, productionHeader, productionArticleText, isShownOnProductionImage, productionTextScale } = require('../dist/orders/production-image');
 const { OrdersService } = require('../dist/orders/orders.service');
@@ -31,6 +30,7 @@ test('portrait photo keeps its pixels and DPI, with a header on the short top ed
   assert.equal(meta.width, width);
   assert.ok(meta.height > height);
   assert.equal(meta.density, 300);
+  assert.equal(meta.channels, 3, 'opaque RGB sources must not gain a redundant alpha channel');
   const photo = await sharp(result).extract({ left: 0, top: meta.height - height, width, height }).removeAlpha().raw().toBuffer();
   assert.deepEqual(photo, await rawPixels(input));
   const corner = await sharp(result).extract({ left: 0, top: 0, width: 8, height: 8 }).removeAlpha().raw().toBuffer();
@@ -240,63 +240,13 @@ test('rejects corrupt and vector files instead of returning an unprocessed origi
   await assert.rejects(productionImage(Buffer.from('<svg width="400" height="400"><rect width="400" height="400"/></svg>'), '123', []), /растровое/);
 });
 
-function setupDownload({ pinnedMessageId = 25, found = true, storageError = false } = {}) {
-  let lookup;
-  let sourcePath;
-  let readCount = 0;
-  const service = new OrdersService({
-    order: { findUnique: async () => ({
-      orderNumber: '29538603',
-      pinnedSketches: pinnedMessageId == null ? [] : [{ messageId: pinnedMessageId }],
-      bluesalesInfo: null,
-    }) },
-    attachment: { findFirst: async (input) => {
-      lookup = input;
-      return found ? { id: 7, objectKey: 'original.png', filename: 'original.png', mimeType: 'image/png' } : null;
-    } },
-  }, null, null, null, {
-    downloadToFile: async (key, destination) => {
-      readCount++;
-      sourcePath = destination;
-      assert.equal(key, 'original.png');
-      if (storageError) throw new Error('offline');
-      await writeFile(destination, await sharp({ create: { width: 400, height: 600, channels: 3, background: 'blue' } }).png().toBuffer());
-    },
-  });
-  return { service, lookup: () => lookup, sourcePath: () => sourcePath, readCount: () => readCount };
-}
-
-test('download is scoped to this order’s print photos or its pinned sketches', async () => {
-  const state = setupDownload({ found: false });
-  await assert.rejects(state.service.downloadProductionImage(10, 999), /этого заказа/);
-  assert.deepEqual(state.lookup().where, { id: 999, OR: [
-    { printPhotoOrderId: 10 }, { message: { id: 25, orderId: 10 } },
-  ] });
-  assert.equal(state.readCount(), 0);
-  const unmarked = setupDownload({ found: false, pinnedMessageId: null });
-  await assert.rejects(unmarked.service.downloadProductionImage(10, 999));
-  assert.deepEqual(unmarked.lookup().where.OR, [{ printPhotoOrderId: 10 }]);
-});
-
-test('returns a named PNG attachment and removes temporary originals after download', async () => {
-  const state = setupDownload();
-  const file = await state.service.downloadProductionImage(10, 7);
-  assert.equal(file.getHeaders().type, 'image/png');
-  assert.equal(file.getHeaders().disposition, 'attachment; filename="production-29538603-7.png"');
-  const chunks = [];
-  for await (const chunk of file.getStream()) chunks.push(chunk);
-  const result = Buffer.concat(chunks);
-  assert.equal(result.length, file.getHeaders().length);
-  assert.equal((await sharp(result).metadata()).width, 400);
-  for (let attempt = 0; attempt < 30; attempt++) {
-    try { await access(state.sourcePath()); } catch { return; }
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.fail('temporary original was not removed');
-});
-
-test('storage failure is actionable and cleans up its temporary directory', async () => {
-  const state = setupDownload({ storageError: true });
-  await assert.rejects(state.service.downloadProductionImage(10, 7), /хранилища/);
-  await assert.rejects(access(require('node:path').dirname(state.sourcePath())));
+test('source transparency is preserved while PNG filtering remains lossless', async () => {
+  const input = await sharp({ create: { width: 100, height: 160, channels: 4, background: { r: 20, g: 40, b: 80, alpha: 0.5 } } }).png().toBuffer();
+  const result = await (await productionImage(input, '123', [])).toBuffer();
+  const metadata = await sharp(result).metadata();
+  assert.equal(metadata.channels, 4);
+  const photo = await sharp(result).extract({ left: 0, top: metadata.height - 160, width: 100, height: 160 }).raw().toBuffer();
+  const original = await sharp(input).raw().toBuffer();
+  assert.ok(photo.every((value, i) => Math.abs(value - original[i]) <= 1));
+  assert.equal(photo[3], original[3]);
 });

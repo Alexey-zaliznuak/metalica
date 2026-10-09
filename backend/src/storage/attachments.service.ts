@@ -6,6 +6,9 @@ import { StorageService } from './storage.service';
 export interface SerializedAttachment {
   id: number;
   url: string;
+  thumbnailUrl: string | null;
+  previewUrl: string | null;
+  previewStatus: string;
   filename: string;
   mimeType: string | null;
   size: number | null;
@@ -39,6 +42,7 @@ export class AttachmentsService {
           filename: key.substring(key.lastIndexOf('/') + 1),
           mimeType: stat?.mimeType ?? null,
           size: stat?.size ?? null,
+          ...stat?.previews,
           kind,
         };
       }),
@@ -54,6 +58,9 @@ export class AttachmentsService {
         return {
           id: attachment.id,
           url: await this.storage.getUrl(attachment.objectKey),
+          thumbnailUrl: attachment.thumbnailKey ? await this.storage.getUrl(attachment.thumbnailKey) : null,
+          previewUrl: attachment.previewKey ? await this.storage.getUrl(attachment.previewKey) : null,
+          previewStatus: attachment.previewStatus,
           filename: attachment.filename,
           mimeType,
           size,
