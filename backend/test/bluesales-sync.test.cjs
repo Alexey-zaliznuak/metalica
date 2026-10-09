@@ -207,11 +207,12 @@ test('artist sync retries on subsequent passes without failing order import', as
 
 test('artist API write touches only the target custom field', async () => {
   const api = Object.create(BluesalesApiService.prototype);
+  api.logger = { log() {} };
   let call;
   api.send = async (...args) => { call = args; };
   await api.setOrderCustomField(101, 6265, 'Катя');
   assert.deepEqual(call, ['orders.updateMany', {
-    ids: [101], customFields: [{ fieldId: 6265, value: 'Катя' }],
+    ids: [101], customFieldValue: { fieldId: 6265, value: 'Катя' },
   }, 'background']);
 });
 
@@ -312,11 +313,30 @@ test('mass sync paths collect artist changes and flush once after all imports', 
 
 test('custom field batch API deduplicates IDs and enforces its size limit', async () => {
   const api = Object.create(BluesalesApiService.prototype);
+  api.logger = { log() {} };
   const calls = [];
   api.send = async (...args) => calls.push(args);
   await api.setOrdersCustomField([101, 102, 101], 9001, 'Катя');
   await api.setOrdersCustomField([], 9001, 'Катя');
-  assert.deepEqual(calls, [['orders.updateMany', { ids: [101, 102], customFields: [{ fieldId: 9001, value: 'Катя' }] }, 'background']]);
+  assert.deepEqual(calls, [['orders.updateMany', { ids: [101, 102], customFieldValue: { fieldId: 9001, value: 'Катя' } }, 'background']]);
   await assert.rejects(api.setOrdersCustomField(Array.from({ length: 501 }, (_, i) => i + 1), 9001, 'Катя'));
   assert.equal(calls.length, 1);
+});
+
+test('custom field write logs the actual response without an extra read request', async () => {
+  const api = Object.create(BluesalesApiService.prototype);
+  const messages = [];
+  const calls = [];
+  api.logger = { log: (message) => messages.push(message) };
+  api.send = async (...args) => { calls.push(args); return { updated: 0, details: 'custom field ignored' }; };
+  await api.setOrdersCustomField([12836039], 7194, 'Полина Вишнякова');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'orders.updateMany');
+  // Contract from the official BlueSales API demo: updateMany takes a single customFieldValue.
+  assert.deepEqual(calls[0][1], { ids: [12836039], customFieldValue: { fieldId: 7194, value: 'Полина Вишнякова' } });
+  assert.equal('customFields' in calls[0][1], false);
+  assert.match(messages[0], /7194/);
+  assert.match(messages[0], /Полина Вишнякова/);
+  assert.match(messages[0], /"updated":0/);
+  assert.match(messages[0], /custom field ignored/);
 });

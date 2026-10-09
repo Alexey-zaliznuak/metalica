@@ -854,10 +854,20 @@ export class BluesalesApiService {
     const uniqueIds = [...new Set(ids)];
     if (!uniqueIds.length) return;
     if (uniqueIds.length > 500) throw new Error('BlueSales custom field batch exceeds 500 orders');
-    await this.send<unknown>('orders.updateMany', {
+    const payload = {
       ids: uniqueIds,
-      customFields: [{ fieldId, value }],
-    }, priority);
+      // orders.updateMany использует customFieldValue; customFields — формат orders.add.
+      // https://bluesales.ru/app/api/BlueSalesApiDemo/app.js?v=3
+      customFieldValue: { fieldId, value },
+    };
+    const response = await this.send<unknown>('orders.updateMany', payload, priority);
+    // Ответ без ошибки API ещё не доказывает, что BS применил значение поля.
+    // Сохраняем тело ответа в логе существующего запроса, без контрольного orders.get.
+    this.logger.log(
+      `BlueSales orders.updateMany: ответ записи customFieldValue; ` +
+        `request=${this.truncateLogValue(JSON.stringify(payload))}; ` +
+        `response=${this.truncateLogValue(JSON.stringify(response) ?? 'undefined')}`,
+    );
   }
 
   /**
