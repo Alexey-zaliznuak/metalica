@@ -1398,6 +1398,38 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     await this.syncOrderArtistToBluesales(created.id, bsOrder);
   }
 
+  private crmArtistFieldIdCache?: {
+    expiresAt: number;
+    promise: Promise<number | null>;
+  };
+
+  private getCrmArtistFieldId(): Promise<number | null> {
+    const configured = Number(this.config.get<string>('BLUESALES_CRM_ARTIST_FIELD_ID'));
+    if (Number.isInteger(configured) && configured > 0) return Promise.resolve(configured);
+    if (this.crmArtistFieldIdCache && this.crmArtistFieldIdCache.expiresAt > Date.now()) {
+      return this.crmArtistFieldIdCache.promise;
+    }
+    // Пустое поле может отсутствовать в orders.get. Ищем его ID только в нашей БД.
+    const promise = this.prisma.$queryRaw<Array<{ fieldId: string }>>`
+      SELECT DISTINCT field->>'fieldId' AS "fieldId"
+      FROM "BluesalesOrderInfo"
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof("rawPayload"->'customFields') = 'array'
+          THEN "rawPayload"->'customFields' ELSE '[]'::jsonb END
+      ) AS field
+      WHERE LOWER(BTRIM(field->>'fieldName')) IN ('художник срм', 'художник crm')
+      LIMIT 2
+    `.then((rows) => {
+      const id = rows.length === 1 ? Number(rows[0].fieldId) : NaN;
+      return Number.isInteger(id) && id > 0 ? id : null;
+    }).catch((error: unknown) => {
+      this.crmArtistFieldIdCache = undefined;
+      throw error;
+    });
+    this.crmArtistFieldIdCache = { expiresAt: Date.now() + 60_000, promise };
+    return promise;
+  }
+
   /** Локальный художник — источник истины; пустое назначение BS не очищает. */
   private async syncOrderArtistToBluesales(orderId: number, bsOrder: BsOrder): Promise<void> {
     try {
@@ -1411,14 +1443,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       const name = order?.sketchDesigner?.name.trim();
       if (!name || order?.bluesalesInfo?.bsOrderId !== bsOrder.id) return;
       const field = (bsOrder.customFields ?? []).find(
-        (item) => (item.fieldName ?? '').trim().toLowerCase() === 'художник',
+        (item) => ['художник срм', 'художник crm'].includes((item.fieldName ?? '').trim().toLowerCase()),
       );
       const remoteName = (field?.valueAsText ?? String(field?.value ?? '')).trim();
       if (remoteName === name) return;
-      // ID из данных BS; fallback — поле «Художник» текущего проекта (6265).
-      const fieldId = field?.fieldId ?? this.envInt('BLUESALES_ARTIST_FIELD_ID', 6265);
-      if (!Number.isInteger(fieldId) || fieldId <= 0) {
-        throw new Error('Некорректный ID поля «Художник» BlueSales');
+      const fieldId = field?.fieldId ?? await this.getCrmArtistFieldId();
+      if (fieldId == null || !Number.isInteger(fieldId) || fieldId <= 0) {
+        throw new Error('Не найден ID нового поля «Художник СРМ». Задайте BLUESALES_CRM_ARTIST_FIELD_ID');
       }
       await this.api.setOrderCustomField(bsOrder.id, fieldId, name, 'background');
     } catch (error) {

@@ -168,13 +168,14 @@ test('local artist is sent to BS only when different, with no incoming assignmen
       sketchDesigner: name === null ? null : { name },
       bluesalesInfo: { bsOrderId: 101 },
     }) } };
+    service.getCrmArtistFieldId = async () => 9001;
     service.api.setOrderCustomField = async (...args) => writes.push(args);
     await service.syncOrderArtistToBluesales(7, {
       id: 101,
-      customFields: [{ fieldId: 6265, fieldName: 'Художник', value: 'id-from-bs', valueAsText: remote }],
+      customFields: [{ fieldId: 9001, fieldName: 'Художник СРМ', value: 'id-from-bs', valueAsText: remote }],
     });
     assert.equal(writes.length, expected);
-    if (expected) assert.deepEqual(writes[0], [101, 6265, 'Катя', 'background']);
+    if (expected) assert.deepEqual(writes[0], [101, 9001, 'Катя', 'background']);
   }
 });
 
@@ -187,7 +188,7 @@ test('artist sync uses field metadata and skips obsolete BS bindings', async () 
   service.api.setOrderCustomField = async (...args) => writes.push(args);
   await service.syncOrderArtistToBluesales(7, { id: 100, customFields: [] });
   assert.equal(writes.length, 0);
-  await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [{ fieldId: 123, fieldName: ' Художник ', valueAsText: 'Аня' }] });
+  await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [{ fieldId: 123, fieldName: ' Художник СРМ ', valueAsText: 'Аня' }] });
   assert.deepEqual(writes[0], [101, 123, 'Катя', 'background']);
 });
 
@@ -197,6 +198,7 @@ test('artist sync retries on subsequent passes without failing order import', as
   service.prisma = { order: { findUnique: async () => ({
     sketchDesigner: { name: 'Катя' }, bluesalesInfo: { bsOrderId: 101 },
   }) } };
+  service.getCrmArtistFieldId = async () => 9001;
   service.api.setOrderCustomField = async () => { attempts++; throw new Error('BS unavailable'); };
   await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [] });
   await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [] });
@@ -211,4 +213,36 @@ test('artist API write touches only the target custom field', async () => {
   assert.deepEqual(call, ['orders.updateMany', {
     ids: [101], customFields: [{ fieldId: 6265, value: 'Катя' }],
   }, 'background']);
+});
+
+test('CRM artist sync ignores the old dropdown and writes the new text field', async () => {
+  const service = syncService();
+  const writes = [];
+  service.prisma = { order: { findUnique: async () => ({ sketchDesigner: { name: 'Полина Вишнякова' }, bluesalesInfo: { bsOrderId: 12836039 } }) } };
+  service.api.setOrderCustomField = async (...args) => writes.push(args);
+  await service.syncOrderArtistToBluesales(15133, { id: 12836039, customFields: [
+    { fieldId: 6265, fieldName: 'Художник', valueAsText: 'Полина Вишнякова' },
+    { fieldId: 9001, fieldName: 'Художник СРМ', value: '' },
+  ] });
+  assert.deepEqual(writes, [[12836039, 9001, 'Полина Вишнякова', 'background']]);
+});
+
+test('CRM artist sync never falls back to the old field ID', async () => {
+  const service = syncService();
+  service.prisma = { order: { findUnique: async () => ({ sketchDesigner: { name: 'Полина Вишнякова' }, bluesalesInfo: { bsOrderId: 101 } }) } };
+  service.getCrmArtistFieldId = async () => null;
+  service.api.setOrderCustomField = async () => assert.fail('must not write without new field ID');
+  await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [{ fieldId: 6265, fieldName: 'Художник', valueAsText: 'Полина' }] });
+});
+
+test('CRM artist field ID comes from configuration or cached database metadata', async () => {
+  const service = syncService();
+  service.config = { get: (key) => key === 'BLUESALES_CRM_ARTIST_FIELD_ID' ? '9001' : undefined };
+  assert.equal(await service.getCrmArtistFieldId(), 9001);
+  service.config = { get: () => undefined };
+  let queries = 0;
+  service.prisma = { $queryRaw: async () => { queries++; return [{ fieldId: '9002' }]; } };
+  assert.equal(await service.getCrmArtistFieldId(), 9002);
+  assert.equal(await service.getCrmArtistFieldId(), 9002);
+  assert.equal(queries, 1);
 });
