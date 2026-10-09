@@ -106,6 +106,31 @@ test('shipping deadline range filters count and paginated items together', async
   assert.match(sql, /parsed.deadline <=/);
 });
 
+test('urgent tag filter applies before pagination and combines with other board filters', async () => {
+  const { service, calls } = setup();
+  let listWhere;
+  let include;
+  service.prisma.order.findMany = async (query) => { listWhere = query.where; include = query.include; return []; };
+  await service.findAll({ onlyUrgent: true, orderStatusId: 3, withoutPinnedSketches: true, deliveryManagers: ['Менеджер'] });
+  const predicate = { equals: 'Срочно', mode: 'insensitive' };
+  assert.deepEqual(calls.where.AND, [
+    { bluesalesInfo: { is: { orderStatusId: 3 } } },
+    { deliveryManagerName: { in: ['Менеджер'] } },
+    { pinnedSketches: { none: {} } },
+    { lead: { is: { tags: { some: { name: predicate } } } } },
+  ]);
+  assert.deepEqual(listWhere, calls.where, 'list and count must filter the same orders');
+  assert.deepEqual(include.lead.select.tags.where.name, predicate, 'filter must match the existing urgent badge');
+});
+
+test('disabled or missing urgent filter includes orders without the tag and without a lead', async () => {
+  for (const onlyUrgent of [undefined, false]) {
+    const { service, calls } = setup();
+    await service.findAll({ onlyUrgent });
+    assert.deepEqual(calls.where, {});
+  }
+});
+
 test('shipping deadline accepts either boundary and returns no orders for no matches', async () => {
   for (const params of [
     { shippingDeadlineFrom: '2026-10-01' },

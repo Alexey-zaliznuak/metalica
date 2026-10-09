@@ -74,6 +74,7 @@ export class OrdersService {
     revisionDesigners?: string[];
     ignoreDesigners?: boolean;
     withoutPinnedSketches?: boolean;
+    onlyUrgent?: boolean;
     shippingDeadlineFrom?: string;
     shippingDeadlineTo?: string;
     deliveryTypes?: string[];
@@ -150,6 +151,10 @@ export class OrdersService {
 
     if (params.withoutPinnedSketches) {
       and.push({ pinnedSketches: { none: {} } });
+    }
+
+    if (params.onlyUrgent) {
+      and.push({ lead: { is: { tags: { some: { name: { equals: 'Срочно', mode: 'insensitive' } } } } } });
     }
 
     if (from || to) {

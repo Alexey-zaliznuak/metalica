@@ -210,6 +210,7 @@ export interface OrdersBoardSettings {
   showNoOrderStatusColumn: boolean
   disableDesignerFilterForSketch: boolean
   withoutPinnedSketches: boolean
+  onlyUrgent: boolean
   shippingDeadlineFrom: string
   shippingDeadlineTo: string
   selectedDeliveryTypes: string[]

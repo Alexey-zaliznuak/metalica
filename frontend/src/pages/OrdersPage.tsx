@@ -93,6 +93,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   showNoOrderStatusColumn: true,
   disableDesignerFilterForSketch: false,
   withoutPinnedSketches: false,
+  onlyUrgent: false,
   shippingDeadlineFrom: '',
   shippingDeadlineTo: '',
   selectedDeliveryTypes: [],
@@ -188,6 +189,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
     withoutPinnedSketches: raw.withoutPinnedSketches === true,
+    onlyUrgent: raw.onlyUrgent === true,
     shippingDeadlineFrom: typeof raw.shippingDeadlineFrom === 'string' ? raw.shippingDeadlineFrom : '',
     shippingDeadlineTo: typeof raw.shippingDeadlineTo === 'string' ? raw.shippingDeadlineTo : '',
     selectedDeliveryTypes: parseStringArray(raw.selectedDeliveryTypes),
@@ -637,6 +639,7 @@ export default function OrdersPage() {
   const [selectedRevisionDesigners, setSelectedRevisionDesigners] = useState<string[]>([])
   const [disableDesignerFilterForSketch, setDisableDesignerFilterForSketch] = useState(false)
   const [withoutPinnedSketches, setWithoutPinnedSketches] = useState(false)
+  const [onlyUrgent, setOnlyUrgent] = useState(false)
   const [shippingDeadlineFrom, setShippingDeadlineFrom] = useState('')
   const [shippingDeadlineTo, setShippingDeadlineTo] = useState('')
   const [selectedDeliveryTypes, setSelectedDeliveryTypes] = useState<string[]>([])
@@ -761,6 +764,7 @@ export default function OrdersPage() {
     setShowNoOrderStatusColumn(parsed.showNoOrderStatusColumn)
     setDisableDesignerFilterForSketch(parsed.disableDesignerFilterForSketch)
     setWithoutPinnedSketches(parsed.withoutPinnedSketches)
+    setOnlyUrgent(parsed.onlyUrgent)
     setShippingDeadlineFrom(parsed.shippingDeadlineFrom)
     setShippingDeadlineTo(parsed.shippingDeadlineTo)
     setSelectedDeliveryTypes(parsed.selectedDeliveryTypes)
@@ -788,6 +792,7 @@ export default function OrdersPage() {
         showNoOrderStatusColumn,
         disableDesignerFilterForSketch,
         withoutPinnedSketches,
+        onlyUrgent,
         shippingDeadlineFrom,
         shippingDeadlineTo,
         selectedDeliveryTypes,
@@ -803,6 +808,7 @@ export default function OrdersPage() {
     showNoOrderStatusColumn,
     disableDesignerFilterForSketch,
     withoutPinnedSketches,
+    onlyUrgent,
     shippingDeadlineFrom,
     shippingDeadlineTo,
     selectedDeliveryTypes,
@@ -874,6 +880,7 @@ export default function OrdersPage() {
       selectedSketchDesigners.length +
       selectedRevisionDesigners.length +
       Number(withoutPinnedSketches) +
+      Number(onlyUrgent) +
       Number(Boolean(shippingDeadlineFrom || shippingDeadlineTo)) +
       selectedDeliveryTypes.length,
     [
@@ -882,6 +889,7 @@ export default function OrdersPage() {
       selectedSketchDesigners,
       selectedRevisionDesigners,
       withoutPinnedSketches,
+      onlyUrgent,
       shippingDeadlineFrom,
       shippingDeadlineTo,
       selectedDeliveryTypes,
@@ -924,6 +932,7 @@ export default function OrdersPage() {
     if (selectedRevisionDesigners.length)
       params.revisionDesigners = selectedRevisionDesigners
     if (withoutPinnedSketches) params.withoutPinnedSketches = true
+    if (onlyUrgent) params.onlyUrgent = true
     if (shippingDeadlineFrom) params.shippingDeadlineFrom = shippingDeadlineFrom
     if (shippingDeadlineTo) params.shippingDeadlineTo = shippingDeadlineTo
     if (selectedDeliveryTypes.length) params.deliveryTypes = selectedDeliveryTypes
@@ -935,6 +944,7 @@ export default function OrdersPage() {
     selectedSketchDesigners,
     selectedRevisionDesigners,
     withoutPinnedSketches,
+    onlyUrgent,
     shippingDeadlineFrom,
     shippingDeadlineTo,
     selectedDeliveryTypes,
@@ -1512,7 +1522,7 @@ export default function OrdersPage() {
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
             Заказы можно отфильтровать по менеджерам, художникам, наличию
-            закреплённых эскизов, типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
+            закреплённых эскизов, тегу «Срочно», типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
@@ -1604,6 +1614,15 @@ export default function OrdersPage() {
             <FormControlLabel
               control={
                 <Checkbox
+                  checked={onlyUrgent}
+                  onChange={(e) => setOnlyUrgent(e.target.checked)}
+                />
+              }
+              label="Только заказы с тегом «Срочно»"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
                   checked={withoutPinnedSketches}
                   onChange={(e) => setWithoutPinnedSketches(e.target.checked)}
                 />
@@ -1641,6 +1660,7 @@ export default function OrdersPage() {
               setSelectedSketchDesigners([])
               setSelectedRevisionDesigners([])
               setWithoutPinnedSketches(false)
+              setOnlyUrgent(false)
               setShippingDeadlineFrom('')
               setShippingDeadlineTo('')
               setSelectedDeliveryTypes([])

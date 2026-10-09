@@ -68,13 +68,18 @@ test('preview queue serializes jobs and continues after a failure', async () => 
   const gate = new Promise((resolve) => { release = resolve; });
   const events = [];
   const failure = assert.rejects(queue.run(async () => { events.push('first'); await gate; throw new Error('broken'); }), /broken/);
-  const second = queue.run(async () => { events.push('second'); return 42; });
+  const second = queue.run(async () => { events.push('second'); return 42; }, 'production');
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(events, ['first']);
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 1 }, production: { waiting: 1, running: 0 } });
+  const snapshot = queue.snapshot();
+  snapshot.preview.running = 99;
+  assert.equal(queue.snapshot().preview.running, 1, 'snapshot must not expose mutable queue counters');
   release();
   await failure;
   assert.equal(await second, 42);
   assert.deepEqual(events, ['first', 'second']);
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 0 }, production: { waiting: 0, running: 0 } });
 });
 
 function storageMock({ failVariant = false, failOriginal = false } = {}) {

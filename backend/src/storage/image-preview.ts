@@ -86,9 +86,24 @@ export function renderImagePreviews(input: string | Buffer): Promise<{ thumbnail
 /** Shared by uploads and backfill: at most one image job per backend process. */
 export class ImagePreviewQueue {
   private tail: Promise<unknown> = Promise.resolve();
+  private readonly counts = {
+    preview: { waiting: 0, running: 0 },
+    production: { waiting: 0, running: 0 },
+  };
 
-  run<T>(job: () => Promise<T>): Promise<T> {
-    const result = this.tail.then(job);
+  snapshot() {
+    return { preview: { ...this.counts.preview }, production: { ...this.counts.production } };
+  }
+
+  run<T>(job: () => Promise<T>, kind: 'preview' | 'production' = 'preview'): Promise<T> {
+    const counts = this.counts[kind];
+    counts.waiting++;
+    const result = this.tail.then(async () => {
+      counts.waiting--;
+      counts.running++;
+      try { return await job(); }
+      finally { counts.running--; }
+    });
     this.tail = result.catch(() => undefined);
     return result;
   }

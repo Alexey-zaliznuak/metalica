@@ -182,7 +182,11 @@ export class StorageService implements OnModuleInit {
   }
 
   runImageJob<T>(job: () => Promise<T>): Promise<T> {
-    return this.previewQueue.run(job);
+    return this.previewQueue.run(job, 'production');
+  }
+
+  imageQueueSnapshot() {
+    return this.previewQueue.snapshot();
   }
 
   /** Used in the background for attachments uploaded before previews existed. */
