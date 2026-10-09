@@ -131,3 +131,32 @@ test('shipping deadline rejects invalid dates and reversed ranges before queryin
     assert.equal(calls.where, null);
   }
 });
+
+test('delivery type filter intersects other filters before pagination', async () => {
+  const { service, calls } = setup();
+  let listWhere;
+  let query;
+  service.prisma.order.findMany = async ({ where }) => { listWhere = where; return []; };
+  service.prisma.$queryRaw = async (sql) => { query = sql; return [{ orderId: 8 }]; };
+  await service.findAll({ deliveryTypes: ['СДЭК / Самовывоз', 'Почта'], withoutPinnedSketches: true });
+  assert.deepEqual(calls.where.AND, [
+    { pinnedSketches: { none: {} } },
+    { id: { in: [8] } },
+  ]);
+  assert.deepEqual(listWhere, calls.where);
+  assert.deepEqual(query.values, ['СДЭК / Самовывоз', 'Почта']);
+});
+
+test('delivery types with no matching orders return an empty selection', async () => {
+  const { service, calls } = setup();
+  await service.findAll({ deliveryTypes: ['Неизвестный тип'] });
+  assert.deepEqual(calls.where, { AND: [{ id: { in: [] } }] });
+});
+
+test('delivery type options come from the same expression as filtering', async () => {
+  const { service } = setup();
+  service.prisma.order.findMany = async () => [];
+  service.prisma.$queryRaw = async () => [{ deliveryType: 'Курьер' }, { deliveryType: 'СДЭК / Самовывоз' }];
+  const options = await service.getManagerOptions();
+  assert.deepEqual(options.deliveryTypes, ['Курьер', 'СДЭК / Самовывоз']);
+});

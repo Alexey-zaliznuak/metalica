@@ -156,3 +156,59 @@ test('pagination cannot send a new page after 01:00', async (t) => {
   await assert.rejects(api.getOrders(), BluesalesSyncPausedError);
   assert.equal(fetch.mock.callCount(), 1);
 });
+
+test('local artist is sent to BS only when different, with no incoming assignment', async () => {
+  for (const [name, remote, expected] of [
+    ['Катя', 'Аня', 1], ['Катя', 'Катя', 0], ['Катя', '', 1],
+    [null, 'Аня', 0], ['', 'Аня', 0], [' Катя ', ' Катя ', 0],
+  ]) {
+    const service = syncService();
+    const writes = [];
+    service.prisma = { order: { findUnique: async () => ({
+      sketchDesigner: name === null ? null : { name },
+      bluesalesInfo: { bsOrderId: 101 },
+    }) } };
+    service.api.setOrderCustomField = async (...args) => writes.push(args);
+    await service.syncOrderArtistToBluesales(7, {
+      id: 101,
+      customFields: [{ fieldId: 6265, fieldName: 'Художник', value: 'id-from-bs', valueAsText: remote }],
+    });
+    assert.equal(writes.length, expected);
+    if (expected) assert.deepEqual(writes[0], [101, 6265, 'Катя', 'background']);
+  }
+});
+
+test('artist sync uses field metadata and skips obsolete BS bindings', async () => {
+  const service = syncService();
+  const writes = [];
+  service.prisma = { order: { findUnique: async () => ({
+    sketchDesigner: { name: 'Катя' }, bluesalesInfo: { bsOrderId: 101 },
+  }) } };
+  service.api.setOrderCustomField = async (...args) => writes.push(args);
+  await service.syncOrderArtistToBluesales(7, { id: 100, customFields: [] });
+  assert.equal(writes.length, 0);
+  await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [{ fieldId: 123, fieldName: ' Художник ', valueAsText: 'Аня' }] });
+  assert.deepEqual(writes[0], [101, 123, 'Катя', 'background']);
+});
+
+test('artist sync retries on subsequent passes without failing order import', async () => {
+  const service = syncService();
+  let attempts = 0;
+  service.prisma = { order: { findUnique: async () => ({
+    sketchDesigner: { name: 'Катя' }, bluesalesInfo: { bsOrderId: 101 },
+  }) } };
+  service.api.setOrderCustomField = async () => { attempts++; throw new Error('BS unavailable'); };
+  await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [] });
+  await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [] });
+  assert.equal(attempts, 2);
+});
+
+test('artist API write touches only the target custom field', async () => {
+  const api = Object.create(BluesalesApiService.prototype);
+  let call;
+  api.send = async (...args) => { call = args; };
+  await api.setOrderCustomField(101, 6265, 'Катя');
+  assert.deepEqual(call, ['orders.updateMany', {
+    ids: [101], customFields: [{ fieldId: 6265, value: 'Катя' }],
+  }, 'background']);
+});

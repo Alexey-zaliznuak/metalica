@@ -834,6 +834,19 @@ export class BluesalesApiService {
     );
   }
 
+  /** Обновляет только указанное дополнительное поле заказа. */
+  async setOrderCustomField(
+    orderId: number,
+    fieldId: number,
+    value: string,
+    priority: BsRequestPriority = 'background',
+  ): Promise<void> {
+    await this.send<unknown>('orders.updateMany', {
+      ids: [orderId],
+      customFields: [{ fieldId, value }],
+    }, priority);
+  }
+
   /**
    * Пишет менеджерский комментарий заказа (`internalComments`) в BlueSales.
    */

@@ -211,6 +211,7 @@ export interface OrdersBoardSettings {
   withoutPinnedSketches: boolean
   shippingDeadlineFrom: string
   shippingDeadlineTo: string
+  selectedDeliveryTypes: string[]
 }
 
 export interface OrdersColumnResponse {
@@ -222,6 +223,7 @@ export interface OrdersColumnResponse {
 }
 
 export interface OrderFilterOptions {
+  deliveryTypes: string[]
   deliveryManagers: string[]
   onboardingManagers: string[]
 }

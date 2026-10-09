@@ -95,6 +95,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   withoutPinnedSketches: false,
   shippingDeadlineFrom: '',
   shippingDeadlineTo: '',
+  selectedDeliveryTypes: [],
 }
 
 interface BoardColumn {
@@ -189,6 +190,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     withoutPinnedSketches: raw.withoutPinnedSketches === true,
     shippingDeadlineFrom: typeof raw.shippingDeadlineFrom === 'string' ? raw.shippingDeadlineFrom : '',
     shippingDeadlineTo: typeof raw.shippingDeadlineTo === 'string' ? raw.shippingDeadlineTo : '',
+    selectedDeliveryTypes: parseStringArray(raw.selectedDeliveryTypes),
   }
 }
 
@@ -637,6 +639,7 @@ export default function OrdersPage() {
   const [withoutPinnedSketches, setWithoutPinnedSketches] = useState(false)
   const [shippingDeadlineFrom, setShippingDeadlineFrom] = useState('')
   const [shippingDeadlineTo, setShippingDeadlineTo] = useState('')
+  const [selectedDeliveryTypes, setSelectedDeliveryTypes] = useState<string[]>([])
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [sketchDesigners, setSketchDesigners] = useState<
     OrderAssigneesResponse['sketchDesigners']
@@ -647,6 +650,7 @@ export default function OrdersPage() {
   const [managerOptions, setManagerOptions] = useState<OrderFilterOptions>({
     deliveryManagers: [],
     onboardingManagers: [],
+    deliveryTypes: [],
   })
   const [orderStatuses, setOrderStatuses] = useState<BluesalesStatusOption[]>([])
   const [statusesLoaded, setStatusesLoaded] = useState(false)
@@ -759,6 +763,7 @@ export default function OrdersPage() {
     setWithoutPinnedSketches(parsed.withoutPinnedSketches)
     setShippingDeadlineFrom(parsed.shippingDeadlineFrom)
     setShippingDeadlineTo(parsed.shippingDeadlineTo)
+    setSelectedDeliveryTypes(parsed.selectedDeliveryTypes)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -785,6 +790,7 @@ export default function OrdersPage() {
         withoutPinnedSketches,
         shippingDeadlineFrom,
         shippingDeadlineTo,
+        selectedDeliveryTypes,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -799,6 +805,7 @@ export default function OrdersPage() {
     withoutPinnedSketches,
     shippingDeadlineFrom,
     shippingDeadlineTo,
+    selectedDeliveryTypes,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -867,7 +874,8 @@ export default function OrdersPage() {
       selectedSketchDesigners.length +
       selectedRevisionDesigners.length +
       Number(withoutPinnedSketches) +
-      Number(Boolean(shippingDeadlineFrom || shippingDeadlineTo)),
+      Number(Boolean(shippingDeadlineFrom || shippingDeadlineTo)) +
+      selectedDeliveryTypes.length,
     [
       selectedDeliveryManagers,
       selectedOnboardingManagers,
@@ -876,6 +884,7 @@ export default function OrdersPage() {
       withoutPinnedSketches,
       shippingDeadlineFrom,
       shippingDeadlineTo,
+      selectedDeliveryTypes,
     ],
   )
 
@@ -917,6 +926,7 @@ export default function OrdersPage() {
     if (withoutPinnedSketches) params.withoutPinnedSketches = true
     if (shippingDeadlineFrom) params.shippingDeadlineFrom = shippingDeadlineFrom
     if (shippingDeadlineTo) params.shippingDeadlineTo = shippingDeadlineTo
+    if (selectedDeliveryTypes.length) params.deliveryTypes = selectedDeliveryTypes
     return params
   }, [
     activeSearchQuery,
@@ -927,6 +937,7 @@ export default function OrdersPage() {
     withoutPinnedSketches,
     shippingDeadlineFrom,
     shippingDeadlineTo,
+    selectedDeliveryTypes,
   ])
 
   const fetchColumnPage = useCallback(
@@ -1501,7 +1512,7 @@ export default function OrdersPage() {
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
             Заказы можно отфильтровать по менеджерам, художникам, наличию
-            закреплённых эскизов и дедлайну отправки. Пустой фильтр — без ограничения.
+            закреплённых эскизов, типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
@@ -1553,6 +1564,18 @@ export default function OrdersPage() {
               )}
             />
             <Divider />
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={managerOptions.deliveryTypes ?? []}
+              value={selectedDeliveryTypes}
+              onChange={(_, values) => setSelectedDeliveryTypes(values)}
+              noOptionsText="Нет типов доставки"
+              renderInput={(params) => (
+                <TextField {...params} label="Тип доставки" placeholder="Все" />
+              )}
+            />
             <Typography variant="body2">Дедлайн отправки</Typography>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <TextField
@@ -1620,6 +1643,7 @@ export default function OrdersPage() {
               setWithoutPinnedSketches(false)
               setShippingDeadlineFrom('')
               setShippingDeadlineTo('')
+              setSelectedDeliveryTypes([])
             }}
           >
             Сбросить

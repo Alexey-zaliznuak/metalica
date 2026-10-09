@@ -1218,6 +1218,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           });
         await this.tryAutoAssign(notifyStatus.orderId, notifyStatus.statusId);
       }
+      await this.syncOrderArtistToBluesales(existingInfo.orderId, bsOrder);
       return;
     }
 
@@ -1351,6 +1352,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         },
       });
       await this.tryAutoAssign(sameNumber.id, statusData.orderStatusId);
+      await this.syncOrderArtistToBluesales(sameNumber.id, bsOrder);
       return;
     }
 
@@ -1393,6 +1395,39 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.tryAutoAssign(created.id, statusData.orderStatusId);
+    await this.syncOrderArtistToBluesales(created.id, bsOrder);
+  }
+
+  /** Локальный художник — источник истины; пустое назначение BS не очищает. */
+  private async syncOrderArtistToBluesales(orderId: number, bsOrder: BsOrder): Promise<void> {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        select: {
+          sketchDesigner: { select: { name: true } },
+          bluesalesInfo: { select: { bsOrderId: true } },
+        },
+      });
+      const name = order?.sketchDesigner?.name.trim();
+      if (!name || order?.bluesalesInfo?.bsOrderId !== bsOrder.id) return;
+      const field = (bsOrder.customFields ?? []).find(
+        (item) => (item.fieldName ?? '').trim().toLowerCase() === 'художник',
+      );
+      const remoteName = (field?.valueAsText ?? String(field?.value ?? '')).trim();
+      if (remoteName === name) return;
+      // ID из данных BS; fallback — поле «Художник» текущего проекта (6265).
+      const fieldId = field?.fieldId ?? this.envInt('BLUESALES_ARTIST_FIELD_ID', 6265);
+      if (!Number.isInteger(fieldId) || fieldId <= 0) {
+        throw new Error('Некорректный ID поля «Художник» BlueSales');
+      }
+      await this.api.setOrderCustomField(bsOrder.id, fieldId, name, 'background');
+    } catch (error) {
+      // Сохраняем импорт заказа; следующая синхронизация повторит сверку и запись.
+      this.logger.error(
+        `Не удалось отправить художника Order#${orderId} в BS#${bsOrder.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   /**

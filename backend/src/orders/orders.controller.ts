@@ -42,6 +42,7 @@ export class OrdersController {
     @Query('withoutPinnedSketches') withoutPinnedSketches?: string,
     @Query('shippingDeadlineFrom') shippingDeadlineFrom?: string,
     @Query('shippingDeadlineTo') shippingDeadlineTo?: string,
+    @Query('deliveryTypes') deliveryTypes?: string | string[],
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -67,6 +68,7 @@ export class OrdersController {
       withoutPinnedSketches: withoutPinnedSketches === 'true' || withoutPinnedSketches === '1',
       shippingDeadlineFrom,
       shippingDeadlineTo,
+      deliveryTypes: toArray(deliveryTypes),
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });

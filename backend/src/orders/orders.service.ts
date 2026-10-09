@@ -13,6 +13,7 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { productionImage, productionTextScale } from './production-image';
+import { deliveryTypeSql } from './delivery-type';
 import {
   BluesalesOrderStatus,
   OrderSource,
@@ -77,6 +78,7 @@ export class OrdersService {
     withoutPinnedSketches?: boolean;
     shippingDeadlineFrom?: string;
     shippingDeadlineTo?: string;
+    deliveryTypes?: string[];
     page?: number;
     limit?: number;
   }) {
@@ -177,6 +179,15 @@ export class OrdersService {
           AND (${from}::text IS NULL OR parsed.deadline >= ${from}::text)
           AND (${to}::text IS NULL OR parsed.deadline <= ${to}::text)
       `;
+      and.push({ id: { in: matches.map((match) => match.orderId) } });
+    }
+
+    if (params.deliveryTypes?.length) {
+      const matches = await this.prisma.$queryRaw<Array<{ orderId: number }>>(Prisma.sql`
+        SELECT info."orderId"
+        FROM "BluesalesOrderInfo" AS info
+        WHERE ${deliveryTypeSql} IN (${Prisma.join(params.deliveryTypes)})
+      `);
       and.push({ id: { in: matches.map((match) => match.orderId) } });
     }
 
@@ -306,7 +317,7 @@ export class OrdersService {
    * (клиент больше не держит все заказы у себя, поэтому опции берём с сервера).
    */
   async getManagerOptions() {
-    const [delivery, onboarding] = await Promise.all([
+    const [delivery, onboarding, deliveryTypes] = await Promise.all([
       this.prisma.order.findMany({
         where: { deliveryManagerName: { not: null } },
         distinct: ['deliveryManagerName'],
@@ -319,8 +330,15 @@ export class OrdersService {
         select: { onboardingManagerName: true },
         orderBy: { onboardingManagerName: 'asc' },
       }),
+      this.prisma.$queryRaw<Array<{ deliveryType: string }>>(Prisma.sql`
+        SELECT DISTINCT ${deliveryTypeSql} AS "deliveryType"
+        FROM "BluesalesOrderInfo" AS info
+        WHERE ${deliveryTypeSql} IS NOT NULL
+        ORDER BY "deliveryType"
+      `),
     ]);
     return {
+      deliveryTypes: deliveryTypes.map((row) => row.deliveryType),
       deliveryManagers: delivery
         .map((o) => o.deliveryManagerName)
         .filter((n): n is string => !!n),
