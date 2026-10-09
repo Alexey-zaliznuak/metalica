@@ -7,6 +7,7 @@ const sharp = require('sharp');
 const { ProductionFilesService } = require('../dist/orders/production-files.service');
 const { StorageCleanupService } = require('../dist/storage/storage-cleanup.service');
 const { productionImage, productionTextScale } = require('../dist/orders/production-image');
+const { ImagePreviewQueue } = require('../dist/storage/image-preview');
 
 function matches(row, where = {}) {
   return Object.entries(where).every(([key, value]) => {
@@ -106,6 +107,45 @@ test('upload queues work without decoding; pending download returns 409; worker 
   assert.ok(file.getHeaders().disposition.includes('production-12345-7.png'));
   await h.service.processNext();
   assert.equal(sourceReads, 1, 'downloads reuse the cache');
+});
+
+test('production dispatch claims distinct jobs in parallel and shares four slots with previews', async () => {
+  const h = await setup();
+  for (const id of [8, 9, 10, 11]) h.photos.push({ ...h.photos[0], id });
+  await h.service.queueOrder(10);
+  const queue = new ImagePreviewQueue();
+  h.storage.runImageJob = (operation) => queue.run(operation, 'production');
+  let releasePreview;
+  const preview = queue.run(() => new Promise((resolve) => { releasePreview = resolve; }));
+  const releases = new Map();
+  const started = [];
+  h.service.prepare = async (job) => {
+    started.push(job.id);
+    await new Promise((resolve) => releases.set(job.id, resolve));
+    await h.prisma.productionFile.updateMany({ where: { id: job.id, runToken: job.runToken }, data: { status: 'ready', runToken: null } });
+  };
+  const first = h.service.processAvailable();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started.length, 3);
+  assert.equal(new Set(started).size, 3, 'lost claims must retry rather than render duplicates');
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 1 }, production: { waiting: 1, running: 3 } });
+  await h.service.processAvailable();
+  assert.equal(started.length, 3, 'polling must not grow the local production queue beyond four consumers');
+  releasePreview();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started.length, 4);
+  releases.get(started[0])();
+  await new Promise((resolve) => setImmediate(resolve));
+  const refill = h.service.processAvailable();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started.length, 5);
+  assert.equal(queue.snapshot().production.running, 4);
+  releases.forEach((release) => release());
+  await Promise.all([first, refill, preview]);
+  assert.equal(new Set(started).size, 5);
+  assert.ok(h.jobs.every((job) => job.status === 'ready' && job.attempts === 1));
+  assert.equal(h.service.running, 0);
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 0 }, production: { waiting: 0, running: 0 } });
 });
 
 test('header changes invalidate the cached result and enqueue deletion of the old version', async () => {

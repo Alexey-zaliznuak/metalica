@@ -63,7 +63,7 @@ test('HEIC is rendered in the server worker', { skip: !process.env.HEIC_TEST_FIL
 });
 
 test('preview queue serializes jobs and continues after a failure', async () => {
-  const queue = new ImagePreviewQueue();
+  const queue = new ImagePreviewQueue(1);
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const events = [];
@@ -80,6 +80,69 @@ test('preview queue serializes jobs and continues after a failure', async () => 
   assert.equal(await second, 42);
   assert.deepEqual(events, ['first', 'second']);
   assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 0 }, production: { waiting: 0, running: 0 } });
+});
+
+test('shared queue runs four image jobs, refills freed slots, and counts both job types after failures', async () => {
+  const queue = new ImagePreviewQueue();
+  const releases = [];
+  const started = [];
+  let active = 0, maximum = 0;
+  const jobs = Array.from({ length: 7 }, (_, i) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    releases.push(release);
+    return queue.run(async () => {
+      started.push(i);
+      maximum = Math.max(maximum, ++active);
+      await gate;
+      active--;
+      if (i === 0) throw new Error('first failed');
+      return i;
+    }, i % 2 ? 'production' : 'preview');
+  });
+  const results = Promise.allSettled(jobs);
+  assert.deepEqual(started, [0, 1, 2, 3]);
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 2, running: 2 }, production: { waiting: 1, running: 2 } });
+  releases[0]();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started, [0, 1, 2, 3, 4]);
+  assert.equal(active, 4, 'a failure must immediately free a slot for the next job');
+  releases.forEach((release) => release());
+  assert.equal((await results)[0].status, 'rejected');
+  assert.equal(maximum, 4, 'uploads, previews and production must share one limit');
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 0 }, production: { waiting: 0, running: 0 } });
+});
+
+test('preview backfill runs four distinct sources and refills without waiting for slower jobs', async () => {
+  const rows = ['a', 'b', 'c', 'd', 'a', 'e'].map((objectKey, index) => ({ id: index + 1, objectKey, previewStatus: 'pending', previewAttempts: 0 }));
+  const releases = new Map();
+  const started = [];
+  const prisma = { attachment: {
+    findMany: async ({ where, take }) => rows.filter((row) => row.previewStatus === 'pending' && !where.objectKey.notIn.includes(row.objectKey)).slice(0, take),
+    updateMany: async ({ where, data }) => {
+      for (const row of rows) if (row.objectKey === where.objectKey && row.previewStatus === where.previewStatus) Object.assign(row, data);
+    },
+  } };
+  const service = new AttachmentPreviewsService(prisma, { ensureImagePreviews: async (key) => {
+    started.push(key);
+    await new Promise((resolve) => releases.set(key, resolve));
+    return { ...imagePreviewKeys(key), previewStatus: 'ready' };
+  } });
+  const first = service.processBatch();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started, ['a', 'b', 'c', 'd']);
+  await service.processBatch();
+  assert.equal(started.length, 4);
+  releases.get('a')();
+  await new Promise((resolve) => setImmediate(resolve));
+  const refill = service.processBatch();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started, ['a', 'b', 'c', 'd', 'e']);
+  assert.equal(service.activeKeys.size, 4);
+  releases.forEach((release) => release());
+  await Promise.all([first, refill]);
+  assert.ok(rows.every((row) => row.previewStatus === 'ready'));
+  assert.equal(service.activeKeys.size, 0);
 });
 
 function storageMock({ failVariant = false, failOriginal = false } = {}) {

@@ -81,6 +81,7 @@ const RENDER_STEP = 10
 // Колонки обновляются по очереди, но одна и та же колонка — не чаще этого интервала.
 const COLUMN_REFRESH_STEP_MS = 3_000
 const MIN_COLUMN_REFRESH_INTERVAL_MS = 5_000
+const ORDER_SIZE_OPTIONS = ['30x40', '40x60', '60x80']
 
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedOrderStatusIds: [],
@@ -97,6 +98,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   shippingDeadlineFrom: '',
   shippingDeadlineTo: '',
   selectedDeliveryTypes: [],
+  selectedSizes: [],
 }
 
 interface BoardColumn {
@@ -193,6 +195,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     shippingDeadlineFrom: typeof raw.shippingDeadlineFrom === 'string' ? raw.shippingDeadlineFrom : '',
     shippingDeadlineTo: typeof raw.shippingDeadlineTo === 'string' ? raw.shippingDeadlineTo : '',
     selectedDeliveryTypes: parseStringArray(raw.selectedDeliveryTypes),
+    selectedSizes: parseStringArray(raw.selectedSizes).filter((size) => ORDER_SIZE_OPTIONS.includes(size)),
   }
 }
 
@@ -643,6 +646,7 @@ export default function OrdersPage() {
   const [shippingDeadlineFrom, setShippingDeadlineFrom] = useState('')
   const [shippingDeadlineTo, setShippingDeadlineTo] = useState('')
   const [selectedDeliveryTypes, setSelectedDeliveryTypes] = useState<string[]>([])
+  const [selectedSizes, setSelectedSizes] = useState<string[]>([])
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [sketchDesigners, setSketchDesigners] = useState<
     OrderAssigneesResponse['sketchDesigners']
@@ -768,6 +772,7 @@ export default function OrdersPage() {
     setShippingDeadlineFrom(parsed.shippingDeadlineFrom)
     setShippingDeadlineTo(parsed.shippingDeadlineTo)
     setSelectedDeliveryTypes(parsed.selectedDeliveryTypes)
+    setSelectedSizes(parsed.selectedSizes)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -796,6 +801,7 @@ export default function OrdersPage() {
         shippingDeadlineFrom,
         shippingDeadlineTo,
         selectedDeliveryTypes,
+        selectedSizes,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -812,6 +818,7 @@ export default function OrdersPage() {
     shippingDeadlineFrom,
     shippingDeadlineTo,
     selectedDeliveryTypes,
+    selectedSizes,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -882,7 +889,8 @@ export default function OrdersPage() {
       Number(withoutPinnedSketches) +
       Number(onlyUrgent) +
       Number(Boolean(shippingDeadlineFrom || shippingDeadlineTo)) +
-      selectedDeliveryTypes.length,
+      selectedDeliveryTypes.length +
+      selectedSizes.length,
     [
       selectedDeliveryManagers,
       selectedOnboardingManagers,
@@ -893,6 +901,7 @@ export default function OrdersPage() {
       shippingDeadlineFrom,
       shippingDeadlineTo,
       selectedDeliveryTypes,
+      selectedSizes,
     ],
   )
 
@@ -936,6 +945,7 @@ export default function OrdersPage() {
     if (shippingDeadlineFrom) params.shippingDeadlineFrom = shippingDeadlineFrom
     if (shippingDeadlineTo) params.shippingDeadlineTo = shippingDeadlineTo
     if (selectedDeliveryTypes.length) params.deliveryTypes = selectedDeliveryTypes
+    if (selectedSizes.length) params.sizes = selectedSizes
     return params
   }, [
     activeSearchQuery,
@@ -948,6 +958,7 @@ export default function OrdersPage() {
     shippingDeadlineFrom,
     shippingDeadlineTo,
     selectedDeliveryTypes,
+    selectedSizes,
   ])
 
   const fetchColumnPage = useCallback(
@@ -1522,7 +1533,7 @@ export default function OrdersPage() {
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
             Заказы можно отфильтровать по менеджерам, художникам, наличию
-            закреплённых эскизов, тегу «Срочно», типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
+            закреплённых эскизов, тегу «Срочно», размеру картины, типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
@@ -1574,6 +1585,18 @@ export default function OrdersPage() {
               )}
             />
             <Divider />
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={ORDER_SIZE_OPTIONS}
+              getOptionLabel={(size) => `${size.replace('x', '×')} см`}
+              value={selectedSizes}
+              onChange={(_, values) => setSelectedSizes(values)}
+              renderInput={(params) => (
+                <TextField {...params} label="Размер картины" placeholder="Все" helperText="Любой из выбранных размеров" />
+              )}
+            />
             <Autocomplete
               multiple
               disableCloseOnSelect
@@ -1664,6 +1687,7 @@ export default function OrdersPage() {
               setShippingDeadlineFrom('')
               setShippingDeadlineTo('')
               setSelectedDeliveryTypes([])
+              setSelectedSizes([])
             }}
           >
             Сбросить

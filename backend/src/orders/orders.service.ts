@@ -10,6 +10,7 @@ import { ProductionFilesService } from './production-files.service';
 import { StorageCleanupService } from '../storage/storage-cleanup.service';
 import { productionOrderData } from './production-order-data';
 import { deliveryTypeSql } from './delivery-type';
+import { orderSizeFilter } from './order-size';
 import {
   BluesalesOrderStatus,
   OrderSource,
@@ -78,9 +79,11 @@ export class OrdersService {
     shippingDeadlineFrom?: string;
     shippingDeadlineTo?: string;
     deliveryTypes?: string[];
+    sizes?: string[];
     page?: number;
     limit?: number;
   }) {
+    const sizeFilter = orderSizeFilter(params.sizes);
     const from = this.parseDeadlineFilterDate(params.shippingDeadlineFrom);
     const to = this.parseDeadlineFilterDate(params.shippingDeadlineTo);
     if (from && to && from > to) {
@@ -156,6 +159,8 @@ export class OrdersService {
     if (params.onlyUrgent) {
       and.push({ lead: { is: { tags: { some: { name: { equals: 'Срочно', mode: 'insensitive' } } } } } });
     }
+
+    if (sizeFilter) and.push(sizeFilter);
 
     if (from || to) {
       const matches = await this.prisma.$queryRaw<Array<{ orderId: number }>>`

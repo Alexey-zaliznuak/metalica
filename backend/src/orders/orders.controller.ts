@@ -44,6 +44,7 @@ export class OrdersController {
     @Query('shippingDeadlineFrom') shippingDeadlineFrom?: string,
     @Query('shippingDeadlineTo') shippingDeadlineTo?: string,
     @Query('deliveryTypes') deliveryTypes?: string | string[],
+    @Query('sizes') sizes?: string | string[],
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -71,6 +72,7 @@ export class OrdersController {
       shippingDeadlineFrom,
       shippingDeadlineTo,
       deliveryTypes: toArray(deliveryTypes),
+      sizes: toArray(sizes),
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });

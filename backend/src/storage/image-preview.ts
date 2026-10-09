@@ -63,8 +63,8 @@ export function renderImagePreviews(input: string | Buffer): Promise<{ thumbnail
       resourceLimits: { maxOldGenerationSizeMb: 128 },
     });
     const timeout = setTimeout(() => {
-      void worker.terminate();
-      reject(new Error('Превью превысило время обработки'));
+      responded = true;
+      void worker.terminate().then(() => reject(new Error('Превью превысило время обработки')), reject);
     }, 60_000);
     worker.once('message', (message) => {
       responded = true;
@@ -83,13 +83,20 @@ export function renderImagePreviews(input: string | Buffer): Promise<{ thumbnail
   });
 }
 
-/** Shared by uploads and backfill: at most one image job per backend process. */
+export const IMAGE_JOB_CONCURRENCY = 4;
+
+/** Shared by uploads, backfill and production: one concurrency limit per process. */
 export class ImagePreviewQueue {
-  private tail: Promise<unknown> = Promise.resolve();
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
   private readonly counts = {
     preview: { waiting: 0, running: 0 },
     production: { waiting: 0, running: 0 },
   };
+
+  constructor(private readonly concurrency = IMAGE_JOB_CONCURRENCY) {
+    if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('Invalid image concurrency');
+  }
 
   snapshot() {
     return { preview: { ...this.counts.preview }, production: { ...this.counts.production } };
@@ -98,13 +105,26 @@ export class ImagePreviewQueue {
   run<T>(job: () => Promise<T>, kind: 'preview' | 'production' = 'preview'): Promise<T> {
     const counts = this.counts[kind];
     counts.waiting++;
-    const result = this.tail.then(async () => {
-      counts.waiting--;
-      counts.running++;
-      try { return await job(); }
-      finally { counts.running--; }
+    return new Promise<T>((resolve, reject) => {
+      this.waiting.push(() => {
+        counts.waiting--;
+        counts.running++;
+        this.active++;
+        void (async () => {
+          try { resolve(await job()); }
+          catch (error) { reject(error); }
+          finally {
+            counts.running--;
+            this.active--;
+            this.drain();
+          }
+        })();
+      });
+      this.drain();
     });
-    this.tail = result.catch(() => undefined);
-    return result;
+  }
+
+  private drain() {
+    while (this.active < this.concurrency && this.waiting.length) this.waiting.shift()!();
   }
 }

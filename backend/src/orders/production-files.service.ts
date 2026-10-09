@@ -10,6 +10,7 @@ import { StorageService } from '../storage/storage.service';
 import { StorageCleanupService } from '../storage/storage-cleanup.service';
 import { productionOrderData } from './production-order-data';
 import { ProductionParameters, renderProductionFile } from './production-file-renderer';
+import { IMAGE_JOB_CONCURRENCY } from '../storage/image-preview';
 
 function textSize(value?: string): string {
   if (!value || value === 'standard') return '30x40';
@@ -21,7 +22,7 @@ function textSize(value?: string): string {
 @Injectable()
 export class ProductionFilesService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(ProductionFilesService.name);
-  private running = false;
+  private running = 0;
   private syncing = false;
   private stopping = false;
   private syncCursor = 0;
@@ -30,7 +31,7 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
 
   onApplicationBootstrap() {
     void this.synchronize();
-    void this.processNext();
+    void this.processAvailable();
   }
 
   onModuleDestroy() { this.stopping = true; }
@@ -156,35 +157,46 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
   }
 
   @Interval(1000)
+  async processAvailable() {
+    if (this.stopping) return;
+    const available = IMAGE_JOB_CONCURRENCY - this.running;
+    await Promise.allSettled(Array.from({ length: available }, () => this.processNext()));
+  }
+
   async processNext() {
-    if (this.running || this.stopping) return;
-    this.running = true;
+    if (this.running >= IMAGE_JOB_CONCURRENCY || this.stopping) return;
+    this.running++;
     try {
-      // Share the expensive image slot with thumbnail generation.
+      // Share the expensive image slots with thumbnail generation.
       await this.storage.runImageJob(async () => {
-        if (this.stopping) return;
-        const now = new Date();
-        const row = await this.prisma.productionFile.findFirst({ where: { OR: [
-          { status: 'pending', nextAttemptAt: { lte: now } },
-          { status: 'processing', leaseUntil: { lte: now } },
-        ] }, orderBy: { createdAt: 'asc' } });
-        if (!row) return;
-        const runToken = randomUUID();
-        const objectKey = `production/${row.orderId}/${row.attachmentId}/${row.textSize}/${runToken}.png`;
-        const claimed = await this.prisma.$transaction(async (tx) => {
-          const result = await tx.productionFile.updateMany({
-            where: { id: row.id, updatedAt: row.updatedAt, status: row.status, runToken: row.runToken },
-            data: { status: 'processing', runToken, objectKey, leaseUntil: new Date(Date.now() + 10 * 60_000), attempts: { increment: 1 } },
+        // Concurrent consumers may initially read the same row. Retry a lost claim.
+        for (let attempt = 0; attempt < IMAGE_JOB_CONCURRENCY && !this.stopping; attempt++) {
+          const now = new Date();
+          const row = await this.prisma.productionFile.findFirst({ where: { OR: [
+            { status: 'pending', nextAttemptAt: { lte: now } },
+            { status: 'processing', leaseUntil: { lte: now } },
+          ] }, orderBy: { createdAt: 'asc' } });
+          if (!row) return;
+          const runToken = randomUUID();
+          const objectKey = `production/${row.orderId}/${row.attachmentId}/${row.textSize}/${runToken}.png`;
+          const claimed = await this.prisma.$transaction(async (tx) => {
+            const result = await tx.productionFile.updateMany({
+              where: { id: row.id, updatedAt: row.updatedAt, status: row.status, runToken: row.runToken },
+              data: { status: 'processing', runToken, objectKey, leaseUntil: new Date(Date.now() + 10 * 60_000), attempts: { increment: 1 } },
+            });
+            if (!result.count) return false;
+            if (row.objectKey) await this.cleanup.enqueue([row.objectKey], tx);
+            return true;
           });
-          if (!result.count) return false;
-          if (row.objectKey) await this.cleanup.enqueue([row.objectKey], tx);
-          return true;
-        });
-        if (claimed) await this.prepare({ ...row, runToken, objectKey, attempts: row.attempts + 1 });
+          if (claimed) {
+            await this.prepare({ ...row, runToken, objectKey, attempts: row.attempts + 1 });
+            return;
+          }
+        }
       });
     } catch (error) {
       this.logger.warn(`Подготовка производства отложена: ${(error as Error).message}`);
-    } finally { this.running = false; }
+    } finally { this.running--; }
   }
 
   private async prepare(job: ProductionFile) {

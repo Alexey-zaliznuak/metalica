@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { OrdersService } = require('../dist/orders/orders.service');
+const { OrdersController } = require('../dist/orders/orders.controller');
 
 function setup({ exact = null, matches = [], orders = [] } = {}) {
   const calls = { raw: 0, where: null };
@@ -184,4 +185,50 @@ test('delivery type options come from the same expression as filtering', async (
   service.prisma.$queryRaw = async () => [{ deliveryType: 'Курьер' }, { deliveryType: 'СДЭК / Самовывоз' }];
   const options = await service.getManagerOptions();
   assert.deepEqual(options.deliveryTypes, ['Курьер', 'СДЭК / Самовывоз']);
+});
+
+test('size multiselect matches either SKU before pagination and combines with other filters', async () => {
+  const { service, calls } = setup();
+  let list;
+  service.prisma.order.findMany = async (query) => { list = query; return []; };
+  await service.findAll({ sizes: ['30x40', '60x80'], onlyUrgent: true, orderStatusId: 3, page: 2, limit: 1 });
+  assert.deepEqual(calls.where.AND[2], { bluesalesInfo: { is: { OR: [
+    { rawPayload: { path: ['goodsPositions'], array_contains: [{ goods: { marking: 'Картина на металле 30*40см' } }] } },
+    { rawPayload: { path: ['goodsPositions'], array_contains: [{ goods: { marking: 'Картина на металле 60*80см' } }] } },
+  ] } } });
+  assert.deepEqual(list.where, calls.where);
+  assert.equal(list.skip, 1);
+  assert.equal(list.take, 1);
+});
+
+test('empty size selection leaves all orders available, duplicates do not repeat a SKU', async () => {
+  for (const sizes of [undefined, []]) {
+    const { service, calls } = setup();
+    await service.findAll({ sizes });
+    assert.deepEqual(calls.where, {});
+  }
+  const { service, calls } = setup();
+  await service.findAll({ sizes: ['40x60', '40x60'] });
+  assert.equal(calls.where.AND[0].bluesalesInfo.is.OR.length, 1);
+  assert.equal(calls.where.AND[0].bluesalesInfo.is.OR[0].rawPayload.array_contains[0].goods.marking, 'Картина на металле 40*60см');
+});
+
+test('unsupported sizes fail before querying instead of silently removing the filter', async () => {
+  for (const size of ['50x70', 'constructor', 'toString', '__proto__']) {
+    const { service, calls } = setup();
+    await assert.rejects(service.findAll({ sizes: ['30x40', size] }), (error) => error.getStatus() === 400);
+    assert.equal(calls.where, null);
+    assert.equal(calls.raw, 0);
+  }
+});
+
+test('size query accepts one or several selections and trims empty values', async () => {
+  for (const [input, expected] of [['30x40', ['30x40']], [[' 40x60 ', '', '60x80'], ['40x60', '60x80']], ['', undefined]]) {
+    let params;
+    const controller = new OrdersController({ findAll: (value) => { params = value; } });
+    const args = Array(16).fill(undefined);
+    args[13] = input;
+    controller.findAll(...args);
+    assert.deepEqual(params.sizes, expected);
+  }
 });
