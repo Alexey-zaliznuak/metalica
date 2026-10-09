@@ -841,8 +841,21 @@ export class BluesalesApiService {
     value: string,
     priority: BsRequestPriority = 'background',
   ): Promise<void> {
+    await this.setOrdersCustomField([orderId], fieldId, value, priority);
+  }
+
+  /** Одинаковое значение дополнительного поля для пачки заказов. */
+  async setOrdersCustomField(
+    ids: number[],
+    fieldId: number,
+    value: string,
+    priority: BsRequestPriority = 'background',
+  ): Promise<void> {
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) return;
+    if (uniqueIds.length > 500) throw new Error('BlueSales custom field batch exceeds 500 orders');
     await this.send<unknown>('orders.updateMany', {
-      ids: [orderId],
+      ids: uniqueIds,
       customFields: [{ fieldId, value }],
     }, priority);
   }

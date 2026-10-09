@@ -164,42 +164,42 @@ test('local artist is sent to BS only when different, with no incoming assignmen
   ]) {
     const service = syncService();
     const writes = [];
-    service.prisma = { order: { findUnique: async () => ({
+    service.prisma = { order: { findMany: async ({ where }) => [{ id: where.id.in[0],
       sketchDesigner: name === null ? null : { name },
       bluesalesInfo: { bsOrderId: 101 },
-    }) } };
+    }] } };
     service.getCrmArtistFieldId = async () => 9001;
-    service.api.setOrderCustomField = async (...args) => writes.push(args);
+    service.api.setOrdersCustomField = async (...args) => writes.push(args);
     await service.syncOrderArtistToBluesales(7, {
       id: 101,
       customFields: [{ fieldId: 9001, fieldName: 'Художник СРМ', value: 'id-from-bs', valueAsText: remote }],
     });
     assert.equal(writes.length, expected);
-    if (expected) assert.deepEqual(writes[0], [101, 9001, 'Катя', 'background']);
+    if (expected) assert.deepEqual(writes[0], [[101], 9001, 'Катя', 'background']);
   }
 });
 
 test('artist sync uses field metadata and skips obsolete BS bindings', async () => {
   const service = syncService();
   const writes = [];
-  service.prisma = { order: { findUnique: async () => ({
+  service.prisma = { order: { findMany: async ({ where }) => [{ id: where.id.in[0],
     sketchDesigner: { name: 'Катя' }, bluesalesInfo: { bsOrderId: 101 },
-  }) } };
-  service.api.setOrderCustomField = async (...args) => writes.push(args);
+  }] } };
+  service.api.setOrdersCustomField = async (...args) => writes.push(args);
   await service.syncOrderArtistToBluesales(7, { id: 100, customFields: [] });
   assert.equal(writes.length, 0);
   await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [{ fieldId: 123, fieldName: ' Художник СРМ ', valueAsText: 'Аня' }] });
-  assert.deepEqual(writes[0], [101, 123, 'Катя', 'background']);
+  assert.deepEqual(writes[0], [[101], 123, 'Катя', 'background']);
 });
 
 test('artist sync retries on subsequent passes without failing order import', async () => {
   const service = syncService();
   let attempts = 0;
-  service.prisma = { order: { findUnique: async () => ({
+  service.prisma = { order: { findMany: async ({ where }) => [{ id: where.id.in[0],
     sketchDesigner: { name: 'Катя' }, bluesalesInfo: { bsOrderId: 101 },
-  }) } };
+  }] } };
   service.getCrmArtistFieldId = async () => 9001;
-  service.api.setOrderCustomField = async () => { attempts++; throw new Error('BS unavailable'); };
+  service.api.setOrdersCustomField = async () => { attempts++; throw new Error('BS unavailable'); };
   await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [] });
   await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [] });
   assert.equal(attempts, 2);
@@ -218,20 +218,20 @@ test('artist API write touches only the target custom field', async () => {
 test('CRM artist sync ignores the old dropdown and writes the new text field', async () => {
   const service = syncService();
   const writes = [];
-  service.prisma = { order: { findUnique: async () => ({ sketchDesigner: { name: 'Полина Вишнякова' }, bluesalesInfo: { bsOrderId: 12836039 } }) } };
-  service.api.setOrderCustomField = async (...args) => writes.push(args);
+  service.prisma = { order: { findMany: async ({ where }) => [{ id: where.id.in[0], sketchDesigner: { name: 'Полина Вишнякова' }, bluesalesInfo: { bsOrderId: 12836039 } }] } };
+  service.api.setOrdersCustomField = async (...args) => writes.push(args);
   await service.syncOrderArtistToBluesales(15133, { id: 12836039, customFields: [
     { fieldId: 6265, fieldName: 'Художник', valueAsText: 'Полина Вишнякова' },
     { fieldId: 9001, fieldName: 'Художник СРМ', value: '' },
   ] });
-  assert.deepEqual(writes, [[12836039, 9001, 'Полина Вишнякова', 'background']]);
+  assert.deepEqual(writes, [[[12836039], 9001, 'Полина Вишнякова', 'background']]);
 });
 
 test('CRM artist sync never falls back to the old field ID', async () => {
   const service = syncService();
-  service.prisma = { order: { findUnique: async () => ({ sketchDesigner: { name: 'Полина Вишнякова' }, bluesalesInfo: { bsOrderId: 101 } }) } };
+  service.prisma = { order: { findMany: async ({ where }) => [{ id: where.id.in[0], sketchDesigner: { name: 'Полина Вишнякова' }, bluesalesInfo: { bsOrderId: 101 } }] } };
   service.getCrmArtistFieldId = async () => null;
-  service.api.setOrderCustomField = async () => assert.fail('must not write without new field ID');
+  service.api.setOrdersCustomField = async () => assert.fail('must not write without new field ID');
   await service.syncOrderArtistToBluesales(7, { id: 101, customFields: [{ fieldId: 6265, fieldName: 'Художник', valueAsText: 'Полина' }] });
 });
 
@@ -245,4 +245,78 @@ test('CRM artist field ID comes from configuration or cached database metadata',
   assert.equal(await service.getCrmArtistFieldId(), 9002);
   assert.equal(await service.getCrmArtistFieldId(), 9002);
   assert.equal(queries, 1);
+});
+
+test('artist batch groups by field and name, skips unchanged, empty and obsolete orders', async () => {
+  const service = syncService();
+  const writes = [];
+  let reads = 0;
+  const local = [
+    [1, 'Катя', 101], [2, 'Катя', 102], [3, 'Аня', 103],
+    [4, 'Катя', 104], [5, null, 105], [6, 'Катя', 999], [7, 'Катя', 107],
+  ];
+  service.prisma = { order: { findMany: async () => {
+    reads++;
+    return local.map(([id, name, bsOrderId]) => ({ id, sketchDesigner: name ? { name } : null, bluesalesInfo: { bsOrderId } }));
+  } } };
+  const updates = new Map(local.map(([id]) => [id, {
+    id: 100 + id,
+    customFields: [{ fieldId: id === 7 ? 9002 : 9001, fieldName: 'Художник СРМ', value: id === 4 ? 'Катя' : '' }],
+  }]));
+  service.api.setOrdersCustomField = async (...args) => writes.push(args);
+  await service.syncOrderArtistsToBluesales(updates);
+  assert.equal(reads, 1);
+  assert.deepEqual(writes, [
+    [[101, 102], 9001, 'Катя', 'background'],
+    [[103], 9001, 'Аня', 'background'],
+    [[107], 9002, 'Катя', 'background'],
+  ]);
+});
+
+test('artist batches split at 500 and continue after a failed chunk', async () => {
+  const service = syncService();
+  const updates = new Map(Array.from({ length: 1001 }, (_, index) => [index + 1, {
+    id: index + 1, customFields: [{ fieldId: 9001, fieldName: 'Художник СРМ', value: '' }],
+  }]));
+  service.prisma = { order: { findMany: async () => [...updates.keys()].map(id => ({ id, sketchDesigner: { name: 'Катя' }, bluesalesInfo: { bsOrderId: id } })) } };
+  const sizes = [];
+  service.api.setOrdersCustomField = async (ids) => { sizes.push(ids.length); if (sizes.length === 1) throw new Error('BS unavailable'); };
+  await service.syncOrderArtistsToBluesales(updates);
+  assert.deepEqual(sizes, [500, 500, 1]);
+});
+
+test('mass sync paths collect artist changes and flush once after all imports', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: at('12:00:00') });
+  for (const method of ['runFastSync', 'refreshBatch', 'syncOrdersWindow']) {
+    const service = syncService();
+    const bsOrders = [{ id: 101 }, { id: 102 }];
+    const events = [];
+    service.api.getOrders = async () => bsOrders;
+    service.api.getOrdersByIds = async () => bsOrders;
+    service.prisma = { bluesalesOrderInfo: { findMany: async () => bsOrders.map(order => ({ bsOrderId: order.id, orderId: order.id, lastSyncedAt: at('11:00:00') })) } };
+    service.syncReferenceDictionaries = async () => {};
+    service.upsertLead = async () => null;
+    service.upsertOrder = async (order, lead, existing, observed, collector) => {
+      events.push(`import:${order.id}`);
+      assert.ok(collector instanceof Map);
+      await service.syncOrderArtistToBluesales(order.id, order, collector);
+    };
+    service.syncOrderArtistsToBluesales = async (collector) => {
+      events.push('flush');
+      assert.equal(collector.size, 2);
+    };
+    await service[method](at('00:00:00'), at('12:00:00'));
+    assert.deepEqual(events, ['import:101', 'import:102', 'flush'], method);
+  }
+});
+
+test('custom field batch API deduplicates IDs and enforces its size limit', async () => {
+  const api = Object.create(BluesalesApiService.prototype);
+  const calls = [];
+  api.send = async (...args) => calls.push(args);
+  await api.setOrdersCustomField([101, 102, 101], 9001, 'Катя');
+  await api.setOrdersCustomField([], 9001, 'Катя');
+  assert.deepEqual(calls, [['orders.updateMany', { ids: [101, 102], customFields: [{ fieldId: 9001, value: 'Катя' }] }, 'background']]);
+  await assert.rejects(api.setOrdersCustomField(Array.from({ length: 501 }, (_, i) => i + 1), 9001, 'Катя'));
+  assert.equal(calls.length, 1);
 });

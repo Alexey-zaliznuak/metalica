@@ -303,6 +303,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
 
+    const artistUpdates = new Map<number, BsOrder>();
     for (const bsOrder of bsOrders) {
       if (!this.currentSyncSchedule().ordersEnabled) break;
       try {
@@ -313,6 +314,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           leadId,
           existingByBsId.get(bsOrder.id) ?? null,
           statusObservedAt,
+          artistUpdates,
         );
         synced++;
       } catch (err) {
@@ -322,6 +324,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    await this.syncOrderArtistsToBluesales(artistUpdates);
     this.logger.log(
       `Быстрый синк BS: заказов ${synced}/${bsOrders.length}, лидов из заказов ${leadIds.size}`,
     );
@@ -522,6 +525,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // Справочники имён (source/salesChannel/tags) обновляем один раз на весь батч.
     await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
 
+    const artistUpdates = new Map<number, BsOrder>();
     for (const bsOrder of bsOrders) {
       if (!this.currentSyncSchedule().ordersEnabled) break;
       try {
@@ -533,6 +537,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           leadId,
           existingByBsId.get(bsOrder.id) ?? null,
           statusObservedAt,
+          artistUpdates,
         );
         synced++;
       } catch (err) {
@@ -541,6 +546,8 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
+
+    await this.syncOrderArtistsToBluesales(artistUpdates);
 
     // Для заказов, которые BS не вернул (удалены / недоступны), всё равно
     // обновляем lastSyncedAt, чтобы они не застряли наверху очереди.
@@ -703,6 +710,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     await this.syncReferenceDictionaries(bsOrders.map((o) => o.customer ?? null));
 
+    const artistUpdates = new Map<number, BsOrder>();
     for (const bsOrder of bsOrders) {
       if (!this.currentSyncSchedule().ordersEnabled) break;
       try {
@@ -712,6 +720,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           leadId,
           existingByBsId.get(bsOrder.id) ?? null,
           statusObservedAt,
+          artistUpdates,
         );
         synced++;
       } catch (err) {
@@ -720,6 +729,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
+    await this.syncOrderArtistsToBluesales(artistUpdates);
     this.logger.debug(
       `Полный синк заказов: окно ${this.formatDate(from)}…${this.formatDate(to)}, ` +
         `заказов ${synced}/${bsOrders.length}`,
@@ -1043,6 +1053,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     leadId: number | null,
     existing?: { orderId: number } | null,
     statusObservedAt: Date = new Date(),
+    artistUpdates?: Map<number, BsOrder>,
   ): Promise<void> {
     const orderNumber = this.resolveOrderNumber(bsOrder);
     const title = `Заказ номер ${orderNumber}`;
@@ -1218,7 +1229,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           });
         await this.tryAutoAssign(notifyStatus.orderId, notifyStatus.statusId);
       }
-      await this.syncOrderArtistToBluesales(existingInfo.orderId, bsOrder);
+      await this.syncOrderArtistToBluesales(existingInfo.orderId, bsOrder, artistUpdates);
       return;
     }
 
@@ -1242,6 +1253,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             leadId,
             { orderId: existingForOrder.orderId },
             statusObservedAt,
+            artistUpdates,
           );
           return;
         }
@@ -1271,6 +1283,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
           leadId,
           { orderId: sameNumber.id },
           statusObservedAt,
+          artistUpdates,
         );
         this.logger.log(
           `Синк BS#${bsOrder.id}: Order#${sameNumber.id} (номер ${orderNumber}) ` +
@@ -1319,6 +1332,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             leadId,
             { orderId: sameNumber.id },
             statusObservedAt,
+            artistUpdates,
           );
           return;
         }
@@ -1330,7 +1344,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             `Синк BS#${bsOrder.id}: после P2002 у Order#${sameNumber.id} обнаружен ` +
               `конкурирующий BS#${byOrderId.bsOrderId}; повторно определяем приоритет`,
           );
-          await this.upsertOrder(bsOrder, leadId, null, statusObservedAt);
+          await this.upsertOrder(bsOrder, leadId, null, statusObservedAt, artistUpdates);
           return;
         }
 
@@ -1352,7 +1366,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         },
       });
       await this.tryAutoAssign(sameNumber.id, statusData.orderStatusId);
-      await this.syncOrderArtistToBluesales(sameNumber.id, bsOrder);
+      await this.syncOrderArtistToBluesales(sameNumber.id, bsOrder, artistUpdates);
       return;
     }
 
@@ -1395,7 +1409,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.tryAutoAssign(created.id, statusData.orderStatusId);
-    await this.syncOrderArtistToBluesales(created.id, bsOrder);
+    await this.syncOrderArtistToBluesales(created.id, bsOrder, artistUpdates);
   }
 
   private crmArtistFieldIdCache?: {
@@ -1430,34 +1444,70 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     return promise;
   }
 
+  /** Ручное обновление отправляется сразу; массовый синк собирает пачку. */
+  private async syncOrderArtistToBluesales(
+    orderId: number,
+    bsOrder: BsOrder,
+    artistUpdates?: Map<number, BsOrder>,
+  ): Promise<void> {
+    if (artistUpdates) {
+      artistUpdates.set(orderId, bsOrder);
+      return;
+    }
+    await this.syncOrderArtistsToBluesales(new Map([[orderId, bsOrder]]));
+  }
+
   /** Локальный художник — источник истины; пустое назначение BS не очищает. */
-  private async syncOrderArtistToBluesales(orderId: number, bsOrder: BsOrder): Promise<void> {
+  private async syncOrderArtistsToBluesales(artistUpdates: Map<number, BsOrder>): Promise<void> {
+    if (!artistUpdates.size) return;
     try {
-      const order = await this.prisma.order.findUnique({
-        where: { id: orderId },
+      // Перечитываем назначения после автоназначения сразу для всех заказов.
+      const orders = await this.prisma.order.findMany({
+        where: { id: { in: [...artistUpdates.keys()] } },
         select: {
+          id: true,
           sketchDesigner: { select: { name: true } },
           bluesalesInfo: { select: { bsOrderId: true } },
         },
       });
-      const name = order?.sketchDesigner?.name.trim();
-      if (!name || order?.bluesalesInfo?.bsOrderId !== bsOrder.id) return;
-      const field = (bsOrder.customFields ?? []).find(
-        (item) => ['художник срм', 'художник crm'].includes((item.fieldName ?? '').trim().toLowerCase()),
-      );
-      const remoteName = (field?.valueAsText ?? String(field?.value ?? '')).trim();
-      if (remoteName === name) return;
-      const fieldId = field?.fieldId ?? await this.getCrmArtistFieldId();
-      if (fieldId == null || !Number.isInteger(fieldId) || fieldId <= 0) {
-        throw new Error('Не найден ID нового поля «Художник СРМ». Задайте BLUESALES_CRM_ARTIST_FIELD_ID');
+      const groups = new Map<string, { fieldId: number; name: string; ids: Set<number> }>();
+      for (const order of orders) {
+        const bsOrder = artistUpdates.get(order.id);
+        const name = order.sketchDesigner?.name.trim();
+        if (!bsOrder || !name || order.bluesalesInfo?.bsOrderId !== bsOrder.id) continue;
+        const field = (bsOrder.customFields ?? []).find(
+          (item) => ['художник срм', 'художник crm'].includes((item.fieldName ?? '').trim().toLowerCase()),
+        );
+        const remoteName = (field?.valueAsText ?? String(field?.value ?? '')).trim();
+        if (remoteName === name) continue;
+        const fieldId = field?.fieldId ?? await this.getCrmArtistFieldId();
+        if (fieldId == null || !Number.isInteger(fieldId) || fieldId <= 0) {
+          this.logger.error(`Не найден ID поля «Художник СРМ» для BS#${bsOrder.id}. Задайте BLUESALES_CRM_ARTIST_FIELD_ID`);
+          continue;
+        }
+        const key = JSON.stringify([fieldId, name]);
+        const group = groups.get(key) ?? { fieldId, name, ids: new Set<number>() };
+        group.ids.add(bsOrder.id);
+        groups.set(key, group);
       }
-      await this.api.setOrderCustomField(bsOrder.id, fieldId, name, 'background');
+      for (const group of groups.values()) {
+        const ids = [...group.ids];
+        for (let offset = 0; offset < ids.length; offset += 500) {
+          const batch = ids.slice(offset, offset + 500);
+          try {
+            await this.api.setOrdersCustomField(batch, group.fieldId, group.name, 'background');
+          } catch (error) {
+            // Следующий синк повторит сверку; другие пачки продолжаем обрабатывать.
+            this.logger.error(
+              `Не удалось отправить художника «${group.name}» в BS для ${batch.length} заказов`,
+              error instanceof Error ? error.stack : String(error),
+            );
+          }
+        }
+      }
     } catch (error) {
-      // Сохраняем импорт заказа; следующая синхронизация повторит сверку и запись.
-      this.logger.error(
-        `Не удалось отправить художника Order#${orderId} в BS#${bsOrder.id}`,
-        error instanceof Error ? error.stack : String(error),
-      );
+      this.logger.error('Не удалось подготовить пачки художников для BlueSales',
+        error instanceof Error ? error.stack : String(error));
     }
   }
 
