@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { OrderSource, OrderStatusChangeState, Prisma } from '@prisma/client';
@@ -6,6 +6,7 @@ import { AssignmentService } from '../assignment/assignment.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BluesalesApiService, BluesalesSyncPausedError, BsCustomer, BsOrder } from './bluesales-api.service';
+import { isBluesalesInboundSyncEnabled } from './bluesales-inbound-sync';
 import {
   computeSketchTimestampUpdate,
   isSketchTrackedStatus,
@@ -128,6 +129,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn('BlueSales sync отключён (BLUESALES_ENABLED=false)');
       return;
     }
+    if (!this.inboundSyncEnabled) {
+      this.logger.warn('Импорт из BlueSales отключён (BLUESALES_INBOUND_SYNC_ENABLED=false); исходящие изменения разрешены');
+      return;
+    }
     if (!this.api.isConfigured) {
       this.logger.warn(
         'BlueSales sync включён, но не заданы BLUESALES_LOGIN / BLUESALES_PASSWORD',
@@ -160,7 +165,11 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   get canRefreshFromBluesales(): boolean {
-    return this.enabled && this.api.isConfigured;
+    return this.enabled && this.inboundSyncEnabled && this.api.isConfigured;
+  }
+
+  private get inboundSyncEnabled(): boolean {
+    return isBluesalesInboundSyncEnabled(this.config);
   }
 
   /**
@@ -168,6 +177,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
    * HTTP-запрос не ждёт ответ BS: качает интерактивная очередь API.
    */
   enqueueOrderRefresh(orderId: number): { queued: true } {
+    if (!this.canRefreshFromBluesales) {
+      throw new BadRequestException('Входящая синхронизация BlueSales отключена');
+    }
     this.pendingManualRefreshIds.add(orderId);
     void this.pumpManualRefreshes();
     return { queued: true };
@@ -178,6 +190,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.manualRefreshPumpActive = true;
     try {
       while (this.pendingManualRefreshIds.size > 0) {
+        if (!this.inboundSyncEnabled) {
+          this.pendingManualRefreshIds.clear();
+          return;
+        }
         if (!this.currentSyncSchedule().ordersEnabled) {
           await this.sleepBeforeNextBsRefresh(this.refreshPauseMs);
           continue;
@@ -206,6 +222,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async refreshSingleOrder(orderId: number): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     const info = await this.prisma.bluesalesOrderInfo.findUnique({
       where: { orderId },
       select: { bsOrderId: true, orderId: true },
@@ -217,6 +234,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     const statusObservedAt = new Date();
     const bsOrders = await this.api.getOrdersByIds([info.bsOrderId], 'interactive', true);
+    if (!this.inboundSyncEnabled) return;
     if (!this.currentSyncSchedule().ordersEnabled) {
       this.pendingManualRefreshIds.add(orderId);
       return;
@@ -410,6 +428,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
    * пропускает вперёд интерактивные запросы менеджеров.
    */
   private async runRecentBackfill(): Promise<{ orders: number; leads: number }> {
+    if (!this.inboundSyncEnabled) return { orders: 0, leads: 0 };
     const now = new Date();
     let orders = 0;
     let leads = 0;
@@ -464,6 +483,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async refreshBatch(): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     // Засекаем время именно одной итерации: выборка из БД + запрос в BS + upsert в нашу БД.
     const startedAt = Date.now();
 
@@ -780,6 +800,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
   /** Один шаг refresh-loop лидов: батч «живых» лидов из БД, обновление по ids. */
   private async refreshLeadsBatch(): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     const startedAt = Date.now();
     const lookbackDate = new Date(Date.now() - this.leadsRefreshLookbackDays * DAY_MS);
 
@@ -867,6 +888,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
    *   чтобы не делать одинаковые upsert'ы по кругу на каждой записи.
    */
   async upsertLead(customer: BsCustomer | null, syncReferences = true): Promise<number | null> {
+    if (!this.inboundSyncEnabled) return null;
     if (!customer?.id) return null;
 
     const fullName = (customer.fullName ?? '').trim() || null;
@@ -972,6 +994,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private async syncReferenceDictionaries(
     customers: Array<BsCustomer | null | undefined>,
   ): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     const sources = new Map<string, string>();
     const salesChannels = new Map<string, string>();
     const tags = new Map<string, TagReference>();
@@ -1005,6 +1028,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private async upsertSourceName(
     pair: { bsSourceId: string; name: string } | null,
   ): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     if (!pair) return;
     await this.prisma.bluesalesSource.upsert({
       where: { bsSourceId: pair.bsSourceId },
@@ -1017,6 +1041,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private async upsertSalesChannelName(
     pair: { bsSalesChannelId: string; name: string } | null,
   ): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     if (!pair) return;
     await this.prisma.bluesalesSalesChannel.upsert({
       where: { bsSalesChannelId: pair.bsSalesChannelId },
@@ -1027,6 +1052,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
   /** Актуализирует накопительный справочник тегов BlueSales. */
   private async upsertTags(tags: TagReference[]): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     for (const { bsTagId, name, color } of tags) {
       await this.prisma.bluesalesTag.upsert({
         where: { bsTagId },
@@ -1055,6 +1081,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     statusObservedAt: Date = new Date(),
     artistUpdates?: Map<number, BsOrder>,
   ): Promise<void> {
+    if (!this.inboundSyncEnabled) return;
     const orderNumber = this.resolveOrderNumber(bsOrder);
     const title = `Заказ номер ${orderNumber}`;
     const bsCreatedAt = this.parseDate(bsOrder.date);
@@ -1811,7 +1838,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   private currentSyncSchedule(now = new Date()) {
-    return getBluesalesSyncSchedule(now);
+    const schedule = getBluesalesSyncSchedule(now);
+    return this.inboundSyncEnabled ? schedule : {
+      ...schedule,
+      phase: 'paused' as const,
+      ordersEnabled: false,
+      leadsEnabled: false,
+    };
   }
 
   /** В медленном режиме cron-задача выполняется только на каждом третьем тике. */

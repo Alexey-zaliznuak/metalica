@@ -5,6 +5,7 @@ import { performance } from 'perf_hooks';
 import { getBluesalesSyncSchedule } from './bluesales-sync.schedule';
 import { AsyncLocalStorage } from 'async_hooks';
 import { BluesalesMetricsService } from './bluesales-metrics.service';
+import { isBluesalesInboundSyncEnabled } from './bluesales-inbound-sync';
 
 /**
  * Низкоуровневый клиент BlueSales — TS-порт питоновского RequestApi.
@@ -342,10 +343,14 @@ export class BluesalesApiService {
     // Это останавливает и постраничные выгрузки, начатые до 01:00.
     if (
       respectSyncSchedule &&
-      (method === 'orders.get' || method === 'customers.get') &&
-      getBluesalesSyncSchedule().phase === 'paused'
+      (method === 'orders.get' || method === 'customers.get')
     ) {
-      throw new BluesalesSyncPausedError('Синхронизация BlueSales приостановлена с 01:00 до 06:00');
+      if (!isBluesalesInboundSyncEnabled(this.config)) {
+        throw new BluesalesSyncPausedError('Импорт из BlueSales отключён (BLUESALES_INBOUND_SYNC_ENABLED=false)');
+      }
+      if (getBluesalesSyncSchedule().phase === 'paused') {
+        throw new BluesalesSyncPausedError('Синхронизация BlueSales приостановлена с 01:00 до 06:00');
+      }
     }
 
     // Таймаут на HTTP-запрос: без него зависший fetch держал бы очередь вечно.
