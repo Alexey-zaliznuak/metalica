@@ -31,7 +31,7 @@ function setup({ photos = [], pinnedSketches = [{ messageId: 20 }], stat = { siz
   return { service, writes, events };
 }
 
-test('photo attachment queues the selected size and removal schedules cache deletion before the cascade', async () => {
+test('photo attachment queues production with the selected size preferred and removal schedules cache deletion before the cascade', async () => {
   const actions = [];
   const productionFiles = {
     queueOrder: async (...args) => actions.push(['queue', ...args]),

@@ -17,6 +17,8 @@ function matches(row, where = {}) {
     if (value && typeof value === 'object') {
       if ('lte' in value) return row[key] != null && row[key] <= value.lte;
       if ('in' in value) return value.in.includes(row[key]);
+      if ('not' in value) return row[key] !== value.not;
+      if ('gt' in value) return row[key] > value.gt;
       return matches(row[key] || {}, value);
     }
     return row[key] === value;
@@ -89,6 +91,7 @@ test('upload queues work without decoding; pending download returns 409; worker 
   await h.service.queueOrder(10, '40x60');
   assert.equal(sourceReads, 0);
   assert.equal(h.jobs[0].textSize, '40x60');
+  assert.deepEqual(h.jobs.map((job) => job.textSize), ['40x60', '30x40', '60x80']);
   assert.equal((await h.service.status(10, 7, '40x60')).status, 'pending');
   await assert.rejects(h.service.download(10, 7, '40x60'), (error) => error.getStatus() === 409);
   await h.service.processNext();
@@ -105,14 +108,37 @@ test('upload queues work without decoding; pending download returns 409; worker 
   const file = await h.service.download(10, 7, '40x60');
   assert.equal(file.getHeaders().length, output.length);
   assert.ok(file.getHeaders().disposition.includes('production-12345-7.png'));
-  await h.service.processNext();
+  await h.service.status(10, 7, '40x60');
   assert.equal(sourceReads, 1, 'downloads reuse the cache');
+});
+
+test('backfill queues all sizes for old photos, skips PDF/DNG, and preserves existing results on repeated scans', async () => {
+  const h = await setup();
+  await h.service.ensure(10, 7, '30x40');
+  await h.service.processNext();
+  const ready = { ...h.jobs[0] };
+  h.photos.push(
+    { ...h.photos[0], id: 8 },
+    { ...h.photos[0], id: 9, filename: 'document.pdf', mimeType: 'application/pdf' },
+    { ...h.photos[0], id: 10, filename: 'raw.DNG' },
+  );
+  await h.service.synchronize();
+  assert.equal(h.jobs.length, 6);
+  for (const attachmentId of [7, 8]) {
+    assert.deepEqual(h.jobs.filter((job) => job.attachmentId === attachmentId).map((job) => job.textSize).sort(), ['30x40', '40x60', '60x80']);
+  }
+  assert.deepEqual(h.jobs.find((job) => job.id === ready.id), ready);
+  assert.ok(h.jobs.filter((job) => job.id !== ready.id).every((job) => job.status === 'pending' && job.attempts === 0));
+  await h.service.synchronize();
+  assert.equal(h.jobs.length, 6, 'rescanning must not duplicate jobs');
+  assert.deepEqual(h.jobs.find((job) => job.id === ready.id), ready);
+  assert.equal(h.deletions.length, 0);
 });
 
 test('production dispatch claims distinct jobs in parallel and shares four slots with previews', async () => {
   const h = await setup();
   for (const id of [8, 9, 10, 11]) h.photos.push({ ...h.photos[0], id });
-  await h.service.queueOrder(10);
+  for (const photo of h.photos) await h.service.ensure(10, photo.id, '30x40');
   const queue = new ImagePreviewQueue();
   h.storage.runImageJob = (operation) => queue.run(operation, 'production');
   let releasePreview;

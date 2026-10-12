@@ -12,10 +12,12 @@ import { productionOrderData } from './production-order-data';
 import { ProductionParameters, renderProductionFile } from './production-file-renderer';
 import { IMAGE_JOB_CONCURRENCY } from '../storage/image-preview';
 
+const PRODUCTION_TEXT_SIZES = ['30x40', '40x60', '60x80'];
+
 function textSize(value?: string): string {
   if (!value || value === 'standard') return '30x40';
   if (value === 'small') return '60x80';
-  if (!['30x40', '40x60', '60x80'].includes(value)) throw new BadRequestException('Неизвестный размер текста для производства');
+  if (!PRODUCTION_TEXT_SIZES.includes(value)) throw new BadRequestException('Неизвестный размер текста для производства');
   return value;
 }
 
@@ -115,14 +117,13 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
     }
   }
 
-  /** Starts new uploads immediately; other text sizes are prepared when selected. */
+  /** Queue every text size on upload and during backfill; prefer the user's selected size. */
   async queueOrder(orderId: number, requestedSize?: string) {
+    const preferred = textSize(requestedSize);
+    const sizes = [preferred, ...PRODUCTION_TEXT_SIZES.filter((size) => size !== preferred)];
     const photos = await this.prisma.attachment.findMany({ where: { printPhotoOrderId: orderId }, select: { id: true, mimeType: true, filename: true } });
     for (const photo of photos) {
       if (photo.mimeType === 'application/pdf' || /\.(pdf|dng)$/i.test(photo.filename)) continue;
-      const existing = await this.prisma.productionFile.findMany({ where: { orderId, attachmentId: photo.id }, select: { textSize: true } });
-      const sizes = new Set(existing.map((row) => row.textSize));
-      if (requestedSize || !sizes.size) sizes.add(textSize(requestedSize));
       for (const size of sizes) await this.ensure(orderId, photo.id, size);
     }
   }
