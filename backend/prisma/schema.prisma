@@ -21,6 +21,24 @@ model BluesalesRequestMetric {
   @@index([startedAt])
 }
 
+// Backlog snapshots survive restarts; completion counters cover only this sample interval.
+model ImageQueueMetric {
+  id                       BigInt    @id @default(autoincrement())
+  sampledAt                DateTime  @db.Timestamptz(3)
+  previewWaiting           Int
+  previewRunning           Int
+  productionWaiting        Int
+  productionRunning        Int
+  previewCompleted         Int       @default(0)
+  productionCompleted      Int       @default(0)
+  previewDurationMs        Int       @default(0)
+  productionDurationMs     Int       @default(0)
+  previewLastCompletedAt   DateTime? @db.Timestamptz(3)
+  productionLastCompletedAt DateTime? @db.Timestamptz(3)
+
+  @@index([sampledAt])
+}
+
 enum Role {
   MANAGER
   SKETCH_DESIGNER
@@ -516,6 +534,7 @@ model ProductionFile {
   // Snapshot of the fields actually printed in the header.
   parameters     Json
   status         String     @default("pending")
+  priority       Int        @default(0)
   objectKey      String?
   size           Int?
   attempts       Int        @default(0)
@@ -528,6 +547,7 @@ model ProductionFile {
 
   @@unique([orderId, attachmentId, textSize])
   @@index([status, nextAttemptAt])
+  @@index([priority, createdAt])
 }
 
 // Survives deletion of orders/attachments and retries MinIO cleanup after outages.

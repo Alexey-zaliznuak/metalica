@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Box, Button, Card, Chip, CircularProgress, IconButton, LinearProgress, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, Chip, CircularProgress, IconButton, LinearProgress, Stack, Tab, Tabs, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
@@ -8,6 +8,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import client from '../api/client'
 import { describeApiError } from '../api/errors'
 import type { DevMetrics } from '../api/dev-metrics'
+import ImageQueueMetrics from '../components/ImageQueueMetrics'
 
 const HOUR = 3_600_000
 const colors = ['#1591dc', '#6d5ce7', '#149c88', '#ed8b23', '#d15788', '#657b97']
@@ -65,7 +66,7 @@ function Stat({ title, value, detail }: { title: string; value: string; detail: 
   </Card>
 }
 
-export default function DevMetricsPage() {
+function ApiUsageMetrics({ visible }: { visible: boolean }) {
   const [date, setDate] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [data, setData] = useState<DevMetrics | null>(null)
@@ -73,6 +74,7 @@ export default function DevMetricsPage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!visible) return
     let active = true
     let inFlight = false
     const controller = new AbortController()
@@ -93,7 +95,7 @@ export default function DevMetricsPage() {
     void load()
     const timer = window.setInterval(() => { if (!document.hidden) void load() }, 30_000)
     return () => { active = false; controller.abort(); window.clearInterval(timer) }
-  }, [date, refresh])
+  }, [date, refresh, visible])
 
   const chooseDate = (value: string) => { if (value !== date) { setData(null); setDate(value) } }
   const selectedDate = date || data?.period.date || currentDate()
@@ -110,17 +112,6 @@ export default function DevMetricsPage() {
         : 'Нужно ≥ 15 минут наблюдения и ≥ 5 успешных запросов'
 
   return <Stack spacing={3}>
-    <Box sx={{ background: 'linear-gradient(115deg, #132d50, #235c94)', borderRadius: 3, p: { xs: 3, md: 4 }, color: '#fff', position: 'relative', overflow: 'hidden' }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" gap={2} flexWrap="wrap">
-        <Box>
-          <Stack direction="row" alignItems="center" spacing={1} mb={1}><AccessTimeIcon sx={{ color: '#83c9ff' }} /><Typography variant="overline" sx={{ letterSpacing: 2, color: '#b7d9f5' }}>BlueSales / API usage</Typography></Stack>
-          <Typography variant="h4" sx={{ color: '#fff' }}>Время под контролем</Typography>
-          <Typography variant="body2" sx={{ mt: 1, color: '#c2d8ec' }}>Успешные запросы, расход по меткам и прогноз на сутки.</Typography>
-        </Box>
-        <Chip icon={<ShieldOutlinedIcon />} label="Только администраторы" sx={{ color: '#daebfa', bgcolor: '#ffffff12', '& .MuiChip-icon': { color: '#a1d1f6' } }} />
-      </Stack>
-    </Box>
-
     <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="space-between" gap={2}>
       <Box><Typography fontWeight={700}>Сутки с 01:00 до 01:00 · Москва</Typography><Typography variant="body2" color="text.secondary">{data ? `${dateTime(data.period.start)} — ${dateTime(data.period.end)}` : 'Выберите период для просмотра'}</Typography></Box>
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -173,5 +164,31 @@ export default function DevMetricsPage() {
         {data.trackingSince ? ` Учёт ведётся с ${dateTime(data.trackingSince)} МСК; более ранние запросы не восстановлены.` : 'Учёт начнётся с первого успешного запроса после обновления сервера.'}
       </Typography>
     </>}
+  </Stack>
+}
+
+export default function DevMetricsPage() {
+  const [tab, setTab] = useState<'api' | 'images'>('api')
+  return <Stack spacing={3}>
+    <Box sx={{ background: 'linear-gradient(115deg, #132d50, #235c94)', borderRadius: 3, p: { xs: 3, md: 4 }, color: '#fff', position: 'relative', overflow: 'hidden' }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" gap={2} flexWrap="wrap">
+        <Box>
+          <Stack direction="row" alignItems="center" spacing={1} mb={1}><AccessTimeIcon sx={{ color: '#83c9ff' }} /><Typography variant="overline" sx={{ letterSpacing: 2, color: '#b7d9f5' }}>API / Фоновая обработка</Typography></Stack>
+          <Typography variant="h4" sx={{ color: '#fff' }}>Время под контролем</Typography>
+          <Typography variant="body2" sx={{ mt: 1, color: '#c2d8ec' }}>{tab === 'api' ? 'Успешные запросы, расход по меткам и прогноз на сутки.' : 'Очередь фото для производства и превью, нагрузка и время до завершения.'}</Typography>
+        </Box>
+        <Chip icon={<ShieldOutlinedIcon />} label="Только администраторы" sx={{ color: '#daebfa', bgcolor: '#ffffff12', '& .MuiChip-icon': { color: '#a1d1f6' } }} />
+      </Stack>
+    </Box>
+    <Tabs value={tab} onChange={(_, value: 'api' | 'images') => setTab(value)} aria-label="Разделы метрик" variant="scrollable" scrollButtons="auto" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
+      <Tab value="api" label="API BlueSales" id="metrics-tab-api" aria-controls="metrics-panel-api" />
+      <Tab value="images" label="Очередь изображений" id="metrics-tab-images" aria-controls="metrics-panel-images" />
+    </Tabs>
+    <Box role="tabpanel" id="metrics-panel-api" aria-labelledby="metrics-tab-api" hidden={tab !== 'api'}>
+      <ApiUsageMetrics visible={tab === 'api'} />
+    </Box>
+    <Box role="tabpanel" id="metrics-panel-images" aria-labelledby="metrics-tab-images" hidden={tab !== 'images'}>
+      {tab === 'images' && <ImageQueueMetrics />}
+    </Box>
   </Stack>
 }

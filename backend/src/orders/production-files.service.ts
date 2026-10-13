@@ -10,7 +10,7 @@ import { StorageService } from '../storage/storage.service';
 import { StorageCleanupService } from '../storage/storage-cleanup.service';
 import { productionOrderData } from './production-order-data';
 import { ProductionParameters, renderProductionFile } from './production-file-renderer';
-import { IMAGE_JOB_CONCURRENCY } from '../storage/image-preview';
+import { imageJobConfiguration } from '../storage/image-job.config';
 
 const PRODUCTION_TEXT_SIZES = ['30x40', '40x60', '60x80'];
 
@@ -28,6 +28,8 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
   private syncing = false;
   private stopping = false;
   private syncCursor = 0;
+  private readonly concurrency = imageJobConfiguration().production;
+  private readonly urgentDispatches = new Set<number>();
 
   constructor(private prisma: PrismaService, private storage: StorageService, private cleanup: StorageCleanupService) {}
 
@@ -81,7 +83,7 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
           previous.status === 'processing' && previous.leaseUntil ? previous.leaseUntil : new Date());
         const input = {
           fingerprint, sourceKey, parameters: parameters as unknown as Prisma.InputJsonValue,
-          status: 'pending', objectKey: null, size: null, attempts: 0,
+          status: 'pending', priority: 0, objectKey: null, size: null, attempts: 0,
           runToken: null, leaseUntil: null, nextAttemptAt: new Date(), error: null,
         };
         return tx.productionFile.upsert({
@@ -98,8 +100,28 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
 
   async status(orderId: number, attachmentId: number, size?: string, retry = false) {
     const job = await this.ensure(orderId, attachmentId, size, retry);
-    return { status: job.status, size: job.size,
+    return { status: job.status, size: job.size, expedited: job.priority > 0,
       message: job.status === 'failed' ? 'Не удалось подготовить файл. Повторите подготовку.' : null };
+  }
+
+  /** Persist urgency for this version only, and jump ahead of locally queued work. */
+  async expedite(orderId: number, attachmentId: number, size?: string) {
+    const job = await this.ensure(orderId, attachmentId, size, true);
+    if (job.status === 'pending' || (job.status === 'processing' && job.leaseUntil && job.leaseUntil <= new Date())) {
+      await this.prisma.productionFile.updateMany({
+        where: { id: job.id, fingerprint: job.fingerprint, OR: [
+          { status: 'pending' }, { status: 'processing', leaseUntil: { lte: new Date() } },
+        ] },
+        data: { priority: 1, nextAttemptAt: new Date() },
+      });
+      // A dedicated dispatch is necessary even when all background dispatchers
+      // are waiting for shared slots. Actual rendering still obeys both limits.
+      if (!this.urgentDispatches.has(job.id)) {
+        this.urgentDispatches.add(job.id);
+        void this.processNext(job.id).finally(() => this.urgentDispatches.delete(job.id));
+      }
+    }
+    return this.status(orderId, attachmentId, size);
   }
 
   async download(orderId: number, attachmentId: number, size?: string) {
@@ -160,23 +182,23 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
   @Interval(1000)
   async processAvailable() {
     if (this.stopping) return;
-    const available = IMAGE_JOB_CONCURRENCY - this.running;
+    const available = Math.max(0, this.concurrency - this.running);
     await Promise.allSettled(Array.from({ length: available }, () => this.processNext()));
   }
 
-  async processNext() {
-    if (this.running >= IMAGE_JOB_CONCURRENCY || this.stopping) return;
+  async processNext(urgentJobId?: number) {
+    if ((urgentJobId === undefined && this.running >= this.concurrency) || this.stopping) return;
     this.running++;
     try {
       // Share the expensive image slots with thumbnail generation.
       await this.storage.runImageJob(async () => {
         // Concurrent consumers may initially read the same row. Retry a lost claim.
-        for (let attempt = 0; attempt < IMAGE_JOB_CONCURRENCY && !this.stopping; attempt++) {
+        for (let attempt = 0; attempt < this.concurrency && !this.stopping; attempt++) {
           const now = new Date();
-          const row = await this.prisma.productionFile.findFirst({ where: { OR: [
+          const row = await this.prisma.productionFile.findFirst({ where: { ...(urgentJobId === undefined ? {} : { id: urgentJobId }), OR: [
             { status: 'pending', nextAttemptAt: { lte: now } },
             { status: 'processing', leaseUntil: { lte: now } },
-          ] }, orderBy: { createdAt: 'asc' } });
+          ] }, orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }] });
           if (!row) return;
           const runToken = randomUUID();
           const objectKey = `production/${row.orderId}/${row.attachmentId}/${row.textSize}/${runToken}.png`;
@@ -190,11 +212,10 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
             return true;
           });
           if (claimed) {
-            await this.prepare({ ...row, runToken, objectKey, attempts: row.attempts + 1 });
-            return;
+            return this.prepare({ ...row, runToken, objectKey, attempts: row.attempts + 1 });
           }
         }
-      });
+      }, urgentJobId !== undefined);
     } catch (error) {
       this.logger.warn(`Подготовка производства отложена: ${(error as Error).message}`);
     } finally { this.running--; }
@@ -212,13 +233,14 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
       const current = await this.context(job.orderId, job.attachmentId);
       if (this.fingerprint(current.sourceKey, current.parameters, job.textSize) !== job.fingerprint) {
         await this.ensure(job.orderId, job.attachmentId, job.textSize);
-        return;
+        return false;
       }
       // Unique key per claim prevents an old worker from deleting a newer result.
       const size = await this.storage.uploadPreparedFile(job.objectKey!, destination);
       const result = await this.prisma.productionFile.updateMany({ where: claim,
         data: { status: 'ready', size, runToken: null, leaseUntil: null, error: null } });
       if (!result.count) await this.cleanup.enqueue([job.objectKey]);
+      return result.count > 0;
     } catch (error) {
       this.logger.warn(`Файл производства #${job.id}: ${(error as Error).message}`);
       // The claimed key was recorded before upload; even a crash leaves a cleanup trail.
@@ -231,6 +253,7 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
           error: (error as Error).message.slice(0, 1000),
         } });
       });
+      return false;
     } finally {
       await unlink(source).catch(() => undefined);
       await unlink(destination).catch(() => undefined);

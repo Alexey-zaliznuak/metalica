@@ -27,6 +27,15 @@ function matches(row, where = {}) {
 
 function table(rows, defaults = {}) {
   const find = (where) => rows.find((row) => matches(row, where));
+  const ordered = (where, orderBy) => rows.filter((row) => matches(row, where)).sort((a, b) => {
+    for (const order of Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []) {
+      for (const [key, direction] of Object.entries(order)) {
+        if (a[key] < b[key]) return direction === 'asc' ? -1 : 1;
+        if (a[key] > b[key]) return direction === 'asc' ? 1 : -1;
+      }
+    }
+    return 0;
+  });
   const update = (row, data) => {
     for (const [key, value] of Object.entries(data)) row[key] = value && typeof value === 'object' && 'increment' in value
       ? row[key] + value.increment : value;
@@ -35,8 +44,8 @@ function table(rows, defaults = {}) {
   };
   return {
     findUnique: async ({ where }) => { const row = find(where); return row ? { ...row } : null; },
-    findFirst: async ({ where }) => { const row = find(where); return row ? { ...row } : null; },
-    findMany: async ({ where }) => rows.filter((row) => matches(row, where)).map((row) => ({ ...row })),
+    findFirst: async ({ where, orderBy }) => { const row = ordered(where, orderBy)[0]; return row ? { ...row } : null; },
+    findMany: async ({ where, orderBy }) => ordered(where, orderBy).map((row) => ({ ...row })),
     count: async ({ where }) => rows.filter((row) => matches(row, where)).length,
     upsert: async ({ where, create, update: data }) => {
       const previous = find(where);
@@ -172,6 +181,106 @@ test('production dispatch claims distinct jobs in parallel and shares four slots
   assert.ok(h.jobs.every((job) => job.status === 'ready' && job.attempts === 1));
   assert.equal(h.service.running, 0);
   assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 0 }, production: { waiting: 0, running: 0 } });
+});
+
+test('expediting a selected size jumps ahead of a saturated shared backlog without rendering twice', async () => {
+  const h = await setup();
+  for (const id of [8, 9, 10, 11]) h.photos.push({ ...h.photos[0], id });
+  for (const photo of h.photos) await h.service.ensure(10, photo.id, '30x40');
+  const urgent = await h.service.ensure(10, 7, '60x80');
+  const queue = new ImagePreviewQueue(1);
+  h.storage.runImageJob = (operation, priority) => queue.run(operation, 'production', priority);
+  let releasePreview, releaseUrgent;
+  const preview = queue.run(() => new Promise((resolve) => { releasePreview = resolve; }));
+  const started = [];
+  h.service.prepare = async (job) => {
+    started.push({ id: job.id, textSize: job.textSize });
+    if (job.id === urgent.id) await new Promise((resolve) => { releaseUrgent = resolve; });
+    await h.prisma.productionFile.updateMany({ where: { id: job.id, runToken: job.runToken }, data: { status: 'ready', runToken: null } });
+    return true;
+  };
+  const background = h.service.processAvailable();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(queue.snapshot().production.waiting, 4);
+  await Promise.all([h.service.expedite(10, 7, '60x80'), h.service.expedite(10, 7, '60x80')]);
+  assert.equal(queue.snapshot().production.waiting, 5, 'repeated expedite requests share one urgent dispatch');
+  assert.equal(h.jobs.find((job) => job.id === urgent.id).priority, 1);
+  assert.ok(h.jobs.filter((job) => job.id !== urgent.id).every((job) => job.priority === 0), 'other sizes retain background priority');
+  releasePreview();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started, [{ id: urgent.id, textSize: '60x80' }]);
+  assert.equal(queue.snapshot().production.running, 1, 'urgent dispatch still obeys the shared image limit');
+  await h.service.expedite(10, 7, '60x80');
+  assert.equal(queue.snapshot().production.waiting, 4, 'processing jobs are never dispatched again');
+  releaseUrgent();
+  await Promise.all([background, preview]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started.filter((job) => job.id === urgent.id).length, 1);
+  assert.equal(h.jobs.find((job) => job.id === urgent.id).attempts, 1);
+  assert.equal(h.service.running, 0);
+});
+
+test('persisted priority survives dispatch restart and selects urgent work before older jobs', async () => {
+  const h = await setup();
+  const old = await h.service.ensure(10, 7, '30x40');
+  const urgent = await h.service.ensure(10, 7, '40x60');
+  Object.assign(h.jobs.find((job) => job.id === urgent.id), { priority: 1, createdAt: new Date(old.createdAt.getTime() + 1000) });
+  const restarted = new ProductionFilesService(h.prisma, h.storage, h.cleanup);
+  restarted.logger.warn = () => {};
+  await restarted.processNext();
+  assert.equal(h.jobs.find((job) => job.id === urgent.id).status, 'ready');
+  assert.equal(h.jobs.find((job) => job.id === old.id).status, 'pending');
+});
+
+test('expedite preserves a live processing lease and a ready cache', async () => {
+  const h = await setup();
+  await h.service.ensure(10, 7, '40x60');
+  const lease = new Date(Date.now() + 60_000);
+  Object.assign(h.jobs[0], { status: 'processing', runToken: 'live', leaseUntil: lease, attempts: 2, objectKey: 'production/live.png' });
+  const running = { ...h.jobs[0] };
+  assert.equal((await h.service.expedite(10, 7, '40x60')).status, 'processing');
+  assert.deepEqual(h.jobs[0], running);
+  Object.assign(h.jobs[0], { status: 'ready', runToken: null, leaseUntil: null });
+  const ready = { ...h.jobs[0] };
+  assert.equal((await h.service.expedite(10, 7, '40x60')).status, 'ready');
+  assert.deepEqual(h.jobs[0], ready);
+  assert.equal(h.deletions.length, 0);
+});
+
+test('expedite reclaims an expired processing lease with priority and cleans its abandoned object', async () => {
+  const h = await setup();
+  await h.service.ensure(10, 7, '40x60');
+  Object.assign(h.jobs[0], { status: 'processing', runToken: 'crashed', leaseUntil: new Date(0), attempts: 1, objectKey: 'production/abandoned.png' });
+  let dispatch;
+  h.storage.runImageJob = (operation, priority) => {
+    assert.equal(priority, true);
+    dispatch = operation;
+    return Promise.resolve();
+  };
+  const response = await h.service.expedite(10, 7, '40x60');
+  assert.equal(response.expedited, true);
+  assert.equal(h.jobs[0].runToken, 'crashed', 'expedite marks urgency without resetting the old claim');
+  assert.equal(typeof dispatch, 'function');
+  await dispatch();
+  assert.equal(h.jobs[0].status, 'ready');
+  assert.equal(h.jobs[0].attempts, 2);
+  assert.notEqual(h.jobs[0].objectKey, 'production/abandoned.png');
+  assert.ok(h.deletions.some((row) => row.objectKey === 'production/abandoned.png'));
+});
+
+test('expedite validates attachment ownership, selected size and raster format before dispatch', async () => {
+  const h = await setup();
+  await assert.rejects(h.service.expedite(99, 7), (error) => error.getStatus() === 404);
+  await assert.rejects(h.service.expedite(10, 7, 'bad-size'), (error) => error.getStatus() === 400);
+  h.photos[0].printPhotoOrderId = null;
+  h.order.pinnedSketches = [{ messageId: 22 }];
+  h.photos[0].message = { id: 22, orderId: 99 };
+  await assert.rejects(h.service.expedite(10, 7), (error) => error.getStatus() === 404);
+  h.photos[0].message.orderId = 10;
+  h.photos[0].filename = 'file.pdf';
+  await assert.rejects(h.service.expedite(10, 7), (error) => error.getStatus() === 400);
+  assert.equal(h.jobs.length, 0);
+  assert.equal(h.service.running, 0);
 });
 
 test('header changes invalidate the cached result and enqueue deletion of the old version', async () => {

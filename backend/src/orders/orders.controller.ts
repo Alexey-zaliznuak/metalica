@@ -175,6 +175,15 @@ export class OrdersController {
     return this.orders.productionFileStatus(id, attachmentId, textSize, true);
   }
 
+  @Post(':id/attachments/:attachmentId/production/expedite')
+  expediteProductionFile(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @Query('textSize') textSize?: string,
+  ) {
+    return this.orders.expediteProductionFile(id, attachmentId, textSize);
+  }
+
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,

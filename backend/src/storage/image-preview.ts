@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import { Worker } from 'worker_threads';
 import { join } from 'path';
 import { readFile } from 'fs/promises';
+import { imageJobConfiguration } from './image-job.config';
 
 export const PREVIEW_SIZES = { thumbnail: 600, preview: 1800 };
 
@@ -83,48 +84,70 @@ export function renderImagePreviews(input: string | Buffer): Promise<{ thumbnail
   });
 }
 
-export const IMAGE_JOB_CONCURRENCY = 4;
-
 /** Shared by uploads, backfill and production: one concurrency limit per process. */
 export class ImagePreviewQueue {
   private active = 0;
-  private readonly waiting: Array<() => void> = [];
+  private readonly waiting: Array<{ start: () => void; kind: 'preview' | 'production'; priority: boolean }> = [];
+  private readonly measurements: Array<{ kind: 'preview' | 'production'; durationMs: number; completedAt: number; success: boolean }> = [];
   private readonly counts = {
     preview: { waiting: 0, running: 0 },
     production: { waiting: 0, running: 0 },
   };
 
-  constructor(private readonly concurrency = IMAGE_JOB_CONCURRENCY) {
+  constructor(private readonly concurrency = imageJobConfiguration().total,
+    private readonly limits = { preview: concurrency, production: concurrency }) {
     if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('Invalid image concurrency');
+    if (Object.values(limits).some((limit) => !Number.isInteger(limit) || limit < 1)) throw new Error('Invalid image kind concurrency');
   }
 
   snapshot() {
     return { preview: { ...this.counts.preview }, production: { ...this.counts.production } };
   }
 
-  run<T>(job: () => Promise<T>, kind: 'preview' | 'production' = 'preview'): Promise<T> {
+  recentMeasurements() {
+    this.pruneMeasurements();
+    return this.measurements.map((measurement) => ({ ...measurement }));
+  }
+
+  private pruneMeasurements() {
+    const cutoff = Date.now() - 3_600_000;
+    while (this.measurements.length && (this.measurements[0].completedAt < cutoff || this.measurements.length > 10_000)) this.measurements.shift();
+  }
+
+  run<T>(job: () => Promise<T>, kind: 'preview' | 'production' = 'preview', priority = false,
+    measureResult: (result: T) => boolean | null = () => true): Promise<T> {
     const counts = this.counts[kind];
     counts.waiting++;
     return new Promise<T>((resolve, reject) => {
-      this.waiting.push(() => {
+      this.waiting.push({ kind, priority, start: () => {
         counts.waiting--;
         counts.running++;
         this.active++;
+        const startedAt = Date.now();
+        let success: boolean | null = false;
         void (async () => {
-          try { resolve(await job()); }
+          try { const result = await job(); success = measureResult(result); resolve(result); }
           catch (error) { reject(error); }
           finally {
+            if (success !== null) this.measurements.push({ kind, durationMs: Date.now() - startedAt, completedAt: Date.now(), success });
+            this.pruneMeasurements();
             counts.running--;
             this.active--;
             this.drain();
           }
         })();
-      });
+      } });
       this.drain();
     });
   }
 
   private drain() {
-    while (this.active < this.concurrency && this.waiting.length) this.waiting.shift()!();
+    while (this.active < this.concurrency && this.waiting.length) {
+      const eligible = (entry: typeof this.waiting[number]) => this.counts[entry.kind].running < this.limits[entry.kind];
+      let index = this.waiting.findIndex((entry) => entry.priority && eligible(entry));
+      if (index < 0) index = this.waiting.findIndex(eligible);
+      if (index < 0) return;
+      this.waiting.splice(index, 1)[0].start();
+    }
   }
 }

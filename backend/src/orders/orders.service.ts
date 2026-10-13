@@ -483,6 +483,10 @@ export class OrdersService {
     return this.productionFiles.status(id, attachmentId, textSize, retry);
   }
 
+  async expediteProductionFile(id: number, attachmentId: number, textSize?: string) {
+    return this.productionFiles.expedite(id, attachmentId, textSize);
+  }
+
   /** Ставит актуализацию заказа из BlueSales в интерактивную очередь. */
   async requestBluesalesRefresh(id: number) {
     const order = await this.prisma.order.findUnique({

@@ -3,7 +3,7 @@ import { Interval } from '@nestjs/schedule';
 import { Attachment } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from './storage.service';
-import { IMAGE_JOB_CONCURRENCY } from './image-preview';
+import { imageJobConfiguration } from './image-job.config';
 
 @Injectable()
 export class AttachmentPreviewsService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -11,6 +11,7 @@ export class AttachmentPreviewsService implements OnApplicationBootstrap, OnModu
   private running = false;
   private readonly activeKeys = new Set<string>();
   private stopping = false;
+  private readonly concurrency = imageJobConfiguration().preview;
 
   constructor(private prisma: PrismaService, private storage: StorageService) {}
 
@@ -26,7 +27,7 @@ export class AttachmentPreviewsService implements OnApplicationBootstrap, OnModu
   @Interval(1000)
   async processBatch() {
     if (this.running || this.stopping) return;
-    const available = IMAGE_JOB_CONCURRENCY - this.activeKeys.size;
+    const available = this.concurrency - this.activeKeys.size;
     if (available <= 0) return;
     this.running = true;
     const jobs: Promise<void>[] = [];

@@ -113,6 +113,60 @@ test('shared queue runs four image jobs, refills freed slots, and counts both jo
   assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 0 }, production: { waiting: 0, running: 0 } });
 });
 
+test('priority chooses the next eligible job while preserving both kind limits and the shared cap', async () => {
+  const queue = new ImagePreviewQueue(2, { preview: 1, production: 1 });
+  const started = [], releases = new Map();
+  let active = 0, maximum = 0;
+  const schedule = (name, kind, priority = false, fail = false) => queue.run(async () => {
+    started.push(name);
+    maximum = Math.max(maximum, ++active);
+    await new Promise((resolve) => releases.set(name, resolve));
+    active--;
+    if (fail) throw new Error('render failed');
+    return name;
+  }, kind, priority);
+  const jobs = [
+    schedule('preview-running', 'preview', false, true),
+    schedule('production-running', 'production'),
+    schedule('production-old', 'production'),
+    schedule('production-urgent', 'production', true),
+    schedule('preview-old', 'preview'),
+  ];
+  const results = Promise.allSettled(jobs);
+  assert.deepEqual(started, ['preview-running', 'production-running']);
+  releases.get('preview-running')();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started, ['preview-running', 'production-running', 'preview-old'], 'a capped urgent kind cannot block eligible previews');
+  releases.get('production-running')();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started.at(-1), 'production-urgent');
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 1 }, production: { waiting: 1, running: 1 } });
+  releases.get('production-urgent')();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started.at(-1), 'production-old');
+  releases.get('production-old')();
+  releases.get('preview-old')();
+  assert.equal((await results)[0].status, 'rejected');
+  assert.equal(maximum, 2);
+  assert.deepEqual(queue.snapshot(), { preview: { waiting: 0, running: 0 }, production: { waiting: 0, running: 0 } });
+});
+
+test('queue measurements count completed renders and failures but exclude empty dispatches', async () => {
+  const queue = new ImagePreviewQueue(1);
+  await queue.run(async () => undefined, 'production', false, (result) => result === undefined ? null : true);
+  await queue.run(async () => false, 'production', false, (result) => result);
+  await assert.rejects(queue.run(async () => { throw new Error('broken'); }, 'preview'), /broken/);
+  await queue.run(async () => 42);
+  const measurements = queue.recentMeasurements();
+  assert.equal(measurements.length, 3);
+  assert.deepEqual(measurements.map(({ kind, success }) => ({ kind, success })), [
+    { kind: 'production', success: false }, { kind: 'preview', success: false }, { kind: 'preview', success: true },
+  ]);
+  assert.ok(measurements.every((measurement) => measurement.durationMs >= 0 && measurement.completedAt <= Date.now()));
+  measurements[0].success = true;
+  assert.equal(queue.recentMeasurements()[0].success, false, 'metrics consumers cannot mutate queue measurements');
+});
+
 test('preview backfill runs four distinct sources and refills without waiting for slower jobs', async () => {
   const rows = ['a', 'b', 'c', 'd', 'a', 'e'].map((objectKey, index) => ({ id: index + 1, objectKey, previewStatus: 'pending', previewAttempts: 0 }));
   const releases = new Map();

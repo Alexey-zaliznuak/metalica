@@ -17,3 +17,37 @@ export interface DevMetrics {
   }
   history: { date: string; durationMs: number; count: number }[]
 }
+
+export interface ImageQueueState {
+  waiting: number
+  running: number
+  ready: number
+  failed: number
+  unavailable: number
+  completedLastHour: number
+  averageDurationMs: number | null
+  throughputPerMinute: number | null
+  etaSeconds: number | null
+}
+
+export interface ImageQueueMetrics {
+  sampledAt: string
+  historyHours: number
+  samplingIntervalSeconds: number
+  retentionHours: number
+  concurrency: { total: number; preview: number; production: number; scope: 'process' }
+  preview: ImageQueueState
+  production: ImageQueueState
+  etaSeconds: number | null
+  estimateAssumption: 'no_new_jobs'
+  measurementScope: 'process'
+  history: {
+    sampledAt: string
+    previewWaiting: number
+    previewRunning: number
+    productionWaiting: number
+    productionRunning: number
+    previewCompleted: number
+    productionCompleted: number
+  }[]
+}

@@ -8,6 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { formatBytes } from './upload.config';
 import { renderImagePreviews, imagePreviewKeys, ImagePreviewQueue, isPreviewCandidate } from './image-preview';
+import { imageJobConfiguration } from './image-job.config';
 
 export interface StoredImagePreviews {
   thumbnailKey: string | null;
@@ -36,7 +37,8 @@ export class StorageService implements OnModuleInit {
   private bucket: string;
   private publicFilesBaseUrl: string;
   private publicFilesVersion: string;
-  private readonly previewQueue = new ImagePreviewQueue();
+  private readonly imageLimits = imageJobConfiguration();
+  private readonly previewQueue = new ImagePreviewQueue(this.imageLimits.total, this.imageLimits);
 
   constructor() {
     const accessKey = process.env.MINIO_ACCESS_KEY || 'minioadmin';
@@ -181,13 +183,17 @@ export class StorageService implements OnModuleInit {
     await this.internalClient.removeObject(this.bucket, objectKey);
   }
 
-  runImageJob<T>(job: () => Promise<T>): Promise<T> {
-    return this.previewQueue.run(job, 'production');
+  runImageJob<T>(job: () => Promise<T>, priority = false): Promise<T> {
+    return this.previewQueue.run(job, 'production', priority, (result) => result === undefined ? null : result !== false);
   }
 
   imageQueueSnapshot() {
     return this.previewQueue.snapshot();
   }
+
+  imageJobConfiguration() { return { ...this.imageLimits }; }
+
+  imageQueueMeasurements() { return this.previewQueue.recentMeasurements(); }
 
   /** Used in the background for attachments uploaded before previews existed. */
   async ensureImagePreviews(objectKey: string): Promise<StoredImagePreviews> {
