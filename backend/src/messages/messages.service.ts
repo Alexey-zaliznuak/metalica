@@ -12,6 +12,7 @@ import { AttachmentsService } from '../storage/attachments.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { UpdateMessageTextDto } from './dto/update-message-text.dto';
 import { MessageKind } from './message-kind';
+import { UpdateAttachmentPhotoSizeDto } from '../storage/dto/update-attachment-photo-size.dto';
 
 const messageInclude = {
   author: { select: { id: true, name: true, role: true } },
@@ -168,6 +169,10 @@ export class MessagesService {
         `текст=${dto.body?.trim().length ?? 0} симв., ` +
         `вложений=${dto.attachmentKeys?.length ?? 0}`,
     );
+  }
+
+  async updateAttachmentPhotoSize(orderId: number, messageId: number, attachmentId: number, dto: UpdateAttachmentPhotoSizeDto) {
+    return this.attachments.updatePhotoSize({ id: attachmentId, messageId, message: { orderId } }, dto.photoSize);
   }
 
   async updateText(

@@ -77,6 +77,8 @@ import PdfAttachmentPreview, {
   isPdfFile,
 } from '../components/PdfAttachmentPreview'
 import type {
+  Attachment,
+  PhotoSize,
   BluesalesStatusOption,
   BluesalesTag,
   Message,
@@ -225,6 +227,7 @@ function MessageBubble({
   isPinned,
   updatingPinnedSketch,
   onTogglePinnedSketch,
+  onPhotoSizeChange,
 }: {
   message: Message
   ownSide: boolean
@@ -233,6 +236,7 @@ function MessageBubble({
   isPinned: boolean
   updatingPinnedSketch: boolean
   onTogglePinnedSketch: () => void
+  onPhotoSizeChange: (messageId: number, attachmentId: number, size: PhotoSize) => Promise<void>
 }) {
   const isRequest = message.kind === 'REVISION_REQUEST'
   const isAnswer = message.kind === 'REVISION_ANSWER'
@@ -409,6 +413,7 @@ function MessageBubble({
                     <Box key={att.id} sx={{ maxWidth: '100%', minWidth: 0 }}>
                       <ImageAttachmentPreview
                         image={att}
+                        onPhotoSizeChange={(size) => onPhotoSizeChange(message.id, att.id, size)}
                         lightControls={ownSide && !isRequest && !isAnswer}
                         onOpen={() =>
                           onOpenImage(att)
@@ -607,6 +612,7 @@ function OrderInfoPanel({
   onTextSizeChange,
   onAddPrintPhotos,
   onRemovePrintPhoto,
+  onPrintPhotoSizeChange,
   onOpenImage,
   inDrawer = false,
 }: {
@@ -630,6 +636,7 @@ function OrderInfoPanel({
   onTextSizeChange: (size: ProductionTextSize) => void
   onAddPrintPhotos: (files: File[]) => void
   onRemovePrintPhoto: (photoId: number) => void
+  onPrintPhotoSizeChange: (photoId: number, size: PhotoSize) => Promise<void>
   onOpenImage: (image: LightboxImage) => void
   inDrawer?: boolean
 }) {
@@ -987,6 +994,7 @@ function OrderInfoPanel({
         onTextSizeChange={onTextSizeChange}
         onAddPrintPhotos={onAddPrintPhotos}
         onRemovePrintPhoto={onRemovePrintPhoto}
+        onPhotoSizeChange={onPrintPhotoSizeChange}
         onOpenImage={onOpenImage}
       />
     </Paper>
@@ -1011,6 +1019,7 @@ function PrintPhotosBar({
   onTextSizeChange,
   onAddPrintPhotos,
   onRemovePrintPhoto,
+  onPhotoSizeChange,
   onOpenImage,
 }: {
   order: Order
@@ -1020,6 +1029,7 @@ function PrintPhotosBar({
   onTextSizeChange: (size: ProductionTextSize) => void
   onAddPrintPhotos: (files: File[]) => void
   onRemovePrintPhoto: (photoId: number) => void
+  onPhotoSizeChange: (photoId: number, size: PhotoSize) => Promise<void>
   onOpenImage: (image: LightboxImage) => void
 }) {
   return (
@@ -1101,6 +1111,7 @@ function PrintPhotosBar({
               ) : (
                 <ImageAttachmentPreview
                   image={photo}
+                  onPhotoSizeChange={(size) => onPhotoSizeChange(photo.id, size)}
                   onOpen={() => onOpenImage(photo)}
                 />
               )}
@@ -1632,6 +1643,26 @@ export default function OrderThreadPage() {
       void loadOlder()
     }
   }, [hasMore, loadOlder])
+
+  const handlePhotoSizeChange = async (messageId: number, attachmentId: number, photoSize: PhotoSize) => {
+    const { data } = await client.patch<Attachment>(
+      `/orders/${orderId}/messages/${messageId}/attachments/${attachmentId}/photo-size`, { photoSize },
+    )
+    setMessages((prev) => prev.map((message) => message.orderId === orderId && message.id === messageId
+      ? { ...message, attachments: message.attachments.map((attachment) => attachment.id === attachmentId ? data : attachment) }
+      : message))
+    setLightbox((prev) => prev?.id === attachmentId ? { ...prev, photoSize: data.photoSize } : prev)
+  }
+
+  const handlePrintPhotoSizeChange = async (attachmentId: number, photoSize: PhotoSize) => {
+    const { data } = await client.patch<Attachment>(
+      `/orders/${orderId}/print-photos/${attachmentId}/photo-size`, { photoSize },
+    )
+    setOrder((prev) => prev?.id === orderId ? { ...prev,
+      printPhotos: prev.printPhotos?.map((photo) => photo.id === attachmentId ? data : photo),
+    } : prev)
+    setLightbox((prev) => prev?.id === attachmentId ? { ...prev, photoSize: data.photoSize } : prev)
+  }
 
   const handlePinnedSketchChange = async (messageId: number, pin: boolean) => {
     setUpdatingPinnedSketch(true)
@@ -2521,6 +2552,7 @@ export default function OrderThreadPage() {
                 message={item.message}
                 ownSide={isOwnSide(item.message.author.id, user?.id)}
                 onOpenImage={setLightbox}
+                onPhotoSizeChange={handlePhotoSizeChange}
                 resolvedSeconds={resolutionByRequestId.get(item.message.id) ?? null}
                 isPinned={(order.pinnedSketches ?? []).some((pin) => pin.messageId === item.message.id)}
                 updatingPinnedSketch={updatingPinnedSketch}
@@ -2764,6 +2796,7 @@ export default function OrderThreadPage() {
         }}
         onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
         onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
+        onPrintPhotoSizeChange={handlePrintPhotoSizeChange}
         onOpenImage={setLightbox}
         orderStatusOptions={orderStatusOptions}
         sketchDesignerAssignees={sketchDesignerAssignees}
@@ -2833,6 +2866,7 @@ export default function OrderThreadPage() {
           }}
           onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
           onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
+          onPrintPhotoSizeChange={handlePrintPhotoSizeChange}
           onOpenImage={(image) => {
             setInfoOpen(false)
             setLightbox(image)

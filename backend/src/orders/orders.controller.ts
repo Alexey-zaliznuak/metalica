@@ -23,6 +23,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthUser, CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { UpdateAttachmentPhotoSizeDto } from '../storage/dto/update-attachment-photo-size.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
@@ -154,6 +155,15 @@ export class OrdersController {
     @Query('textSize') textSize?: string,
   ) {
     return this.orders.downloadProductionImage(id, attachmentId, textSize);
+  }
+
+  @Patch(':id/print-photos/:attachmentId/photo-size')
+  updatePrintPhotoSize(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @Body() dto: UpdateAttachmentPhotoSizeDto,
+  ) {
+    return this.orders.updatePrintPhotoSize(id, attachmentId, dto);
   }
 
   @Get(':id/attachments/:attachmentId/production/status')

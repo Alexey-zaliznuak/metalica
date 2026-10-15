@@ -508,6 +508,8 @@ model Attachment {
   // null у вложений, загруженных до появления колонки: размер дотягивается
   // из хранилища при первой отдаче сообщения.
   size          Int?
+  // Physical print size selected for this particular photo in the order chat.
+  photoSize     String?
   thumbnailKey  String?
   previewKey    String?
   previewStatus String       @default("pending")

@@ -30,6 +30,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { StorageService } from '../storage/storage.service';
 import { AttachmentsService } from '../storage/attachments.service';
 import { MAX_UPLOAD_BYTES } from '../storage/upload.config';
+import { UpdateAttachmentPhotoSizeDto } from '../storage/dto/update-attachment-photo-size.dto';
 
 @Injectable()
 export class OrdersService {
@@ -473,6 +474,10 @@ export class OrdersService {
         : null,
       articles,
     };
+  }
+
+  async updatePrintPhotoSize(id: number, attachmentId: number, dto: UpdateAttachmentPhotoSizeDto) {
+    return this.attachments.updatePhotoSize({ id: attachmentId, printPhotoOrderId: id }, dto.photoSize);
   }
 
   async downloadProductionImage(id: number, attachmentId: number, textSize?: string) {

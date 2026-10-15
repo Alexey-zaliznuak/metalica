@@ -7,14 +7,18 @@ import { Box, Button, CircularProgress, IconButton, Tooltip, Typography } from '
 import { formatBytes } from '../api/errors'
 import AttachmentSizeBadge from './AttachmentSizeBadge'
 import { attachmentActionSx } from './AttachmentCard'
+import PhotoSizeSelector from './PhotoSizeSelector'
+import type { PhotoSize } from '../api/types'
 
 export interface LightboxImage {
+  id?: number
   url: string
   thumbnailUrl?: string | null
   previewUrl?: string | null
   previewStatus?: string
   filename: string
   size?: number | null
+  photoSize?: PhotoSize | null
 }
 
 interface ImageLightboxProps {
@@ -27,6 +31,7 @@ interface ImageAttachmentPreviewProps {
   onOpen: () => void
   lightControls?: boolean
   fullWidth?: boolean
+  onPhotoSizeChange?: (size: PhotoSize) => Promise<void>
 }
 
 function isHeicImage(filename: string): boolean {
@@ -126,6 +131,7 @@ export function ImageAttachmentPreview({
   onOpen,
   lightControls = false,
   fullWidth = false,
+  onPhotoSizeChange,
 }: ImageAttachmentPreviewProps) {
   const [downloading, setDownloading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -210,7 +216,7 @@ export function ImageAttachmentPreview({
             }}
           />
         )}
-        <AttachmentSizeBadge bytes={image.size} />
+        <AttachmentSizeBadge bytes={image.size} photoSize={image.photoSize} />
       </Box>
       <Button
         fullWidth
@@ -256,7 +262,7 @@ export function ImageAttachmentPreview({
           minWidth: 0,
           height: 28,
           borderTop: 0,
-          borderRadius: '0 0 4px 4px',
+          borderRadius: onPhotoSizeChange ? 0 : '0 0 4px 4px',
           fontSize: 11,
           lineHeight: 1,
           textTransform: 'none',
@@ -274,6 +280,7 @@ export function ImageAttachmentPreview({
       >
         {copied ? 'Скопировано' : 'Копировать'}
       </Button>
+      {onPhotoSizeChange && <PhotoSizeSelector value={image.photoSize} onChange={onPhotoSizeChange} lightControls={lightControls} fullWidth={fullWidth} />}
     </Box>
   )
 }
@@ -313,7 +320,7 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
         p: 2,
       }}
     >
-      {image.size != null && (
+      {(image.size != null || image.photoSize) && (
         <Typography
           variant="caption"
           sx={{
@@ -329,7 +336,8 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
             pointerEvents: 'none',
           }}
         >
-          {formatBytes(image.size)}
+          {image.photoSize && <Box component="span" sx={{ display: 'block' }}>{image.photoSize.replace('x', ' х ')}</Box>}
+          {image.size != null && <Box component="span" sx={{ display: 'block' }}>{formatBytes(image.size)}</Box>}
         </Typography>
       )}
 

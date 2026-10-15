@@ -247,6 +247,8 @@ export interface MessagesPage<T> {
 
 export type MessageKind = 'NORMAL' | 'REVISION_REQUEST' | 'REVISION_ANSWER'
 
+export type PhotoSize = '30x40' | '40x60' | '60x80'
+
 export interface Attachment {
   id: number
   url: string
@@ -257,6 +259,7 @@ export interface Attachment {
   mimeType: string | null
   /** null, если хранилище не отдало метаданные объекта. */
   size: number | null
+  photoSize: PhotoSize | null
   kind: string
 }
 

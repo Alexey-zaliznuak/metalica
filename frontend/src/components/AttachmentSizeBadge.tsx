@@ -3,6 +3,7 @@ import { formatBytes } from '../api/errors'
 
 interface AttachmentSizeBadgeProps {
   bytes: number | null | undefined
+  photoSize?: string | null
 }
 
 /**
@@ -11,8 +12,8 @@ interface AttachmentSizeBadgeProps {
  * миниатюре в ленте, и на превью ещё не отправленного файла. Родитель должен
  * иметь position: relative.
  */
-export default function AttachmentSizeBadge({ bytes }: AttachmentSizeBadgeProps) {
-  if (bytes == null) return null
+export default function AttachmentSizeBadge({ bytes, photoSize }: AttachmentSizeBadgeProps) {
+  if (bytes == null && !photoSize) return null
 
   return (
     <Box
@@ -35,7 +36,8 @@ export default function AttachmentSizeBadge({ bytes }: AttachmentSizeBadgeProps)
         backdropFilter: 'blur(2px)',
       }}
     >
-      {formatBytes(bytes)}
+      {photoSize && <Box component="span" sx={{ display: 'block' }}>{photoSize.replace('x', ' х ')}</Box>}
+      {bytes != null && <Box component="span" sx={{ display: 'block' }}>{formatBytes(bytes)}</Box>}
     </Box>
   )
 }

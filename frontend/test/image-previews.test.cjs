@@ -52,3 +52,28 @@ test('HEIC attachments render the server thumbnail', () => {
   assert.ok(markup.includes('src="/files/thumbnail.webp"'));
   assert.ok(!markup.includes('src="/files/iphone.heic"'));
 });
+
+test('selected photo size appears above file weight in thumbnail and lightbox', () => {
+  for (const Component of [ImageAttachmentPreview, ImageLightbox]) {
+    const markup = renderToStaticMarkup(React.createElement(Component, {
+      image: { ...image, photoSize: '40x60', size: 1024 }, onOpen() {}, onClose() {},
+    }));
+    assert.ok(markup.includes('40 х 60'));
+    assert.ok(markup.indexOf('40 х 60') < markup.indexOf('1.0 КБ'), 'Photo dimensions must be above file weight');
+  }
+});
+
+test('photo size is visible even without file weight metadata', () => {
+  const markup = renderToStaticMarkup(React.createElement(ImageAttachmentPreview, {
+    image: { ...image, photoSize: '30x40', size: null }, onOpen() {},
+  }));
+  assert.ok(markup.includes('30 х 40'));
+});
+
+test('size selection is a third action only when provided by the order chat', () => {
+  const ordinary = renderToStaticMarkup(React.createElement(ImageAttachmentPreview, { image, onOpen() {} }));
+  assert.ok(!ordinary.includes('Установить размер'));
+  const orderPhoto = renderToStaticMarkup(React.createElement(ImageAttachmentPreview, { image, onOpen() {}, onPhotoSizeChange: async () => {} }));
+  assert.equal((orderPhoto.match(/<button\b/g) || []).length, 3);
+  assert.ok(orderPhoto.indexOf('Копировать') < orderPhoto.indexOf('Установить размер'));
+});

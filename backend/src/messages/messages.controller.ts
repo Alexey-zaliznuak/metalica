@@ -13,6 +13,7 @@ import {
 import { MessagesService } from './messages.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { UpdateMessageTextDto } from './dto/update-message-text.dto';
+import { UpdateAttachmentPhotoSizeDto } from '../storage/dto/update-attachment-photo-size.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../auth/current-user.decorator';
 import { parseOptionalInt } from '../common/parse-optional-int';
@@ -51,6 +52,16 @@ export class MessagesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.messages.updateText(orderId, messageId, user, dto);
+  }
+
+  @Patch(':messageId/attachments/:attachmentId/photo-size')
+  updateAttachmentPhotoSize(
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @Body() dto: UpdateAttachmentPhotoSizeDto,
+  ) {
+    return this.messages.updateAttachmentPhotoSize(orderId, messageId, attachmentId, dto);
   }
 
   @Delete(':messageId/text')

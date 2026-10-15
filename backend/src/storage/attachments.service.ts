@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Attachment } from '@prisma/client';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Attachment, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from './storage.service';
+import { PHOTO_SIZES } from './dto/update-attachment-photo-size.dto';
+import { isPreviewCandidate } from './image-preview';
 
 export interface SerializedAttachment {
   id: number;
@@ -12,6 +14,7 @@ export interface SerializedAttachment {
   filename: string;
   mimeType: string | null;
   size: number | null;
+  photoSize: string | null;
   kind: string;
 }
 
@@ -51,6 +54,20 @@ export class AttachmentsService {
     return { create };
   }
 
+  async updatePhotoSize(where: Prisma.AttachmentWhereInput, photoSize: (typeof PHOTO_SIZES)[number]) {
+    if (!PHOTO_SIZES.includes(photoSize)) throw new BadRequestException('Выберите размер 30 х 40, 40 х 60 или 60 х 80');
+    const attachment = await this.prisma.attachment.findFirst({ where });
+    if (!attachment) throw new NotFoundException('Фото не найдено в этом заказе');
+    if (!isPreviewCandidate(attachment.filename, attachment.mimeType)) {
+      throw new BadRequestException('Размер можно установить только для фото');
+    }
+    const updated = await this.prisma.attachment.update({
+      where: { id: attachment.id }, data: { photoSize },
+    });
+    const [serialized] = await this.serialize([updated]);
+    return serialized;
+  }
+
   async serialize(attachments: Attachment[]): Promise<SerializedAttachment[]> {
     return Promise.all(
       attachments.map(async (attachment) => {
@@ -64,6 +81,7 @@ export class AttachmentsService {
           filename: attachment.filename,
           mimeType,
           size,
+          photoSize: attachment.photoSize ?? null,
           kind: attachment.kind,
         };
       }),
