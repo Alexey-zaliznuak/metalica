@@ -10,6 +10,41 @@ export interface ProductionTaskCounts {
   sizes: Record<'30x40' | '40x60' | '60x80', number>
 }
 
+export interface ProductionChange {
+  field: string
+  before: string | number | string[] | null
+  after: string | number | string[] | null
+}
+
+export interface ProductionTaskEvent {
+  at: string
+  textSize: string
+  reason: string
+  cause: string | null
+  trigger: string | null
+  changes: ProductionChange[] | null
+}
+
+export interface ProductionQueueTask {
+  id: number
+  orderId: number
+  orderNumber: string
+  attachmentId: number
+  textSize: string
+  status: string
+  attempts: number
+  error: string | null
+  createdAt: string
+  queuedAt: string | null
+  nextAttemptAt: string
+  leaseUntil: string | null
+  leaseExpired: boolean
+  cause: string
+  category: string
+  trigger: string | null
+  changes: ProductionChange[] | null
+}
+
 export interface ProductionDebugMetrics {
   generatedAt: string
   period: { from: string; to: string }
@@ -21,8 +56,13 @@ export interface ProductionDebugMetrics {
     lastCreatedAt: string
     newPhotos: number
     completePhotoSets: number
-    photos: (ProductionTaskCounts & { attachmentId: number; lastCreatedAt: string })[]
+    photos: (ProductionTaskCounts & { attachmentId: number; lastCreatedAt: string; events: ProductionTaskEvent[] })[]
   })[]
+  queue: {
+    total: number; pending: number; processing: number; photos: number; orders: number
+    causes: { cause: string; count: number }[]
+    rows: ProductionQueueTask[]
+  }
 }
 
 export interface DevMetrics {

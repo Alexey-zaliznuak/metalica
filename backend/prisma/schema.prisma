@@ -543,6 +543,11 @@ model ProductionFile {
   sourceKey      String
   // Snapshot of the fields actually printed in the header.
   parameters     Json
+  // Why the current generation was queued; retained independently of journal cleanup.
+  queuedAt       DateTime?  @db.Timestamptz(3)
+  queueReason    String?
+  queueSource    String?
+  queueChanges   Json?
   status         String     @default("pending")
   priority       Int        @default(0)
   objectKey      String?
@@ -570,8 +575,12 @@ model ProductionTaskEvent {
   textSize     String
   // created | changed | retry; automatic worker attempts are not new tasks.
   reason       String
+  cause        String?
+  trigger      String?
+  changes      Json?
 
   @@index([createdAt])
+  @@index([orderId, attachmentId, textSize, createdAt(sort: Desc), id(sort: Desc)], map: "ProductionTaskEvent_identity_createdAt_idx")
 }
 
 // Survives deletion of orders/attachments and retries MinIO cleanup after outages.

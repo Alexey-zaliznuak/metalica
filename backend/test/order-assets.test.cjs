@@ -43,7 +43,7 @@ test('photo attachment queues production with the selected size preferred and re
   };
   const { service, writes } = setup({ photos: [{ id: 1, filename: 'one.jpg' }], productionFiles });
   await service.update(10, { printPhotoKeys: ['two.jpg'], productionTextSize: '60x80' }, actor);
-  assert.deepEqual(actions[0], ['queue', 10, '60x80']);
+  assert.deepEqual(actions[0], ['queue', 10, '60x80', 'order_update', ['two.jpg']]);
   await service.update(10, { removePrintPhotoIds: [1] }, actor);
   assert.deepEqual(actions[1], ['delete', { orderId: 10, attachmentId: { in: [1] } }]);
   assert.equal(writes.length, 2);

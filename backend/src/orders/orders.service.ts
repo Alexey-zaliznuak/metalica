@@ -871,7 +871,7 @@ export class OrdersService {
     } else {
       await this.prisma.order.update({ where: { id }, data });
     }
-    try { await this.productionFiles.queueOrder(id, dto.productionTextSize); }
+    try { await this.productionFiles.queueOrder(id, dto.productionTextSize, 'order_update', dto.printPhotoKeys ?? []); }
     catch (error) { this.logger.warn(`Очередь производства заказа #${id} будет восстановлена в фоне: ${error.message}`); }
     await this.orderEvents.record(id, actor.id, changes);
     return this.findOne(id);

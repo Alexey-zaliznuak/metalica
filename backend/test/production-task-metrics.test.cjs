@@ -7,9 +7,9 @@ const now = new Date('2026-10-21T12:30:00Z');
 const sizes = ['30x40', '40x60', '60x80'];
 const event = (overrides = {}) => ({ orderId: 10, orderNumber: '12345', attachmentId: 7,
   textSize: '30x40', reason: 'created', createdAt: new Date('2026-10-21T12:00:00Z'), ...overrides });
-function setup(events) {
+function setup(events, queue = []) {
   let query;
-  const prisma = { productionTaskEvent: {
+  const prisma = { $queryRaw: async () => queue, productionTaskEvent: {
     findMany: async (args) => {
       query = args;
       return events.filter((row) => row.createdAt >= args.where.createdAt.gte && row.createdAt <= args.where.createdAt.lte)
@@ -86,4 +86,38 @@ test('journal cleanup keeps the full seven-day retention window', async (t) => {
   } });
   await service.prune();
   assert.equal(cutoff.getTime(), now.getTime() - 7 * 24 * 3_600_000);
+});
+
+test('current queue includes old tasks, assigns one category per task and preserves original retry cause', async () => {
+  const base = { id: 1, orderId: 10, orderNumber: '12345', attachmentId: 7, textSize: '30x40', status: 'pending',
+    attempts: 0, error: null, cause: 'new_attachment', queuedAt: new Date('2026-10-20T10:00:00Z'),
+    createdAt: new Date('2026-10-19T10:00:00Z'), nextAttemptAt: now, leaseUntil: null, trigger: 'attachment_added', changes: [] };
+  const jobs = [base,
+    { ...base, id: 2, textSize: '40x60', cause: 'data_change', attempts: 1, error: 'Storage unavailable' },
+    { ...base, id: 3, textSize: '60x80', cause: null, queuedAt: null, changes: null },
+    { ...base, id: 4, orderId: 11, attachmentId: 8, cause: 'backfill', status: 'processing', attempts: 2, leaseUntil: new Date(now.getTime()-1) },
+  ];
+  const result = await setup([], jobs).service.overview(now);
+  assert.deepEqual(result.totals, { newTasks: 0, newPhotos: 0, changedTasks: 0, retriedTasks: 0 });
+  assert.equal(result.queue.total, 4);
+  assert.equal(result.queue.pending + result.queue.processing, result.queue.total);
+  assert.equal(result.queue.causes.reduce((sum, row) => sum + row.count, 0), result.queue.total);
+  assert.deepEqual(result.queue.rows.map((row) => row.category), ['new_attachment', 'automatic_retry', 'legacy_unknown', 'backfill']);
+  assert.equal(result.queue.rows[1].cause, 'data_change');
+  assert.equal(result.queue.rows[1].error, 'Storage unavailable');
+  assert.equal(result.queue.rows[3].leaseExpired, true);
+  assert.equal(result.queue.photos, 2);
+  assert.equal(result.queue.orders, 2);
+});
+
+test('per-photo journal exposes exact changes and distinguishes missing old history from an empty diff', async () => {
+  const changes = [{ field: 'comment', before: 'Матовая', after: 'Глянцевая' }];
+  const result = await setup([
+    event({ reason: 'changed', cause: 'data_change', trigger: 'background_scan', changes }),
+    event({ reason: 'changed', cause: null, trigger: null, changes: null }),
+  ]).service.overview(now);
+  const history = result.rows[0].photos[0].events;
+  assert.deepEqual(history[0].changes, changes);
+  assert.equal(history[0].trigger, 'background_scan');
+  assert.equal(history[1].changes, null);
 });

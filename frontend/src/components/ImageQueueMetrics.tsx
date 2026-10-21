@@ -4,6 +4,7 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import client from '../api/client'
 import { describeApiError } from '../api/errors'
 import type { ImageQueueMetrics as QueueMetrics, ImageQueueState } from '../api/dev-metrics'
+import { Link as RouterLink } from 'react-router-dom'
 
 const formatNumber = (value: number) => value.toLocaleString('ru-RU')
 const dateTime = (value: string) => new Date(value).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -69,7 +70,7 @@ function QueueCard({ title, state, slots, color, data, kind }: { title: string; 
   return <Card sx={{ p: { xs: 2, md: 3 }, height: '100%' }}>
     <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap" mb={2}>
       <Typography variant="h6">{title}</Typography>
-      <Chip size="small" color={outstanding ? 'info' : 'success'} variant="outlined" label={outstanding ? `${formatNumber(outstanding)} задач` : 'Готово'} />
+      <Chip size="small" color={outstanding ? 'info' : 'success'} variant="outlined" label={outstanding ? `${formatNumber(outstanding)} задач сейчас` : 'Готово'} />
     </Stack>
     <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
       <Box><Typography variant="body2" color="text.secondary">Ожидают</Typography><Typography sx={{ fontSize: 32, fontWeight: 800, color }}>{formatNumber(state.waiting)}</Typography></Box>
@@ -87,6 +88,7 @@ function QueueCard({ title, state, slots, color, data, kind }: { title: string; 
     <QueueChart data={data} kind={kind} />
     <Typography variant="body2" color="text.secondary">Средняя обработка: {state.averageDurationMs == null ? 'мало данных' : duration(state.averageDurationMs / 1000)} · Темп: {state.throughputPerMinute == null ? 'мало данных' : `${state.throughputPerMinute.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} задач/мин`}</Typography>
     {kind === 'production' && <Typography variant="caption" color="text.secondary" display="block" mt={1}>Учитываются готовые варианты файлов из раздела «Фото для печати»: по 3 размера на фото, включая ранее прикреплённые фото и повторную подготовку при изменении шапки. Это не число новых загрузок.</Typography>}
+    {kind === 'production' && <Button component={RouterLink} to="/dev-metrics?tab=production-debug" size="small" sx={{ mt: 1 }}>Из чего состоит очередь: заказы и причины</Button>}
     {state.unavailable > 0 && <Typography variant="caption" color="text.secondary" display="block" mt={1}>Превью не требуется / недоступно для формата: {formatNumber(state.unavailable)}. В ожидающую очередь не входит.</Typography>}
     {state.failed > 0 && <Alert severity="warning" sx={{ mt: 2 }}>Ошибок обработки: {formatNumber(state.failed)}. Эти задачи не входят в ожидающую очередь.</Alert>}
   </Card>

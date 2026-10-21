@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, OnModuleDestroy, ServiceUnavailableException, StreamableFile } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { Prisma, ProductionFile } from '@prisma/client';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { mkdtemp, rmdir, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -11,6 +11,7 @@ import { StorageCleanupService } from '../storage/storage-cleanup.service';
 import { productionOrderData } from './production-order-data';
 import { ProductionParameters, renderProductionFile } from './production-file-renderer';
 import { imageJobConfiguration } from '../storage/image-job.config';
+import { productionChanges, productionFingerprint, ProductionTrigger, sameProductionContent } from './production-task-details';
 
 const PRODUCTION_TEXT_SIZES = ['30x40', '40x60', '60x80'];
 
@@ -60,26 +61,30 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
     return { sourceKey: attachment.objectKey, parameters: productionOrderData.context(order.orderNumber, order.bluesalesInfo?.rawPayload, photoNumber) };
   }
 
-  private fingerprint(sourceKey: string, parameters: ProductionParameters, size: string) {
-    return createHash('sha256').update(JSON.stringify({ renderer: 'numbered-png-v3', sourceKey, parameters, textSize: size })).digest('hex');
-  }
-
   /** Enqueue only: request handlers never decode an image or wait for its header. */
-  async ensure(orderId: number, attachmentId: number, requestedSize?: string, retry = false, conflictAttempts = 0): Promise<ProductionFile> {
+  async ensure(orderId: number, attachmentId: number, requestedSize?: string, retry = false, conflictAttempts = 0, trigger: ProductionTrigger = 'status'): Promise<ProductionFile> {
     const size = textSize(requestedSize);
     const identity = { orderId, attachmentId, textSize: size };
     try {
       return await this.prisma.$transaction(async (tx) => {
         const { sourceKey, parameters } = await this.context(orderId, attachmentId, tx);
-        const fingerprint = this.fingerprint(sourceKey, parameters, size);
+        const fingerprint = productionFingerprint(sourceKey, parameters, size);
         const previous = await tx.productionFile.findUnique({ where: { orderId_attachmentId_textSize: identity } });
-        if (previous?.fingerprint === fingerprint && !(retry && previous.status === 'failed')) return previous;
+        const unchanged = previous && sameProductionContent(previous, sourceKey, parameters);
+        if (unchanged && !(retry && previous.status === 'failed')) return previous;
+        const changes = previous ? productionChanges(previous, sourceKey, parameters) : [];
+        const reason = !previous ? 'created' : unchanged ? 'retry' : 'changed';
+        const cause = reason === 'created' ? trigger === 'attachment_added' ? 'new_attachment'
+          : trigger === 'background_scan' ? 'backfill' : 'first_request'
+          : reason === 'retry' ? 'manual_retry' : changes.some((change) => change.field === 'renderer') ? 'renderer_change' : 'data_change';
+        const queuedAt = new Date();
         if (previous?.objectKey) await this.cleanup.enqueue([previous.objectKey], tx,
           previous.status === 'processing' && previous.leaseUntil ? previous.leaseUntil : new Date());
         const input = {
           fingerprint, sourceKey, parameters: parameters as unknown as Prisma.InputJsonValue,
           status: 'pending', priority: 0, objectKey: null, size: null, attempts: 0,
           runToken: null, leaseUntil: null, nextAttemptAt: new Date(), error: null,
+          queuedAt, queueReason: cause, queueSource: trigger, queueChanges: changes as unknown as Prisma.InputJsonValue,
         };
         const job = await tx.productionFile.upsert({
           where: { orderId_attachmentId_textSize: identity }, create: { ...identity, ...input }, update: input,
@@ -88,13 +93,13 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
         // transaction retries must not inflate the debug counters.
         await tx.productionTaskEvent.create({ data: {
           ...identity, orderNumber: parameters.orderNumber,
-          reason: !previous ? 'created' : previous.fingerprint !== fingerprint ? 'changed' : 'retry',
+          reason, cause, trigger, changes: changes as unknown as Prisma.InputJsonValue, createdAt: queuedAt,
         } });
         return job;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error) {
       if (conflictAttempts < 3 && ['P2034', 'P2002'].includes(error.code)) {
-        return this.ensure(orderId, attachmentId, requestedSize, retry, conflictAttempts + 1);
+        return this.ensure(orderId, attachmentId, requestedSize, retry, conflictAttempts + 1, trigger);
       }
       throw error;
     }
@@ -108,7 +113,7 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
 
   /** Persist urgency for this version only, and jump ahead of locally queued work. */
   async expedite(orderId: number, attachmentId: number, size?: string) {
-    const job = await this.ensure(orderId, attachmentId, size, true);
+    const job = await this.ensure(orderId, attachmentId, size, true, 0, 'expedite');
     if (job.status === 'pending' || (job.status === 'processing' && job.leaseUntil && job.leaseUntil <= new Date())) {
       await this.prisma.productionFile.updateMany({
         where: { id: job.id, fingerprint: job.fingerprint, OR: [
@@ -127,7 +132,7 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
   }
 
   async download(orderId: number, attachmentId: number, size?: string) {
-    const job = await this.ensure(orderId, attachmentId, size);
+    const job = await this.ensure(orderId, attachmentId, size, false, 0, 'download');
     if (job.status === 'failed') throw new BadRequestException('Не удалось подготовить файл для производства. Повторите подготовку');
     if (job.status !== 'ready' || !job.objectKey) throw new ConflictException('Файл для производства ещё готовится в фоне. Скачайте его после завершения подготовки');
     try {
@@ -142,13 +147,13 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
   }
 
   /** Only explicit print photos get production variants; chat attachments never do. */
-  async queueOrder(orderId: number, requestedSize?: string) {
+  async queueOrder(orderId: number, requestedSize?: string, trigger: ProductionTrigger = 'background_scan', newPhotoKeys: string[] = []) {
     const preferred = textSize(requestedSize);
     const sizes = [preferred, ...PRODUCTION_TEXT_SIZES.filter((size) => size !== preferred)];
-    const photos = await this.prisma.attachment.findMany({ where: { printPhotoOrderId: orderId }, select: { id: true, mimeType: true, filename: true } });
+    const photos = await this.prisma.attachment.findMany({ where: { printPhotoOrderId: orderId }, select: { id: true, mimeType: true, filename: true, objectKey: true } });
     for (const photo of photos) {
       if (photo.mimeType === 'application/pdf' || /\.(pdf|dng)$/i.test(photo.filename)) continue;
-      for (const size of sizes) await this.ensure(orderId, photo.id, size);
+      for (const size of sizes) await this.ensure(orderId, photo.id, size, false, 0, newPhotoKeys.includes(photo.objectKey) ? 'attachment_added' : trigger);
     }
   }
 
@@ -232,16 +237,16 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
       // Revalidate before downloading/decoding: old queued chat sketches and
       // photos removed while waiting must not consume production conversions.
       const before = await this.context(job.orderId, job.attachmentId);
-      if (this.fingerprint(before.sourceKey, before.parameters, job.textSize) !== job.fingerprint) {
-        await this.ensure(job.orderId, job.attachmentId, job.textSize);
+      if (!sameProductionContent(job, before.sourceKey, before.parameters)) {
+        await this.ensure(job.orderId, job.attachmentId, job.textSize, false, 0, 'worker');
         return false;
       }
       if (job.attempts > 3) throw new Error('Исчерпаны попытки подготовки');
       await this.storage.downloadToFile(job.sourceKey, source);
       await renderProductionFile(source, destination, job.parameters as unknown as ProductionParameters, job.textSize);
       const current = await this.context(job.orderId, job.attachmentId);
-      if (this.fingerprint(current.sourceKey, current.parameters, job.textSize) !== job.fingerprint) {
-        await this.ensure(job.orderId, job.attachmentId, job.textSize);
+      if (!sameProductionContent(job, current.sourceKey, current.parameters)) {
+        await this.ensure(job.orderId, job.attachmentId, job.textSize, false, 0, 'worker');
         return false;
       }
       // Unique key per claim prevents an old worker from deleting a newer result.

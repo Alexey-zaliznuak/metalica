@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import { Alert, Box, Button, Card, Chip, Collapse, IconButton, Link, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, Chip, Collapse, IconButton, Link, Stack, Tab, Tabs, Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField, Typography } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown'
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp'
@@ -7,10 +7,26 @@ import { Link as RouterLink } from 'react-router-dom'
 import client from '../api/client'
 import { describeApiError } from '../api/errors'
 import type { ProductionDebugMetrics as DebugMetrics } from '../api/dev-metrics'
+import ProductionTaskDetails from './ProductionTaskDetails'
+import ProductionQueueDebug from './ProductionQueueDebug'
 
 const number = (value: number) => value.toLocaleString('ru-RU')
 const time = (value: string) => new Date(value).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 const sizes = ['30x40', '40x60', '60x80'] as const
+
+function PhotoRow({ photo }: { photo: DebugMetrics['rows'][number]['photos'][number] }) {
+  const [open, setOpen] = useState(false)
+  return <Fragment><TableRow>
+    <TableCell><Button size="small" aria-expanded={open} onClick={() => setOpen(!open)}>Фото #{photo.attachmentId}</Button></TableCell>
+    <TableCell align="right">{photo.newTasks}</TableCell>{sizes.map((size) => <TableCell align="right" key={size}>{photo.sizes[size]}</TableCell>)}
+    <TableCell align="right">{photo.changedTasks}</TableCell><TableCell align="right">{photo.retriedTasks}</TableCell>
+  </TableRow><TableRow><TableCell colSpan={7} sx={{ py: 0, borderBottom: open ? undefined : 0 }}><Collapse in={open} unmountOnExit>
+    <Stack spacing={2} sx={{ py: 2 }}>{(photo.events ?? []).map((event, index) => <Box key={index} sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+      <Typography variant="subtitle2" mb={1}>{time(event.at)} МСК · {event.textSize.replace('x', '×')}</Typography>
+      <ProductionTaskDetails cause={event.cause} trigger={event.trigger} changes={event.changes} reason={event.reason} />
+    </Box>)}</Stack>
+  </Collapse></TableCell></TableRow></Fragment>
+}
 
 function OrderRow({ row }: { row: DebugMetrics['rows'][number] }) {
   const [open, setOpen] = useState(false)
@@ -21,7 +37,7 @@ function OrderRow({ row }: { row: DebugMetrics['rows'][number] }) {
       <TableCell align="right"><Typography fontWeight={800}>{number(row.newTasks)}</Typography></TableCell>
       <TableCell align="right"><Typography fontWeight={700}>{number(row.newPhotos)}</Typography>{row.newPhotos > 0 && <Chip size="small" variant="outlined" color={row.completePhotoSets === row.newPhotos ? 'success' : 'warning'} label={`${row.completePhotoSets} из ${row.newPhotos} × 3`} sx={{ mt: 0.5 }} />}</TableCell>
       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{sizes.map((size) => number(row.sizes[size])).join(' / ')}</TableCell>
-      <TableCell align="right"><Typography fontWeight={700}>{number(row.changedTasks + row.retriedTasks)}</Typography><Typography variant="caption" color="text.secondary" display="block">Данные: {row.changedTasks} · Ошибка: {row.retriedTasks}</Typography></TableCell>
+      <TableCell align="right"><Typography fontWeight={700}>{number(row.changedTasks + row.retriedTasks)}</Typography><Typography variant="caption" color="text.secondary" display="block">Данные: {row.changedTasks} · Вручную после ошибки: {row.retriedTasks}</Typography></TableCell>
       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{time(row.lastCreatedAt)}</TableCell>
     </TableRow>
     <TableRow><TableCell colSpan={7} sx={{ py: 0, borderBottom: open ? undefined : 0 }}>
@@ -29,10 +45,8 @@ function OrderRow({ row }: { row: DebugMetrics['rows'][number] }) {
         <Box sx={{ py: 2, pl: { xs: 0, md: 4 } }}>
           <Typography variant="subtitle2" mb={1}>Фото заказа № {row.orderNumber} — постановки за этот час</Typography>
           <Table size="small" aria-label={`Задачи по фото заказа ${row.orderNumber}`}>
-            <TableHead><TableRow><TableCell>Фото ID</TableCell><TableCell align="right">Новых задач</TableCell>{sizes.map((size) => <TableCell align="right" key={size}>{size.replace('x', '×')}</TableCell>)}<TableCell align="right">Изменены данные</TableCell><TableCell align="right">Повтор после ошибки</TableCell></TableRow></TableHead>
-            <TableBody>{row.photos.map((photo) => <TableRow key={photo.attachmentId}>
-              <TableCell>#{photo.attachmentId}</TableCell><TableCell align="right">{photo.newTasks}</TableCell>{sizes.map((size) => <TableCell align="right" key={size}>{photo.sizes[size]}</TableCell>)}<TableCell align="right">{photo.changedTasks}</TableCell><TableCell align="right">{photo.retriedTasks}</TableCell>
-            </TableRow>)}</TableBody>
+            <TableHead><TableRow><TableCell>Фото ID</TableCell><TableCell align="right">Новых задач</TableCell>{sizes.map((size) => <TableCell align="right" key={size}>{size.replace('x', '×')}</TableCell>)}<TableCell align="right">Изменены данные</TableCell><TableCell align="right">Ручной повтор после ошибки</TableCell></TableRow></TableHead>
+            <TableBody>{row.photos.map((photo) => <PhotoRow key={photo.attachmentId} photo={photo} />)}</TableBody>
           </Table>
         </Box>
       </Collapse>
@@ -47,6 +61,7 @@ export default function ProductionDebugMetrics() {
   const [refresh, setRefresh] = useState(0)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
+  const [mode, setMode] = useState<'queue' | 'events'>('queue')
 
   useEffect(() => {
     let active = true
@@ -77,12 +92,14 @@ export default function ProductionDebugMetrics() {
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1))
   return <Stack spacing={2.5}>
     <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={2}>
-      <Box><Typography variant="h6">Дебаг производства · последний час</Typography><Typography variant="body2" color="text.secondary">{data ? `${time(data.period.from)} — ${time(data.period.to)} МСК` : 'Загрузка часового окна…'} · Постановки задач по заказам</Typography></Box>
+      <Box><Typography variant="h6">Дебаг производства</Typography><Typography variant="body2" color="text.secondary">{mode === 'queue' ? 'Все незавершённые задачи и причины их появления' : `${data ? `${time(data.period.from)} — ${time(data.period.to)} МСК` : 'Загрузка часового окна…'} · Постановки задач по заказам`}</Typography></Box>
       <Button variant="outlined" startIcon={<RefreshIcon />} disabled={loading} onClick={() => setRefresh((value) => value + 1)}>{loading ? 'Обновление…' : 'Обновить'}</Button>
     </Stack>
-    <Alert severity="info" icon={false}>На одно фото создаются 3 задачи: 30×40, 40×60 и 60×80. Например, 12 новых задач — полный набор для 4 фото. Число фото проверяется по их ID, а повторная подготовка считается отдельно.</Alert>
+    <Tabs value={mode} onChange={(_, value) => setMode(value)} aria-label="Период дебага производства"><Tab value="queue" label="Очередь сейчас" /><Tab value="events" label="Постановки за час" /></Tabs>
     {error && <Alert severity="error">{error}{data && ' Показаны данные последнего успешного обновления.'}</Alert>}
-    {data && <>
+    {data && mode === 'queue' && (data.queue ? <ProductionQueueDebug queue={data.queue} /> : <Alert severity="info">Расшифровка очереди появится после обновления сервера.</Alert>)}
+    {data && mode === 'events' && <>
+      <Alert severity="info" icon={false}>На одно фото создаются 3 задачи: 30×40, 40×60 и 60×80. Например, 12 новых задач — полный набор для 4 фото. Число фото проверяется по их ID, а повторная подготовка считается отдельно.</Alert>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 2 }}>
         {[
           ['Новых задач', data.totals.newTasks], ['Фото в новых задачах', data.totals.newPhotos],
@@ -99,8 +116,8 @@ export default function ProductionDebugMetrics() {
         </Table></TableContainer>
         {filtered.length > 25 && <TablePagination component="div" count={filtered.length} page={currentPage} onPageChange={(_, value) => setPage(value)} rowsPerPage={25} rowsPerPageOptions={[25]} labelDisplayedRows={({ from, to, count }) => `${from}–${to} из ${count}`} />}
       </Card>
-      <Typography variant="caption" color="text.secondary">Обновлено {time(data.generatedAt)} МСК · Автообновление каждые 10 секунд · Журнал хранится {data.retentionDays} дней. Учитываются события после установки этого обновления; прежние постановки не восстанавливаются.</Typography>
     </>}
-    <Typography variant="body2" color="text.secondary">Раскройте заказ для проверки отдельных фото. Метка «4 из 4 × 3» означает, что для каждого из четырёх фото создано по одному заданию каждого размера. Неполный набор возможен на границе часового окна. «Повторно» включает изменение данных для печати и ручной перезапуск после ошибки; автоматические попытки обработки и чтение готового файла не создают новые задачи в журнале.</Typography>
+    {data && <Typography variant="caption" color="text.secondary">Обновлено {time(data.generatedAt)} МСК · Автообновление каждые 10 секунд · Журнал хранится {data.retentionDays} дней. Значения до запуска подробного журнала не восстанавливаются.</Typography>}
+    <Typography variant="body2" color="text.secondary">{mode === 'queue' ? 'Сумма причин равна всей текущей очереди. Автоматические повторы после ошибок выделены отдельно; раскройте задачу, чтобы увидеть исходную причину, ошибку и изменения «было → стало».' : 'Раскройте заказ, затем фото, чтобы увидеть причину каждой постановки и изменения «было → стало». Метка «4 из 4 × 3» означает полный набор для четырёх фото. Неполный набор возможен на границе часового окна. Автоматические попытки обработки и чтение готового файла не создают новые постановки.'}</Typography>
   </Stack>
 }

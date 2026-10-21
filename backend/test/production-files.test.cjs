@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { writeFile, readFile } = require('node:fs/promises');
 const { Readable } = require('node:stream');
+const { createHash } = require('node:crypto');
 const sharp = require('sharp');
 const { ProductionFilesService } = require('../dist/orders/production-files.service');
 const { StorageCleanupService } = require('../dist/storage/storage-cleanup.service');
@@ -538,4 +539,99 @@ test('enqueue journal distinguishes changed content and manual retries from auto
   await h.service.ensure(10, 7);
   assert.deepEqual(h.events.map((event) => event.reason), ['created', 'retry', 'changed']);
   assert.equal(h.events[2].orderNumber, '54321');
+  assert.deepEqual(h.events[2].changes, [{ field: 'orderNumber', before: '12345', after: '54321' }]);
+  assert.equal(h.jobs[0].queueReason, 'data_change');
+  assert.deepEqual(h.jobs[0].queueChanges, h.events[2].changes);
+});
+
+function withArticles(h) {
+  h.order.bluesalesInfo.rawPayload.goodsPositions = [
+    { goods: { name: 'Спрей', marking: 'Спрей' }, count: 1 },
+    { goods: { name: 'Упаковка', marking: 'Упаковка' }, count: 1 },
+    { goods: { name: 'Работа художника в стиле Нейроарт' }, count: 1 },
+  ];
+}
+
+test('BlueSales article reordering and unprinted service changes do not enqueue or discard ready files', async () => {
+  const h = await setup(); withArticles(h);
+  await h.service.queueOrder(10);
+  await h.service.processNext();
+  const ready = { ...h.jobs[0] };
+  const positions = h.order.bluesalesInfo.rawPayload.goodsPositions;
+  positions.reverse(); positions[0].count = 99;
+  await h.service.queueOrder(10);
+  assert.equal(h.events.length, 3);
+  assert.deepEqual(h.jobs[0], ready);
+  assert.equal(h.deletions.length, 0);
+  positions.find((row) => row.goods.name === 'Спрей').count = 2;
+  await h.service.queueOrder(10);
+  assert.equal(h.events.length, 6);
+  assert.ok(h.events.slice(3).every((event) => event.changes.length === 1 && event.changes[0].field === 'articles'));
+  assert.equal(h.jobs[0].queueReason, 'data_change');
+});
+
+test('legacy JSONB snapshots reuse their files and in-flight claims across fingerprint upgrade', async () => {
+  for (const status of ['pending', 'processing', 'ready']) {
+    const h = await setup(); withArticles(h);
+    await h.service.ensure(10, 7);
+    const job = h.jobs[0];
+    job.fingerprint = createHash('sha256').update(JSON.stringify({ renderer: 'numbered-png-v3', sourceKey: job.sourceKey, parameters: job.parameters, textSize: job.textSize })).digest('hex');
+    // PostgreSQL JSONB changes object key order. Fingerprints must tolerate that.
+    const jsonb = (value) => Array.isArray(value) ? value.map(jsonb) : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, jsonb(value[key])])) : value;
+    job.parameters = jsonb(job.parameters);
+    Object.assign(job, { status, objectKey: status === 'pending' ? null : 'production/old.png',
+      runToken: status === 'processing' ? 'lease' : null, leaseUntil: status === 'processing' ? new Date(Date.now()+60000) : null });
+    const before = structuredClone(job);
+    h.order.bluesalesInfo.rawPayload.goodsPositions.reverse();
+    await h.service.ensure(10, 7);
+    assert.deepEqual(job, before, `${status}: no reset, new lease or invalidation`);
+    assert.equal(h.events.length, 1);
+    assert.equal(h.deletions.length, 0);
+    if (status === 'pending') {
+      await h.service.processNext();
+      assert.equal(job.status, 'ready', 'worker accepts the compatible legacy fingerprint');
+      assert.equal(h.events.length, 1);
+    }
+  }
+});
+
+test('reordering during rendering does not discard a valid result or schedule another conversion', async () => {
+  const h = await setup(); withArticles(h);
+  await h.service.ensure(10, 7);
+  const download = h.storage.downloadToFile;
+  h.storage.downloadToFile = async (...args) => { h.order.bluesalesInfo.rawPayload.goodsPositions.reverse(); await download(...args); };
+  await h.service.processNext();
+  assert.equal(h.jobs[0].status, 'ready');
+  assert.equal(h.events.length, 1);
+  assert.equal(h.deletions.length, 0);
+});
+
+test('new uploads, historical backfill and first request retain distinct queue causes', async () => {
+  const h = await setup();
+  await h.service.queueOrder(10, undefined, 'order_update', ['original.png']);
+  assert.ok(h.events.every((event) => event.cause === 'new_attachment' && event.trigger === 'attachment_added'));
+  h.photos.push({ ...h.photos[0], id: 8, objectKey: 'old.png' });
+  await h.service.synchronize();
+  assert.ok(h.events.filter((event) => event.attachmentId === 8).every((event) => event.cause === 'backfill'));
+  h.photos.push({ ...h.photos[0], id: 9 });
+  await h.service.ensure(10, 9);
+  assert.equal(h.events.at(-1).cause, 'first_request');
+  assert.equal(h.jobs.at(-1).queuedAt.getTime(), h.events.at(-1).createdAt.getTime());
+});
+
+test('real comment and delivery changes preserve exact before/after values, unknown renderer is not reused', async () => {
+  const h = await setup();
+  await h.service.ensure(10, 7);
+  h.order.bluesalesInfo.rawPayload.internalComments = 'Глянцевая';
+  h.order.bluesalesInfo.rawPayload.deliveryService = 5;
+  await h.service.ensure(10, 7);
+  assert.deepEqual(h.events.at(-1).changes, [
+    { field: 'comment', before: 'Матовая', after: 'Глянцевая' },
+    { field: 'deliveryService', before: '', after: 'СДЭК' },
+  ]);
+  h.jobs[0].fingerprint = 'different-renderer-version';
+  await h.service.ensure(10, 7);
+  assert.equal(h.events.at(-1).cause, 'renderer_change');
+  assert.equal(h.events.at(-1).changes[0].field, 'renderer');
 });
