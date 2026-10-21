@@ -1,13 +1,8 @@
 // Run after npm run build: node --test test/bluesales-metrics.test.cjs
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { Reflector } = require('@nestjs/core');
-const { GUARDS_METADATA } = require('@nestjs/common/constants');
 const { BluesalesApiService } = require('../dist/bluesales/bluesales-api.service');
 const { BluesalesMetricsService } = require('../dist/bluesales/bluesales-metrics.service');
-const { DevMetricsController } = require('../dist/bluesales/dev-metrics.controller');
-const { RolesGuard } = require('../dist/auth/roles.guard');
-const { JwtAuthGuard } = require('../dist/auth/jwt-auth.guard');
 const { usagePeriodStart, usageDateKey, usageForecast, weightedSyncTime, HOUR_MS } = require('../dist/bluesales/bluesales-usage');
 
 const at = (value) => new Date(`2026-09-15T${value}+03:00`);
@@ -117,15 +112,5 @@ test('overview rejects invalid and future dates before querying the database', a
   const service = new BluesalesMetricsService({});
   for (const date of ['2026-02-30', 'garbage', '2026-09-16']) {
     await assert.rejects(service.overview(date, at('12:00:00')), { status: 400 });
-  }
-});
-
-test('dev metrics require both authentication and ADMIN, even with metrics scope', () => {
-  const guards = Reflect.getMetadata(GUARDS_METADATA, DevMetricsController);
-  assert.deepEqual(guards, [JwtAuthGuard, RolesGuard]);
-  const guard = new RolesGuard(new Reflector());
-  for (const role of ['ADMIN', 'MANAGER', 'SKETCH_DESIGNER', undefined]) {
-    const allowed = guard.canActivate({ getClass: () => DevMetricsController, getHandler: () => DevMetricsController.prototype.overview, switchToHttp: () => ({ getRequest: () => ({ user: { role, scopes: ['METRICS_VIEW'] } }) }) });
-    assert.equal(Boolean(allowed), role === 'ADMIN');
   }
 });

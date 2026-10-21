@@ -468,7 +468,7 @@ export default function UsersPage() {
               </TextField>
               <TextField
                 select
-                label="Скоупы"
+                label="Дополнительные права"
                 value={scopes}
                 onChange={(e) => {
                   const next = e.target.value

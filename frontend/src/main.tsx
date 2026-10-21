@@ -64,7 +64,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               />
               <Route
                 path="/dev-metrics"
-                element={<ProtectedRoute requireAdmin><AppLayout><DevMetricsPage /></AppLayout></ProtectedRoute>}
+                element={<ProtectedRoute requiredScopes={['API_METRICS_VIEW']}><AppLayout><DevMetricsPage /></AppLayout></ProtectedRoute>}
               />
               <Route
                 path="/metrics/revisions"

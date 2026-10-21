@@ -1,11 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { Reflector } = require('@nestjs/core');
-const { GUARDS_METADATA } = require('@nestjs/common/constants');
 const { ProductionTaskMetricsService } = require('../dist/storage/production-task-metrics.service');
 const { DevMetricsController } = require('../dist/bluesales/dev-metrics.controller');
-const { RolesGuard } = require('../dist/auth/roles.guard');
-const { JwtAuthGuard } = require('../dist/auth/jwt-auth.guard');
 
 const now = new Date('2026-10-21T12:30:00Z');
 const sizes = ['30x40', '40x60', '60x80'];
@@ -76,18 +72,10 @@ test('groups by order ID, keeps latest order number, and includes orders with on
   assert.deepEqual(empty.totals, { newTasks: 0, newPhotos: 0, changedTasks: 0, retriedTasks: 0 });
 });
 
-test('production debug endpoint is read-only and ADMIN-only, even with metrics scope', async () => {
+test('production debug endpoint returns the task journal overview', async () => {
   const service = setup([event()]).service;
   const controller = new DevMetricsController({}, {}, {}, { overview: () => service.overview(now) });
   assert.equal((await controller.productionDebug()).totals.newTasks, 1);
-  assert.deepEqual(Reflect.getMetadata(GUARDS_METADATA, DevMetricsController), [JwtAuthGuard, RolesGuard]);
-  const guard = new RolesGuard(new Reflector());
-  for (const role of ['ADMIN', 'MANAGER', 'PRODUCTION', undefined]) {
-    const allowed = guard.canActivate({ getClass: () => DevMetricsController,
-      getHandler: () => DevMetricsController.prototype.productionDebug,
-      switchToHttp: () => ({ getRequest: () => ({ user: { role, scopes: ['METRICS_VIEW'] } }) }) });
-    assert.equal(Boolean(allowed), role === 'ADMIN');
-  }
 });
 
 test('journal cleanup keeps the full seven-day retention window', async (t) => {

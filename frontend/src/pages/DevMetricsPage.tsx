@@ -12,6 +12,7 @@ import type { DevMetrics } from '../api/dev-metrics'
 import ImageQueueMetrics from '../components/ImageQueueMetrics'
 import InboundSyncControl from '../components/InboundSyncControl'
 import ProductionDebugMetrics from '../components/ProductionDebugMetrics'
+import { useAuth } from '../auth/AuthContext'
 
 const HOUR = 3_600_000
 const colors = ['#1591dc', '#6d5ce7', '#149c88', '#ed8b23', '#d15788', '#657b97']
@@ -171,6 +172,7 @@ function ApiUsageMetrics({ visible }: { visible: boolean }) {
 }
 
 export default function DevMetricsPage() {
+  const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedTab = searchParams.get('tab')
   const tab = selectedTab === 'images' || selectedTab === 'production-debug' ? selectedTab : 'api'
@@ -182,10 +184,10 @@ export default function DevMetricsPage() {
           <Typography variant="h4" sx={{ color: '#fff' }}>Время под контролем</Typography>
           <Typography variant="body2" sx={{ mt: 1, color: '#c2d8ec' }}>{tab === 'api' ? 'Успешные запросы, расход по меткам и прогноз на сутки.' : tab === 'images' ? 'Очередь фото для производства и превью, нагрузка и время до завершения.' : 'Создание задач производства за последний час: заказы, фото и повторная подготовка.'}</Typography>
         </Box>
-        <Chip icon={<ShieldOutlinedIcon />} label="Только администраторы" sx={{ color: '#daebfa', bgcolor: '#ffffff12', '& .MuiChip-icon': { color: '#a1d1f6' } }} />
+        <Chip icon={<ShieldOutlinedIcon />} label="Доступ по разрешению" sx={{ color: '#daebfa', bgcolor: '#ffffff12', '& .MuiChip-icon': { color: '#a1d1f6' } }} />
       </Stack>
     </Box>
-    <InboundSyncControl />
+    <InboundSyncControl canManage={user?.role === 'ADMIN'} />
     <Tabs value={tab} onChange={(_, value: string) => setSearchParams((params) => { if (value === 'api') params.delete('tab'); else params.set('tab', value); return params }, { replace: true })} aria-label="Разделы метрик" variant="scrollable" scrollButtons="auto" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
       <Tab value="api" label="API BlueSales" id="metrics-tab-api" aria-controls="metrics-panel-api" />
       <Tab value="images" label="Очередь изображений" id="metrics-tab-images" aria-controls="metrics-panel-images" />

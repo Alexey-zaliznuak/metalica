@@ -30,6 +30,7 @@ export const ASSIGNABLE_ROLES: { value: string; label: string }[] = [
 export const SCOPE_LABELS: Record<string, string> = {
   ORDERS_CHANGE_RESPONSIBLE: 'Изменять ответственных заказа',
   METRICS_VIEW: 'Просмотр метрик',
+  API_METRICS_VIEW: 'Просмотр API-метрик',
   WORKLOAD_VIEW: 'Просмотр нагрузки',
   ARTIST_SHIFTS_MANAGE: 'Управление сменами художников',
 }
@@ -42,6 +43,10 @@ export const ASSIGNABLE_SCOPES: { value: string; label: string }[] = [
   {
     value: 'METRICS_VIEW',
     label: SCOPE_LABELS.METRICS_VIEW,
+  },
+  {
+    value: 'API_METRICS_VIEW',
+    label: SCOPE_LABELS.API_METRICS_VIEW,
   },
   {
     value: 'WORKLOAD_VIEW',

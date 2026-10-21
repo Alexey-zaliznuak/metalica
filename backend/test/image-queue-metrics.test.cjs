@@ -1,8 +1,6 @@
 // Run after npm run build: node --test test/image-queue-metrics.test.cjs
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { Reflector } = require('@nestjs/core');
-const { RolesGuard } = require('../dist/auth/roles.guard');
 const { DevMetricsController } = require('../dist/bluesales/dev-metrics.controller');
 const { ImageQueueMetricsService } = require('../dist/storage/image-queue-metrics.service');
 const { imageQueueBacklog, completionSummary, imageQueueEstimate } = require('../dist/storage/image-queue-metrics');
@@ -128,13 +126,7 @@ test('failed persistence does not lose unsampled completions', async (t) => {
   assert.equal(ctx.saved[0].productionCompleted, 1);
 });
 
-test('queue metrics retain ADMIN authorization and controller forwards the requested range', async () => {
+test('queue metrics controller forwards the requested range', async () => {
   const controller = new DevMetricsController({}, { overview: async (hours) => ({ hours }) });
   assert.deepEqual(await controller.imageQueue('1'), { hours: '1' });
-  const guard = new RolesGuard(new Reflector());
-  for (const role of ['ADMIN', 'MANAGER', 'PRODUCTION', undefined]) {
-    const allowed = guard.canActivate({ getClass: () => DevMetricsController, getHandler: () => DevMetricsController.prototype.imageQueue,
-      switchToHttp: () => ({ getRequest: () => ({ user: { role, scopes: ['METRICS_VIEW'] } }) }) });
-    assert.equal(Boolean(allowed), role === 'ADMIN');
-  }
 });

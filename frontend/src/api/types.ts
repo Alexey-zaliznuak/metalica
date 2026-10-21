@@ -8,6 +8,7 @@ export type UserRole =
 export type UserScope =
   | 'ORDERS_CHANGE_RESPONSIBLE'
   | 'METRICS_VIEW'
+  | 'API_METRICS_VIEW'
   | 'WORKLOAD_VIEW'
   | 'ARTIST_SHIFTS_MANAGE'
   | string

@@ -59,7 +59,7 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Метрики',
     requiredScopes: ['METRICS_VIEW'],
   },
-  { to: '/dev-metrics', icon: <SpeedIcon />, label: 'API-метрики', adminOnly: true },
+  { to: '/dev-metrics', icon: <SpeedIcon />, label: 'API-метрики', requiredScopes: ['API_METRICS_VIEW'] },
   {
     to: '/workload',
     icon: <AssignmentTurnedInIcon />,
