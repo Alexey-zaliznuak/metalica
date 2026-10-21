@@ -81,9 +81,16 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
           status: 'pending', priority: 0, objectKey: null, size: null, attempts: 0,
           runToken: null, leaseUntil: null, nextAttemptAt: new Date(), error: null,
         };
-        return tx.productionFile.upsert({
+        const job = await tx.productionFile.upsert({
           where: { orderId_attachmentId_textSize: identity }, create: { ...identity, ...input }, update: input,
         });
+        // Record only actual enqueues, atomically with the job. Cache reads and
+        // transaction retries must not inflate the debug counters.
+        await tx.productionTaskEvent.create({ data: {
+          ...identity, orderNumber: parameters.orderNumber,
+          reason: !previous ? 'created' : previous.fingerprint !== fingerprint ? 'changed' : 'retry',
+        } });
+        return job;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     } catch (error) {
       if (conflictAttempts < 3 && ['P2034', 'P2002'].includes(error.code)) {

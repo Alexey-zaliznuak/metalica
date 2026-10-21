@@ -6,11 +6,12 @@ import { AttachmentPreviewsService } from './attachment-previews.service';
 import { StorageCleanupService } from './storage-cleanup.service';
 import { ImageJobsLogService } from './image-jobs-log.service';
 import { ImageQueueMetricsService } from './image-queue-metrics.service';
+import { ProductionTaskMetricsService } from './production-task-metrics.service';
 
 @Global()
 @Module({
-  providers: [StorageService, AttachmentsService, AttachmentPreviewsService, StorageCleanupService, ImageJobsLogService, ImageQueueMetricsService],
+  providers: [StorageService, AttachmentsService, AttachmentPreviewsService, StorageCleanupService, ImageJobsLogService, ImageQueueMetricsService, ProductionTaskMetricsService],
   controllers: [StorageController],
-  exports: [StorageService, AttachmentsService, StorageCleanupService, ImageQueueMetricsService],
+  exports: [StorageService, AttachmentsService, StorageCleanupService, ImageQueueMetricsService, ProductionTaskMetricsService],
 })
 export class StorageModule {}

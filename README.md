@@ -138,6 +138,20 @@ MinIO, диск или память. Документация: [параллел
 командой `npm run prisma:migrate` в `backend`. Docker-запуск обновляет схему через
 существующий `prisma db push`.
 
+Подраздел **«API-метрики» → «Дебаг производства»** (`/dev-metrics?tab=production-debug`)
+показывает постановки за последние 60 минут по каждому заказу: новые задачи,
+фото по уникальным ID, три размера и повторную подготовку. Строка заказа
+раскрывается до отдельных фото. Например, 12 новых задач для 4 фото дают четыре
+полных набора по три размера; неполные/повторяющиеся наборы видны отдельно.
+Изменение данных для печати и ручной повтор после ошибки не смешиваются с новыми
+задачами. Автоматические попытки воркера и чтение кеша не увеличивают счётчик.
+Журнал пишется в одной транзакции с постановкой задания, переживает удаление
+фото/заказа и хранится 7 дней. События до выкладки не восстанавливаются.
+Для установки через миграции примените `20261021140000_production_task_events`;
+Docker-запуск создаёт таблицу через существующий `prisma db push`.
+API: `GET /api/dev-metrics/production-debug`, только ADMIN. Вкладка обновляется
+каждые 10 секунд, чтение статистики не запускает обработку изображений.
+
 Каждый размер текста имеет отдельную версию. Изменение номера,
 артикулов, комментария или службы доставки обновляет шапку; устаревший файл
 удаляется. В шапке производственных вложений печатается `номер-заказа-номер-фото`,
@@ -161,7 +175,7 @@ RGB-исходники не получают лишний канал прозр�
 включают новые загрузки до создания вложения и проверку очереди производства.
 
 Проверки: в `backend` — `npm run build`, затем
-`node --test test/image-job-config.test.cjs test/image-queue-metrics.test.cjs test/image-previews.test.cjs test/production-image.test.cjs test/production-files.test.cjs test/order-assets.test.cjs`;
+`node --test test/image-job-config.test.cjs test/image-queue-metrics.test.cjs test/production-task-metrics.test.cjs test/image-previews.test.cjs test/production-image.test.cjs test/production-files.test.cjs test/order-assets.test.cjs`;
 в `frontend` — `npm run build` и `node --test test/image-previews.test.cjs test/production-download.test.cjs`.
 Для проверки HEIC задайте `HEIC_TEST_FILE` с путём к тестовому HEIC-файлу.
 

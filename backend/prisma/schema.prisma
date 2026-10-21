@@ -559,6 +559,20 @@ model ProductionFile {
   @@index([priority, createdAt])
 }
 
+// Append-only enqueue journal. No FK: debugging survives removal of a photo/order.
+model ProductionTaskEvent {
+  id           BigInt   @id @default(autoincrement())
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  orderId      Int
+  orderNumber  String
+  attachmentId Int
+  textSize     String
+  // created | changed | retry; automatic worker attempts are not new tasks.
+  reason       String
+
+  @@index([createdAt])
+}
+
 // Survives deletion of orders/attachments and retries MinIO cleanup after outages.
 model StoredFileDeletion {
   objectKey      String   @id

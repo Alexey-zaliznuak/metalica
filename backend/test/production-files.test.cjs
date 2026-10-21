@@ -70,12 +70,13 @@ function table(rows, defaults = {}) {
 async function setup() {
   const source = await sharp({ create: { width: 180, height: 240, channels: 3, background: '#19708e' } })
     .withMetadata({ density: 300 }).png().toBuffer();
-  const jobs = [], deletions = [], objects = new Map(), removals = [];
+  const jobs = [], events = [], deletions = [], objects = new Map(), removals = [];
   const order = { id: 10, orderNumber: '12345', pinnedSketches: [], bluesalesInfo: { rawPayload: { internalComments: 'Матовая' } } };
   const photos = [{ id: 7, objectKey: 'original.png', printPhotoOrderId: 10, filename: 'original.png', mimeType: 'image/png' }];
   const prisma = {
     order: { findUnique: async ({ where }) => where.id === order.id ? order : null },
     attachment: table(photos), productionFile: table(jobs),
+    productionTaskEvent: { create: async ({ data }) => { const event = { ...data, createdAt: new Date() }; events.push(event); return event; } },
     storedFileDeletion: table(deletions, { generation: 0, attempts: 0, nextAttemptAt: new Date() }),
     $transaction: async (operation) => operation(prisma),
   };
@@ -89,7 +90,7 @@ async function setup() {
   const cleanup = new StorageCleanupService(prisma, storage);
   const service = new ProductionFilesService(prisma, storage, cleanup);
   service.logger.warn = cleanup.logger.warn = () => {};
-  return { service, cleanup, prisma, storage, jobs, deletions, objects, removals, order, photos, source };
+  return { service, cleanup, prisma, storage, jobs, events, deletions, objects, removals, order, photos, source };
 }
 
 test('upload queues work without decoding; pending download returns 409; worker caches lossless PNG', async () => {
@@ -507,4 +508,34 @@ test('a header changed while queued is refreshed before decoding, then rendered 
   await h.service.processNext();
   assert.equal(sourceReads, 1);
   assert.equal(h.jobs[0].status, 'ready');
+});
+
+test('enqueue journal records twelve new tasks for four photos and ignores cache/status/backfill reads', async () => {
+  const h = await setup();
+  h.photos.push(...[8, 9, 10].map((id) => ({ ...h.photos[0], id })));
+  await h.service.queueOrder(10);
+  assert.equal(h.events.length, 12);
+  assert.equal(new Set(h.events.map((event) => event.attachmentId)).size, 4);
+  assert.ok(h.events.every((event) => event.reason === 'created' && event.orderNumber === '12345'));
+  await h.service.queueOrder(10);
+  await h.service.synchronize();
+  await h.service.status(10, 7);
+  assert.equal(h.events.length, 12);
+  await h.service.scheduleDeletion(h.prisma, { orderId: 10, attachmentId: 7 });
+  assert.equal(h.events.length, 12, 'deleting a queued photo must not erase the debug history');
+});
+
+test('enqueue journal distinguishes changed content and manual retries from automatic worker attempts', async () => {
+  const h = await setup();
+  await h.service.ensure(10, 7);
+  h.storage.downloadToFile = async () => { throw new Error('offline'); };
+  await h.service.processNext();
+  assert.equal(h.events.length, 1, 'a failed worker attempt is not a new enqueue');
+  Object.assign(h.jobs[0], { status: 'failed', attempts: 3 });
+  await h.service.status(10, 7, undefined, true);
+  await h.service.status(10, 7, undefined, true);
+  h.order.orderNumber = '54321';
+  await h.service.ensure(10, 7);
+  assert.deepEqual(h.events.map((event) => event.reason), ['created', 'retry', 'changed']);
+  assert.equal(h.events[2].orderNumber, '54321');
 });

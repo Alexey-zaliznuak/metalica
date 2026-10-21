@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Alert, Box, Button, Card, Chip, CircularProgress, IconButton, LinearProgress, Stack, Tab, Tabs, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined'
@@ -10,6 +11,7 @@ import { describeApiError } from '../api/errors'
 import type { DevMetrics } from '../api/dev-metrics'
 import ImageQueueMetrics from '../components/ImageQueueMetrics'
 import InboundSyncControl from '../components/InboundSyncControl'
+import ProductionDebugMetrics from '../components/ProductionDebugMetrics'
 
 const HOUR = 3_600_000
 const colors = ['#1591dc', '#6d5ce7', '#149c88', '#ed8b23', '#d15788', '#657b97']
@@ -169,28 +171,34 @@ function ApiUsageMetrics({ visible }: { visible: boolean }) {
 }
 
 export default function DevMetricsPage() {
-  const [tab, setTab] = useState<'api' | 'images'>('api')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedTab = searchParams.get('tab')
+  const tab = selectedTab === 'images' || selectedTab === 'production-debug' ? selectedTab : 'api'
   return <Stack spacing={3}>
     <Box sx={{ background: 'linear-gradient(115deg, #132d50, #235c94)', borderRadius: 3, p: { xs: 3, md: 4 }, color: '#fff', position: 'relative', overflow: 'hidden' }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" gap={2} flexWrap="wrap">
         <Box>
           <Stack direction="row" alignItems="center" spacing={1} mb={1}><AccessTimeIcon sx={{ color: '#83c9ff' }} /><Typography variant="overline" sx={{ letterSpacing: 2, color: '#b7d9f5' }}>API / Фоновая обработка</Typography></Stack>
           <Typography variant="h4" sx={{ color: '#fff' }}>Время под контролем</Typography>
-          <Typography variant="body2" sx={{ mt: 1, color: '#c2d8ec' }}>{tab === 'api' ? 'Успешные запросы, расход по меткам и прогноз на сутки.' : 'Очередь фото для производства и превью, нагрузка и время до завершения.'}</Typography>
+          <Typography variant="body2" sx={{ mt: 1, color: '#c2d8ec' }}>{tab === 'api' ? 'Успешные запросы, расход по меткам и прогноз на сутки.' : tab === 'images' ? 'Очередь фото для производства и превью, нагрузка и время до завершения.' : 'Создание задач производства за последний час: заказы, фото и повторная подготовка.'}</Typography>
         </Box>
         <Chip icon={<ShieldOutlinedIcon />} label="Только администраторы" sx={{ color: '#daebfa', bgcolor: '#ffffff12', '& .MuiChip-icon': { color: '#a1d1f6' } }} />
       </Stack>
     </Box>
     <InboundSyncControl />
-    <Tabs value={tab} onChange={(_, value: 'api' | 'images') => setTab(value)} aria-label="Разделы метрик" variant="scrollable" scrollButtons="auto" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
+    <Tabs value={tab} onChange={(_, value: string) => setSearchParams((params) => { if (value === 'api') params.delete('tab'); else params.set('tab', value); return params }, { replace: true })} aria-label="Разделы метрик" variant="scrollable" scrollButtons="auto" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
       <Tab value="api" label="API BlueSales" id="metrics-tab-api" aria-controls="metrics-panel-api" />
       <Tab value="images" label="Очередь изображений" id="metrics-tab-images" aria-controls="metrics-panel-images" />
+      <Tab value="production-debug" label="Дебаг производства" id="metrics-tab-production-debug" aria-controls="metrics-panel-production-debug" />
     </Tabs>
     <Box role="tabpanel" id="metrics-panel-api" aria-labelledby="metrics-tab-api" hidden={tab !== 'api'}>
       <ApiUsageMetrics visible={tab === 'api'} />
     </Box>
     <Box role="tabpanel" id="metrics-panel-images" aria-labelledby="metrics-tab-images" hidden={tab !== 'images'}>
       {tab === 'images' && <ImageQueueMetrics />}
+    </Box>
+    <Box role="tabpanel" id="metrics-panel-production-debug" aria-labelledby="metrics-tab-production-debug" hidden={tab !== 'production-debug'}>
+      {tab === 'production-debug' && <ProductionDebugMetrics />}
     </Box>
   </Stack>
 }

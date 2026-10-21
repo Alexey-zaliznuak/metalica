@@ -3,6 +3,28 @@ export interface InboundSyncState {
   updatedAt: string
 }
 
+export interface ProductionTaskCounts {
+  newTasks: number
+  changedTasks: number
+  retriedTasks: number
+  sizes: Record<'30x40' | '40x60' | '60x80', number>
+}
+
+export interface ProductionDebugMetrics {
+  generatedAt: string
+  period: { from: string; to: string }
+  retentionDays: number
+  totals: { newTasks: number; newPhotos: number; changedTasks: number; retriedTasks: number }
+  rows: (ProductionTaskCounts & {
+    orderId: number
+    orderNumber: string
+    lastCreatedAt: string
+    newPhotos: number
+    completePhotoSets: number
+    photos: (ProductionTaskCounts & { attachmentId: number; lastCreatedAt: string })[]
+  })[]
+}
+
 export interface DevMetrics {
   generatedAt: string
   timeZone: string
