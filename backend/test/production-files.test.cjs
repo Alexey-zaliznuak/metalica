@@ -277,6 +277,8 @@ test('expedite validates attachment ownership, selected size and raster format b
   h.photos[0].message = { id: 22, orderId: 99 };
   await assert.rejects(h.service.expedite(10, 7), (error) => error.getStatus() === 404);
   h.photos[0].message.orderId = 10;
+  await assert.rejects(h.service.expedite(10, 7), (error) => error.getStatus() === 404);
+  h.photos[0].printPhotoOrderId = 10;
   h.photos[0].filename = 'file.pdf';
   await assert.rejects(h.service.expedite(10, 7), (error) => error.getStatus() === 400);
   assert.equal(h.jobs.length, 0);
@@ -435,7 +437,7 @@ test('expired lease after restart is reclaimed with a new key and cleans the aba
   assert.ok(h.deletions.some((row) => row.objectKey === 'production/crashed.png'));
 });
 
-test('ownership and format checks apply to status and download, including pinned sketches', async () => {
+test('all production endpoints reject chat photos and pinned sketches until explicitly attached for print', async () => {
   const h = await setup();
   await assert.rejects(h.service.status(99, 7), (error) => error.getStatus() === 404);
   h.photos[0].printPhotoOrderId = null;
@@ -444,11 +446,65 @@ test('ownership and format checks apply to status and download, including pinned
   h.photos[0].message = { id: 22, orderId: 99 };
   await assert.rejects(h.service.download(10, 7), (error) => error.getStatus() === 404);
   h.photos[0].message.orderId = 10;
+  for (const method of ['ensure', 'status', 'download', 'expedite']) {
+    await assert.rejects(h.service[method](10, 7), (error) => error.getStatus() === 404, method);
+  }
+  assert.equal(h.jobs.length, 0);
+  h.photos[0].printPhotoOrderId = 99;
+  await assert.rejects(h.service.status(10, 7), (error) => error.getStatus() === 404);
+  h.photos[0].printPhotoOrderId = 10;
   assert.equal((await h.service.status(10, 7)).status, 'pending');
-  assert.equal(h.jobs[0].parameters.photoNumber, null, 'chat sketches are not numbered as production attachments');
+  assert.equal(h.jobs[0].parameters.photoNumber, 1);
   await assert.rejects(h.service.status(10, 7, 'bad'), (error) => error.getStatus() === 400);
   for (const extension of ['pdf', 'DNG']) {
     h.photos[0].filename = `photo.${extension}`;
     await assert.rejects(h.service.download(10, 7), (error) => error.getStatus() === 400);
   }
+});
+
+test('upload and historical backfill queue only print photos, never ordinary or pinned chat attachments', async () => {
+  const h = await setup();
+  h.order.pinnedSketches = [{ messageId: 22 }];
+  h.photos.push(
+    { ...h.photos[0], id: 8, printPhotoOrderId: null, message: { id: 21, orderId: 10 } },
+    { ...h.photos[0], id: 9, printPhotoOrderId: null, message: { id: 22, orderId: 10 } },
+    { ...h.photos[0], id: 10, printPhotoOrderId: null, chatMessageId: 23 },
+  );
+  await h.service.queueOrder(10);
+  await h.service.synchronize();
+  assert.equal(h.jobs.length, 3);
+  assert.ok(h.jobs.every((job) => job.attachmentId === 7));
+});
+
+test('legacy queued chat variants are discarded before reading originals and do not count as conversions', async () => {
+  const h = await setup();
+  await h.service.queueOrder(10);
+  h.photos[0].printPhotoOrderId = null;
+  h.photos[0].message = { id: 22, orderId: 10 };
+  h.order.pinnedSketches = [{ messageId: 22 }];
+  h.storage.downloadToFile = async () => assert.fail('Chat originals must not be downloaded for production');
+  h.storage.uploadPreparedFile = async () => assert.fail('Chat photos must not produce production files');
+  const queue = new ImagePreviewQueue(1);
+  h.storage.runImageJob = (operation) => queue.run(operation, 'production', false, (result) => result === undefined ? null : result);
+  for (let i = 0; i < 3; i++) await h.service.processNext();
+  assert.equal(h.jobs.length, 0);
+  assert.equal(queue.recentMeasurements().filter((row) => row.success).length, 0);
+  assert.equal(h.objects.size, 0);
+  assert.ok(h.deletions.every((row) => row.objectKey.startsWith('production/')));
+});
+
+test('a header changed while queued is refreshed before decoding, then rendered only once', async () => {
+  const h = await setup();
+  await h.service.ensure(10, 7);
+  h.order.orderNumber = '54321';
+  let sourceReads = 0;
+  const download = h.storage.downloadToFile;
+  h.storage.downloadToFile = async (...args) => { sourceReads++; return download(...args); };
+  await h.service.processNext();
+  assert.equal(sourceReads, 0);
+  assert.equal(h.jobs[0].status, 'pending');
+  assert.equal(h.jobs[0].parameters.orderNumber, '54321');
+  await h.service.processNext();
+  assert.equal(sourceReads, 1);
+  assert.equal(h.jobs[0].status, 'ready');
 });

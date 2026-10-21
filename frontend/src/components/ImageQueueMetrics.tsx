@@ -78,7 +78,7 @@ function QueueCard({ title, state, slots, color, data, kind }: { title: string; 
     <LinearProgress variant="determinate" value={slots ? Math.min(100, state.running / slots * 100) : 0} sx={{ height: 5, borderRadius: 4, mb: 2, bgcolor: '#edf2f8', '& .MuiLinearProgress-bar': { bgcolor: color } }} />
     <Stack direction="row" gap={2} justifyContent="space-between" flexWrap="wrap" mb={2}>
       <Box><Typography variant="caption" color="text.secondary">До завершения текущих задач</Typography><Typography fontWeight={700}>{etaText(state.etaSeconds, outstanding)}</Typography></Box>
-      <Box><Typography variant="caption" color="text.secondary">Готово за последний час</Typography><Typography fontWeight={700}>{formatNumber(state.completedLastHour)}</Typography></Box>
+      <Box><Typography variant="caption" color="text.secondary">{kind === 'production' ? 'Готово вариантов за последний час' : 'Готово за последний час'}</Typography><Typography fontWeight={700}>{formatNumber(state.completedLastHour)}</Typography></Box>
     </Stack>
     <Stack direction="row" gap={2} flexWrap="wrap" mb={1}>
       <Typography variant="caption" sx={{ color }}>● Ожидают</Typography>
@@ -86,6 +86,7 @@ function QueueCard({ title, state, slots, color, data, kind }: { title: string; 
     </Stack>
     <QueueChart data={data} kind={kind} />
     <Typography variant="body2" color="text.secondary">Средняя обработка: {state.averageDurationMs == null ? 'мало данных' : duration(state.averageDurationMs / 1000)} · Темп: {state.throughputPerMinute == null ? 'мало данных' : `${state.throughputPerMinute.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} задач/мин`}</Typography>
+    {kind === 'production' && <Typography variant="caption" color="text.secondary" display="block" mt={1}>Учитываются готовые варианты файлов из раздела «Фото для печати»: по 3 размера на фото, включая ранее прикреплённые фото и повторную подготовку при изменении шапки. Это не число новых загрузок.</Typography>}
     {state.unavailable > 0 && <Typography variant="caption" color="text.secondary" display="block" mt={1}>Превью не требуется / недоступно для формата: {formatNumber(state.unavailable)}. В ожидающую очередь не входит.</Typography>}
     {state.failed > 0 && <Alert severity="warning" sx={{ mt: 2 }}>Ошибок обработки: {formatNumber(state.failed)}. Эти задачи не входят в ожидающую очередь.</Alert>}
   </Card>

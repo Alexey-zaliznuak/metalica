@@ -43,25 +43,20 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
   private async context(orderId: number, attachmentId: number, client: Prisma.TransactionClient = this.prisma) {
     const order = await client.order.findUnique({
       where: { id: orderId }, select: {
-        orderNumber: true, pinnedSketches: { select: { messageId: true } },
+        orderNumber: true,
         bluesalesInfo: { select: { rawPayload: true } },
       },
     });
     if (!order) throw new NotFoundException('Заказ не найден');
     const attachment = await client.attachment.findFirst({
-      where: { id: attachmentId, OR: [
-        { printPhotoOrderId: orderId },
-        ...order.pinnedSketches.map((pin) => ({ message: { id: pin.messageId, orderId } })),
-      ] },
+      where: { id: attachmentId, printPhotoOrderId: orderId },
     });
-    if (!attachment) throw new NotFoundException('Фото не найдено среди итоговых эскизов этого заказа');
+    if (!attachment) throw new NotFoundException('Фото не прикреплено в разделе «Фото для печати» этого заказа');
     if (attachment.mimeType === 'application/pdf' || /\.(pdf|dng)$/i.test(attachment.filename)) {
       throw new BadRequestException('Для производства прикрепите растровое изображение вместо PDF или DNG');
     }
     // Match the order page's printPhotos order (id ASC), rather than the database ID.
-    const photoNumber = attachment.printPhotoOrderId === orderId
-      ? await client.attachment.count({ where: { printPhotoOrderId: orderId, id: { lte: attachmentId } } })
-      : undefined;
+    const photoNumber = await client.attachment.count({ where: { printPhotoOrderId: orderId, id: { lte: attachmentId } } });
     return { sourceKey: attachment.objectKey, parameters: productionOrderData.context(order.orderNumber, order.bluesalesInfo?.rawPayload, photoNumber) };
   }
 
@@ -139,7 +134,7 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
     }
   }
 
-  /** Queue every text size on upload and during backfill; prefer the user's selected size. */
+  /** Only explicit print photos get production variants; chat attachments never do. */
   async queueOrder(orderId: number, requestedSize?: string) {
     const preferred = textSize(requestedSize);
     const sizes = [preferred, ...PRODUCTION_TEXT_SIZES.filter((size) => size !== preferred)];
@@ -227,6 +222,13 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
     const destination = join(directory, 'production.png');
     const claim = { id: job.id, runToken: job.runToken, fingerprint: job.fingerprint, status: 'processing' };
     try {
+      // Revalidate before downloading/decoding: old queued chat sketches and
+      // photos removed while waiting must not consume production conversions.
+      const before = await this.context(job.orderId, job.attachmentId);
+      if (this.fingerprint(before.sourceKey, before.parameters, job.textSize) !== job.fingerprint) {
+        await this.ensure(job.orderId, job.attachmentId, job.textSize);
+        return false;
+      }
       if (job.attempts > 3) throw new Error('Исчерпаны попытки подготовки');
       await this.storage.downloadToFile(job.sourceKey, source);
       await renderProductionFile(source, destination, job.parameters as unknown as ProductionParameters, job.textSize);
