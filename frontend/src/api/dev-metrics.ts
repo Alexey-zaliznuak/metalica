@@ -1,3 +1,8 @@
+export interface InboundSyncState {
+  enabled: boolean
+  updatedAt: string
+}
+
 export interface DevMetrics {
   generatedAt: string
   timeZone: string

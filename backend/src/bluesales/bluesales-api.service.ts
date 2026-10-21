@@ -5,7 +5,7 @@ import { performance } from 'perf_hooks';
 import { getBluesalesSyncSchedule } from './bluesales-sync.schedule';
 import { AsyncLocalStorage } from 'async_hooks';
 import { BluesalesMetricsService } from './bluesales-metrics.service';
-import { isBluesalesInboundSyncEnabled } from './bluesales-inbound-sync';
+import { BluesalesInboundSyncService } from './bluesales-inbound-sync';
 
 /**
  * Низкоуровневый клиент BlueSales — TS-порт питоновского RequestApi.
@@ -173,6 +173,7 @@ export class BluesalesApiService {
   constructor(
     private readonly config: ConfigService,
     private readonly metrics: BluesalesMetricsService,
+    private readonly inboundSync: BluesalesInboundSyncService,
   ) {
     this.login = this.config.get<string>('BLUESALES_LOGIN', '');
     const password = this.config.get<string>('BLUESALES_PASSWORD', '');
@@ -345,8 +346,8 @@ export class BluesalesApiService {
       respectSyncSchedule &&
       (method === 'orders.get' || method === 'customers.get')
     ) {
-      if (!isBluesalesInboundSyncEnabled(this.config)) {
-        throw new BluesalesSyncPausedError('Импорт из BlueSales отключён (BLUESALES_INBOUND_SYNC_ENABLED=false)');
+      if (!this.inboundSync.enabled) {
+        throw new BluesalesSyncPausedError('Импорт из BlueSales отключён администратором в API-метриках');
       }
       if (getBluesalesSyncSchedule().phase === 'paused') {
         throw new BluesalesSyncPausedError('Синхронизация BlueSales приостановлена с 01:00 до 06:00');

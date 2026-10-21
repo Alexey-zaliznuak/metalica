@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { OrderStatusChange, OrderStatusChangeState } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { BsOrder, BluesalesApiService } from '../bluesales/bluesales-api.service';
-import { isBluesalesInboundSyncEnabled } from '../bluesales/bluesales-inbound-sync';
+import { BluesalesInboundSyncService } from '../bluesales/bluesales-inbound-sync';
 import { PrismaService } from '../prisma/prisma.service';
 
 const ACTIVE_STATES: OrderStatusChangeState[] = [
@@ -32,6 +32,7 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
     private readonly prisma: PrismaService,
     private readonly api: BluesalesApiService,
     private readonly config: ConfigService,
+    private readonly inboundSync: BluesalesInboundSyncService,
   ) {
     this.batchWindowMs = this.envInt(config, 'ORDER_STATUS_OUTBOX_BATCH_WINDOW_MS', 10_000);
     this.batchSize = Math.max(1, Math.min(500, Math.floor(this.envInt(config, 'ORDER_STATUS_OUTBOX_BATCH_SIZE', 500))));
@@ -315,7 +316,7 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       });
       // Ответ BS подтверждает доставку, но при выключенном импорте не меняет
       // локальную карточку: статус уже сохранён действием менеджера.
-      if (newerPending === 0 && isBluesalesInboundSyncEnabled(this.config)) {
+      if (newerPending === 0 && this.inboundSync.enabled) {
         await tx.bluesalesOrderInfo.updateMany({
           where: {
             orderId: change.orderId,

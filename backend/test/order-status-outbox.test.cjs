@@ -45,7 +45,7 @@ test('durable batched status delivery in PostgreSQL', { skip: !process.env.OUTBO
         return ids.filter((id) => states.has(id)).map((id) => ({ id, orderStatus: { id: states.get(id), name: 'Status' } }));
       },
     };
-    service = new OrderStatusOutboxProcessor(prisma, api, config);
+    service = new OrderStatusOutboxProcessor(prisma, api, config, { enabled: true });
     service.logger = silent;
   };
   const make = async (bsId, status = 7, extra = {}) => {
@@ -74,7 +74,7 @@ test('durable batched status delivery in PostgreSQL', { skip: !process.env.OUTBO
       assert.deepEqual(await service.claimBatch(), []);
       t.mock.timers.setTime(now + 9000);
       await make(2, 7, { nextAttemptAt: new Date() });
-      service = new OrderStatusOutboxProcessor(prisma, api, config);
+      service = new OrderStatusOutboxProcessor(prisma, api, config, { enabled: true });
       service.logger = silent;
       assert.deepEqual(await service.claimBatch(), []);
       t.mock.timers.setTime(now + 10000);
@@ -108,7 +108,7 @@ test('durable batched status delivery in PostgreSQL', { skip: !process.env.OUTBO
       await flush();
       assert.ok((await rows()).every((r) => r.state === 'RETRY'));
       await readyRetries();
-      service = new OrderStatusOutboxProcessor(prisma, api, config); service.logger = silent;
+      service = new OrderStatusOutboxProcessor(prisma, api, config, { enabled: true }); service.logger = silent;
       onRead = null;
       await flush();
       assert.deepEqual(requests(), [['write', [1, 2], 7], ['read', [1, 2]], ['read', [1, 2]]]);
@@ -172,7 +172,7 @@ test('durable batched status delivery in PostgreSQL', { skip: !process.env.OUTBO
     });
     await t.test('concurrent claims never claim two pending transitions of the same order', async () => {
       await reset(); await make(1); await make(1, 8); await make(2);
-      const other = new OrderStatusOutboxProcessor(prisma, api, config);
+      const other = new OrderStatusOutboxProcessor(prisma, api, config, { enabled: true });
       const batches = await Promise.all([service.claimBatch(), other.claimBatch()]);
       const claimed = batches.flat();
       assert.equal(claimed.length, 2);

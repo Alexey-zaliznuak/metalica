@@ -7,11 +7,12 @@ import { BluesalesDiagController } from './bluesales-diag.controller';
 import { BluesalesSyncService } from './bluesales-sync.service';
 import { BluesalesMetricsService } from './bluesales-metrics.service';
 import { DevMetricsController } from './dev-metrics.controller';
+import { BluesalesInboundSyncService } from './bluesales-inbound-sync';
 
 @Module({
   imports: [AssignmentModule, NotificationsModule],
   controllers: [BluesalesController, BluesalesDiagController, DevMetricsController],
-  providers: [BluesalesApiService, BluesalesSyncService, BluesalesMetricsService],
-  exports: [BluesalesApiService, BluesalesSyncService],
+  providers: [BluesalesApiService, BluesalesSyncService, BluesalesMetricsService, BluesalesInboundSyncService],
+  exports: [BluesalesApiService, BluesalesSyncService, BluesalesInboundSyncService],
 })
 export class BluesalesModule {}

@@ -9,6 +9,7 @@ import client from '../api/client'
 import { describeApiError } from '../api/errors'
 import type { DevMetrics } from '../api/dev-metrics'
 import ImageQueueMetrics from '../components/ImageQueueMetrics'
+import InboundSyncControl from '../components/InboundSyncControl'
 
 const HOUR = 3_600_000
 const colors = ['#1591dc', '#6d5ce7', '#149c88', '#ed8b23', '#d15788', '#657b97']
@@ -180,6 +181,7 @@ export default function DevMetricsPage() {
         <Chip icon={<ShieldOutlinedIcon />} label="Только администраторы" sx={{ color: '#daebfa', bgcolor: '#ffffff12', '& .MuiChip-icon': { color: '#a1d1f6' } }} />
       </Stack>
     </Box>
+    <InboundSyncControl />
     <Tabs value={tab} onChange={(_, value: 'api' | 'images') => setTab(value)} aria-label="Разделы метрик" variant="scrollable" scrollButtons="auto" sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
       <Tab value="api" label="API BlueSales" id="metrics-tab-api" aria-controls="metrics-panel-api" />
       <Tab value="images" label="Очередь изображений" id="metrics-tab-images" aria-controls="metrics-panel-images" />

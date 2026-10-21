@@ -11,7 +11,7 @@ const config = { get: (key, fallback) => ({ BLUESALES_LOGIN: 'test', BLUESALES_P
 const forbidden = new Proxy({}, { get: (_, key) => () => assert.fail(`Unexpected call: ${String(key)}`) });
 
 function syncService() {
-  const service = new BluesalesSyncService({ isConfigured: true, withLabel: (_label, task) => task() }, forbidden, config, null, null);
+  const service = new BluesalesSyncService({ isConfigured: true, withLabel: (_label, task) => task() }, forbidden, config, null, null, { enabled: true });
   service.loopActive = true;
   service.logger = { log() {}, error() {}, debug() {} };
   return service;
@@ -118,6 +118,7 @@ test('order and lead incremental syncs use separate request labels', async (t) =
     config,
     null,
     null,
+    { enabled: true },
   );
   service.logger = { log() {}, error() {}, debug() {} };
   service.runFastSync = async () => ({ orders: 0 });
@@ -129,7 +130,7 @@ test('order and lead incremental syncs use separate request labels', async (t) =
 
 test('API blocks queued sync reads at the boundary and resumes at 06:00', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: at('00:59:59') });
-  const api = new BluesalesApiService(config, { recordSuccess: async () => {} });
+  const api = new BluesalesApiService(config, { recordSuccess: async () => {} }, { enabled: true });
   api.waitForRequestGap = async () => t.mock.timers.setTime(at('01:00:00').getTime());
   const fetch = t.mock.method(global, 'fetch', async () => ({ status: 200, text: async () => '{}' }));
   await assert.rejects(api.getOrdersByIds([1]), BluesalesSyncPausedError);
@@ -147,7 +148,7 @@ test('API blocks queued sync reads at the boundary and resumes at 06:00', async 
 
 test('pagination cannot send a new page after 01:00', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: at('00:59:59') });
-  const api = new BluesalesApiService(config, { recordSuccess: async () => {} });
+  const api = new BluesalesApiService(config, { recordSuccess: async () => {} }, { enabled: true });
   api.waitForRequestGap = async () => {};
   const fetch = t.mock.method(global, 'fetch', async () => {
     t.mock.timers.setTime(at('01:00:00').getTime());

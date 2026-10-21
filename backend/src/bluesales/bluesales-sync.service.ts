@@ -6,7 +6,7 @@ import { AssignmentService } from '../assignment/assignment.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BluesalesApiService, BluesalesSyncPausedError, BsCustomer, BsOrder } from './bluesales-api.service';
-import { isBluesalesInboundSyncEnabled } from './bluesales-inbound-sync';
+import { BluesalesInboundSyncService } from './bluesales-inbound-sync';
 import {
   computeSketchTimestampUpdate,
   isSketchTrackedStatus,
@@ -103,6 +103,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
     private readonly assignment: AssignmentService,
+    private readonly inboundSync: BluesalesInboundSyncService,
   ) {
     this.enabled = this.config.get<string>('BLUESALES_ENABLED', 'true') !== 'false';
     this.vkGroupId = this.config.get<string>('BLUESALES_VK_GROUP_ID', '');
@@ -124,14 +125,14 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     this.sketchBackfillIdleMs = this.envInt('SKETCH_BACKFILL_IDLE_MS', 60000);
   }
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
+    await this.inboundSync.initialize();
     if (!this.enabled) {
       this.logger.warn('BlueSales sync отключён (BLUESALES_ENABLED=false)');
       return;
     }
     if (!this.inboundSyncEnabled) {
-      this.logger.warn('Импорт из BlueSales отключён (BLUESALES_INBOUND_SYNC_ENABLED=false); исходящие изменения разрешены');
-      return;
+      this.logger.warn('Импорт из BlueSales отключён в API-метриках; циклы ожидают включения, исходящие изменения разрешены');
     }
     if (!this.api.isConfigured) {
       this.logger.warn(
@@ -154,7 +155,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // Фоновый бэкфилл меток эскиза (только по БД, без запросов в BlueSales).
     setTimeout(() => void this.runSketchBackfillLoop(), 6000);
     // Полный синк за период выполняется один раз при старте, если включён через env.
-    if (this.fullSyncOnStartup) {
+    if (this.fullSyncOnStartup && this.inboundSyncEnabled) {
       setTimeout(() => void this.api.withLabel('startup-sync', () => this.runFullSync()), 11000);
     }
   }
@@ -169,7 +170,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   private get inboundSyncEnabled(): boolean {
-    return isBluesalesInboundSyncEnabled(this.config);
+    return this.inboundSync.enabled;
   }
 
   /**
@@ -924,6 +925,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       select: { tagIds: true },
     });
 
+    if (!this.inboundSyncEnabled) return null;
     const lead = await this.prisma.lead.upsert({
       where: { bsCustomerId: customer.id },
       create: {
@@ -968,6 +970,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     // а не ждём следующего orders.get.
     // IS DISTINCT FROM: Prisma `NOT` / `{ not: value }` не выбирает NULL
     // (`NULL = 'имя'` → NULL, строка отбрасывается).
+    if (!this.inboundSyncEnabled) return lead.id;
     await this.prisma.$executeRaw`
       UPDATE "Order"
       SET "deliveryManagerName" = ${managerName},
@@ -1054,6 +1057,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
   private async upsertTags(tags: TagReference[]): Promise<void> {
     if (!this.inboundSyncEnabled) return;
     for (const { bsTagId, name, color } of tags) {
+      if (!this.inboundSyncEnabled) return;
       await this.prisma.bluesalesTag.upsert({
         where: { bsTagId },
         create: {
@@ -1164,6 +1168,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             select: { orderNumber: true },
           }),
         ]);
+        // The admin may have paused import while this transaction waited for
+        // a row lock or loaded the current local status.
+        if (!this.inboundSyncEnabled) return null;
         const canApplyStatus =
           pendingChanges === 0 &&
           (!currentInfo?.orderStatusObservedAt ||
@@ -1301,6 +1308,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
             `перепривязываем Order#${sameNumber.id} с BS#${existingForOrder.bsOrderId} ` +
             `на BS#${bsOrder.id}`,
         );
+        if (!this.inboundSyncEnabled) return;
         await this.prisma.bluesalesOrderInfo.update({
           where: { orderId: sameNumber.id },
           data: { bsOrderId: bsOrder.id },
@@ -1324,6 +1332,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         statusName,
         closesSketch,
       );
+      if (!this.inboundSyncEnabled) return;
       try {
         await this.prisma.bluesalesOrderInfo.create({
           data: { ...infoData, ...statusData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
@@ -1384,6 +1393,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`Синк BlueSales: ${message}; автоматическая перепривязка запрещена`);
         throw new Error(message, { cause: err });
       }
+      if (!this.inboundSyncEnabled) return;
       await this.prisma.order.update({
         where: { id: sameNumber.id },
         data: {
@@ -1406,6 +1416,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       },
       closesSketch,
     );
+    if (!this.inboundSyncEnabled) return;
     const created = await this.prisma.order.create({
       data: {
         orderNumber,

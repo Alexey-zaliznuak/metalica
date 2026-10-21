@@ -15,7 +15,7 @@ const config = { get: (key, fallback) => ({ BLUESALES_LOGIN: 'test', BLUESALES_P
 const response = (body, status = 200) => ({ status, text: async () => JSON.stringify(body) });
 function setup() {
   const records = [];
-  const api = new BluesalesApiService(config, { recordSuccess: async (record) => records.push(record) });
+  const api = new BluesalesApiService(config, { recordSuccess: async (record) => records.push(record) }, { enabled: true });
   api.waitForRequestGap = async () => {};
   api.logger = { log() {}, debug() {}, error() {}, warn() {} };
   return { api, records };
