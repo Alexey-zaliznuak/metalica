@@ -121,7 +121,7 @@ import {
 } from '../utils'
 
 const HEIC_EXTENSION_PATTERN = /\.(heic|heif)$/i
-const DISTRIBUTION_TAG_NAMES = new Set(['диджитал', 'фотопечать', 'ретушь', 'нейро'])
+const DISTRIBUTION_TAG_NAMES = new Set(['диджитал', 'фотопечать', 'ретушь', 'нейро', 'испания'])
 
 function getOrderTagColor(tagName: string): 'error.main' | 'success.main' | 'primary.main' {
   const normalizedTagName = tagName.trim().toLocaleLowerCase('ru-RU')
