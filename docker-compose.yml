@@ -32,7 +32,8 @@ services:
       retries: 10
 
   minio-init:
-    image: minio/mc:latest
+    # Reuse the cached server image, which also contains the mc client.
+    image: minio/minio:latest
     pull_policy: never
     env_file:
       - .env
