@@ -596,6 +596,9 @@ model ProductionTaskEvent {
 // Survives deletion of orders/attachments and retries MinIO cleanup after outages.
 model StoredFileDeletion {
   objectKey      String   @id
+  // Snapshot for cleanup logs after attachment/order deletion; intentionally no FK.
+  orderId        Int?
+  orderNumber    String?
   generation     Int      @default(0)
   attempts       Int      @default(0)
   nextAttemptAt  DateTime @default(now())

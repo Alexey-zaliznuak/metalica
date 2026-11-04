@@ -16,7 +16,7 @@ function fixture() {
   }));
   // This source remains referenced by a different order after the batch.
   attachments.push({ id: 200, printPhotoOrderId: 2, objectKey: 'original-1.png' });
-  const info = { orderStatusId: LIFECYCLE_STATUSES.delivered,
+  const info = { order: { orderNumber: 'ORDER-TEST-1' }, orderStatusId: LIFECYCLE_STATUSES.delivered,
     rawPayload: { customFields: [{ fieldName: 'Дедлайн отправки', value: '01.01.2000' }] } };
   const tag = { id: 1, orderId: 1, kind: 'ATTACHMENT_CLEANUP',
     markedAt: new Date(Date.now() - CLEANUP_DELAY_MS - 60_000), completedAt: null };
@@ -64,6 +64,10 @@ async function main() {
     assert.ok(!f.deletions.has(key), `shared source must survive: ${key}`);
   }
   assert.ok(f.deletions.has('production-ready.png'));
+  for (const row of f.deletions.values()) {
+    assert.equal(row.orderId, 1);
+    assert.equal(row.orderNumber, 'ORDER-TEST-1', 'order context survives attachment deletion');
+  }
   assert.ok(f.deletions.get('production-inflight.png').nextAttemptAt.getTime() >= started + 590_000);
   await f.service.deleteBatch(1, 1);
   assert.ok(f.tag.completedAt instanceof Date);
@@ -80,6 +84,28 @@ async function main() {
     assert.equal(stale.attachments().length, 102);
     assert.equal(stale.deletions.size, 0);
   }
+  const logs = [];
+  const retryRows = [];
+  const rows = [
+    { objectKey: 'success.png', orderId: 1, orderNumber: 'ORDER-TEST-1', attempts: 0, generation: 0 },
+    { objectKey: 'failed.png', orderId: 2, orderNumber: 'ORDER-TEST-2', attempts: 1, generation: 0 },
+  ];
+  const queue = new StorageCleanupService({ storedFileDeletion: {
+    findMany: async () => rows,
+    deleteMany: async () => ({ count: 1 }),
+    updateMany: async q => retryRows.push(q),
+  } }, { removeStoredObject: async key => { if (key === 'failed.png') throw new Error('S3 offline'); } });
+  queue.logger = { log: x => logs.push(JSON.parse(x.slice('Lifecycle '.length))), warn: x => logs.push(JSON.parse(x.slice('Lifecycle '.length))) };
+  await queue.processBatch();
+  assert.equal(logs.filter(x => x.event === 's3_deleted').length, 1);
+  assert.equal(logs.find(x => x.event === 's3_deleted').orderNumber, 'ORDER-TEST-1');
+  assert.equal(logs.find(x => x.event === 's3_retry').orderNumber, 'ORDER-TEST-2');
+  assert.equal(retryRows.length, 1, 'failed deletion retries and never produces a success log');
+
+  const updates = [];
+  const enqueue = new StorageCleanupService({ storedFileDeletion: { upsert: async q => updates.push(q) } }, {});
+  await enqueue.enqueue(['late.png']);
+  assert.equal('orderNumber' in updates[0].update, false, 'late re-enqueue without context preserves the saved order');
   console.log('Lifecycle deletion: 100-item batches, shared sources, all variants, upload leases and stale eligibility passed.');
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -7,7 +7,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
-import { StorageCleanupService } from '../storage/storage-cleanup.service';
+import { CleanupOrderContext, StorageCleanupService } from '../storage/storage-cleanup.service';
 import { productionOrderData } from './production-order-data';
 import { ProductionParameters, renderProductionFile } from './production-file-renderer';
 import { imageJobConfiguration } from '../storage/image-job.config';
@@ -160,12 +160,12 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
   }
 
   /** Call inside the same transaction that removes photos/order or unpins a sketch. */
-  async scheduleDeletion(tx: Prisma.TransactionClient, where: Prisma.ProductionFileWhereInput) {
+  async scheduleDeletion(tx: Prisma.TransactionClient, where: Prisma.ProductionFileWhereInput, context?: CleanupOrderContext) {
     const files = await tx.productionFile.findMany({ where, select: { objectKey: true, status: true, leaseUntil: true } });
     // Keep deletion durable until an in-flight upload can finish, even if its process
     // crashes immediately after writing the object. A surviving worker expedites it.
     for (const file of files) await this.cleanup.enqueue([file.objectKey], tx,
-      file.status === 'processing' && file.leaseUntil ? file.leaseUntil : new Date());
+      file.status === 'processing' && file.leaseUntil ? file.leaseUntil : new Date(), context);
     await tx.productionFile.deleteMany({ where });
   }
 

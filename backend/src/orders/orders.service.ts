@@ -1199,6 +1199,9 @@ export class OrdersService {
     });
 
     if (statusChanged) {
+      if (expectedStatusId !== undefined) {
+        this.logger.log(`Lifecycle ${JSON.stringify({ event: 'auto_complete', orderId: id, orderNumber: order.orderNumber, fromStatusId: expectedStatusId, toStatusId: statusId, toStatus: targetStatus.name, bluesalesSync: 'queued' })}`);
+      }
       void this.notifications
         .notifyOrderStatus({
           orderId: id,

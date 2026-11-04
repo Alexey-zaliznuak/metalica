@@ -4,6 +4,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from './storage.service';
 
+export type CleanupOrderContext = { orderId: number; orderNumber: string };
+
 @Injectable()
 export class StorageCleanupService {
   private readonly logger = new Logger(StorageCleanupService.name);
@@ -11,12 +13,12 @@ export class StorageCleanupService {
 
   constructor(private prisma: PrismaService, private storage: StorageService) {}
 
-  async enqueue(keys: (string | null | undefined)[], client: Prisma.TransactionClient = this.prisma, notBefore = new Date()) {
+  async enqueue(keys: (string | null | undefined)[], client: Prisma.TransactionClient = this.prisma, notBefore = new Date(), context?: CleanupOrderContext) {
     const objectKeys = [...new Set(keys.filter((key): key is string => !!key))];
     for (const objectKey of objectKeys) await client.storedFileDeletion.upsert({
-      where: { objectKey }, create: { objectKey, nextAttemptAt: notBefore },
+      where: { objectKey }, create: { objectKey, nextAttemptAt: notBefore, ...context },
       // A late upload can request deletion while an earlier cleanup is still running.
-      update: { generation: { increment: 1 }, attempts: 0, nextAttemptAt: notBefore },
+      update: { generation: { increment: 1 }, attempts: 0, nextAttemptAt: notBefore, ...context },
     });
   }
 
@@ -31,9 +33,10 @@ export class StorageCleanupService {
       for (const row of rows) {
         try {
           await this.storage.removeStoredObject(row.objectKey);
+          this.logger.log(`Lifecycle ${JSON.stringify({ event: 's3_deleted', orderId: row.orderId ?? null, orderNumber: row.orderNumber ?? null, objectKey: row.objectKey, attempt: row.attempts + 1 })}`);
           await this.prisma.storedFileDeletion.deleteMany({ where: { objectKey: row.objectKey, generation: row.generation } });
         } catch (error) {
-          this.logger.warn(`Удаление "${row.objectKey}" отложено: ${(error as Error).message}`);
+          this.logger.warn(`Lifecycle ${JSON.stringify({ event: 's3_retry', orderId: row.orderId ?? null, orderNumber: row.orderNumber ?? null, objectKey: row.objectKey, attempt: row.attempts + 1, error: (error as Error).message })}`);
           await this.prisma.storedFileDeletion.updateMany({
             where: { objectKey: row.objectKey, generation: row.generation },
             data: { attempts: { increment: 1 }, nextAttemptAt: new Date(Date.now() + Math.min(300_000, 5000 * 2 ** Math.min(row.attempts, 6))) },

@@ -21,11 +21,14 @@ export class OrderLifecycleService {
       select: { orderId: true },
     });
     for (const row of rows) {
-      try { await this.prisma.$transaction(async (tx) => {
+      try { const event = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "orderId" FROM "BluesalesOrderInfo" WHERE "orderId" = ${row.orderId} FOR UPDATE`;
-      const info = await tx.bluesalesOrderInfo.findUnique({ where: { orderId: row.orderId } });
+      const info = await tx.bluesalesOrderInfo.findUnique({ where: { orderId: row.orderId }, include: { order: { select: { orderNumber: true } } } });
       if (!info) return;
+      const context = { orderId: row.orderId, orderNumber: info.order.orderNumber, kind,
+        tagName: completion ? 'Будет завершён' : 'Вложения удалены' };
       if (lifecycleEligible(info.orderStatusId, info.rawPayload, new Date(), completion)) {
+        const previous = await tx.orderSystemTag.findUnique({ where: { orderId_kind: { orderId: row.orderId, kind } } });
         const tag = await tx.orderSystemTag.upsert({ where: { orderId_kind: { orderId: row.orderId, kind } },
           create: { orderId: row.orderId, kind }, update: {} });
         if (!completion && tag?.completedAt && await tx.attachment.count({
@@ -36,16 +39,24 @@ export class OrderLifecycleService {
           await tx.orderEvent.create({ data: { orderId: row.orderId, field: 'attachmentCleanupRearmed',
             oldValue: tag.markedAt.toISOString(), newValue: markedAt.toISOString(),
             meta: { previousCompletedAt: tag.completedAt.toISOString() } } });
+          return { event: 'tag_rearmed', ...context, markedAt, scheduledAt: new Date(markedAt.getTime() + CLEANUP_DELAY_MS), actionEnabled: enabled };
         }
+        if (!previous) return { event: 'tag_added', ...context, markedAt: tag.markedAt,
+          scheduledAt: completion ? null : new Date(tag.markedAt.getTime() + CLEANUP_DELAY_MS), actionEnabled: enabled };
       } else {
         // Re-entering eligibility starts a fresh grace period. Completed tags retain history.
-        await tx.orderSystemTag.deleteMany({ where: { orderId: row.orderId, kind, completedAt: null } });
+        const removed = await tx.orderSystemTag.deleteMany({ where: { orderId: row.orderId, kind, completedAt: null } });
+        if (removed.count) return { event: 'tag_removed', ...context, reason: 'no_longer_eligible' };
       }
-      }); } catch (error) {
+      });
+      // Only report committed changes, never rolled-back attempts.
+      if (event) this.logger.log(`Lifecycle ${JSON.stringify(event)}`);
+      } catch (error) {
         this.logger.warn(`Lifecycle marking order #${row.orderId}: ${(error as Error).message}`);
       }
     }
     this.cursors.set(kind, rows.length === 100 ? rows[rows.length - 1].orderId : 0);
+    this.logger.log(`Lifecycle ${JSON.stringify({ event: 'scan_completed', kind, checked: rows.length, nextOrderId: this.cursors.get(kind), actionEnabled: enabled })}`);
     if (!enabled) return;
     const tags = await this.prisma.orderSystemTag.findMany({
       where: { kind, completedAt: null, id: { gt: this.actionCursors.get(kind) ?? 0 },
@@ -69,23 +80,27 @@ export class OrderLifecycleService {
   }
 
   private async deleteBatch(tagId: number, orderId: number) {
-    await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "orderId" FROM "BluesalesOrderInfo" WHERE "orderId" = ${orderId} FOR UPDATE`;
-      const info = await tx.bluesalesOrderInfo.findUnique({ where: { orderId } });
+      const info = await tx.bluesalesOrderInfo.findUnique({ where: { orderId }, include: { order: { select: { orderNumber: true } } } });
       const tag = await tx.orderSystemTag.findUnique({ where: { id: tagId } });
       if (!info || !tag || tag.completedAt || tag.markedAt.getTime() >= Date.now() - CLEANUP_DELAY_MS || !lifecycleEligible(info.orderStatusId, info.rawPayload)) return;
       const where = { OR: [{ printPhotoOrderId: orderId }, { message: { orderId } }] };
       const attachments = await tx.attachment.findMany({ where, orderBy: { id: 'asc' }, take: 100 });
       const ids = attachments.map((a) => a.id);
-      await this.production.scheduleDeletion(tx, { attachmentId: { in: ids } });
+      const context = { orderId, orderNumber: info.order.orderNumber };
+      await this.production.scheduleDeletion(tx, { attachmentId: { in: ids } }, context);
       await tx.attachment.deleteMany({ where: { id: { in: ids } } });
       for (const attachment of attachments) {
         if (await tx.attachment.count({ where: { objectKey: attachment.objectKey } })) continue;
         const derived = imagePreviewKeys(attachment.objectKey);
         await this.cleanup.enqueue([attachment.objectKey, attachment.thumbnailKey, attachment.previewKey, ...Object.values(derived)], tx,
-          attachment.previewStatus === 'pending' ? new Date(Date.now() + 10 * 60_000) : new Date());
+          attachment.previewStatus === 'pending' ? new Date(Date.now() + 10 * 60_000) : new Date(), context);
       }
-      if (!await tx.attachment.count({ where })) await tx.orderSystemTag.update({ where: { id: tagId }, data: { completedAt: new Date() } });
+      const remainingAttachments = await tx.attachment.count({ where });
+      if (!remainingAttachments) await tx.orderSystemTag.update({ where: { id: tagId }, data: { completedAt: new Date() } });
+      return { event: 'cleanup_queued', ...context, attachmentsRemoved: ids.length, remainingAttachments, s3Status: 'queued' };
     }, { timeout: 30_000 });
+    if (result) this.logger.log(`Lifecycle ${JSON.stringify(result)}`);
   }
 }
