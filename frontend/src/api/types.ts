@@ -219,6 +219,7 @@ export interface OrdersBoardSettings {
   shippingDeadlineTo: string
   selectedDeliveryTypes: string[]
   selectedSizes: string[]
+  selectedSystemTags: string[]
 }
 
 export interface OrdersColumnResponse {

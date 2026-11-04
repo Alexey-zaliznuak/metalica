@@ -22,6 +22,46 @@ function setup({ exact = null, matches = [], orders = [] } = {}) {
   return { service, calls };
 }
 
+test('system tags match any selected tag and combine with status before pagination', async () => {
+  const { service, calls } = setup();
+  let list;
+  service.prisma.order.findMany = async args => { list = args; return []; };
+  await service.findAll({ systemTags: ['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE'], orderStatusId: 3, page: 2, limit: 10 });
+  assert.deepEqual(calls.where.AND, [
+    { systemTags: { some: { kind: { in: ['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE'] } } } },
+    { bluesalesInfo: { is: { orderStatusId: 3 } } },
+  ]);
+  assert.deepEqual(list.where, calls.where);
+  assert.equal(list.skip, 10);
+  assert.equal(list.take, 10);
+});
+
+test('empty system tag selection is unrestricted and invalid tags are rejected', async () => {
+  for (const systemTags of [undefined, []]) {
+    const { service, calls } = setup();
+    await service.findAll({ systemTags });
+    assert.deepEqual(calls.where, {});
+  }
+  const { service, calls } = setup();
+  await assert.rejects(service.findAll({ systemTags: ['unknown'] }), error => error.getStatus() === 400);
+  assert.equal(calls.where, null);
+});
+
+test('system tag query accepts single or multiple selections without changing pagination', () => {
+  for (const input of ['AUTO_COMPLETE', ['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE']]) {
+    let params;
+    const controller = new OrdersController({ findAll: value => { params = value; } });
+    const args = Array(17).fill(undefined);
+    args[14] = input;
+    args[15] = '2';
+    args[16] = '10';
+    controller.findAll(...args);
+    assert.deepEqual(params.systemTags, Array.isArray(input) ? input : [input]);
+    assert.equal(params.page, 2);
+    assert.equal(params.limit, 10);
+  }
+});
+
 test('exact order number takes priority and skips the text scan', async () => {
   const { service, calls } = setup({
     exact: { id: 7 },

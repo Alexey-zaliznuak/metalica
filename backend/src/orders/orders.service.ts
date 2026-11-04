@@ -82,6 +82,7 @@ export class OrdersService {
     shippingDeadlineTo?: string;
     deliveryTypes?: string[];
     sizes?: string[];
+    systemTags?: string[];
     page?: number;
     limit?: number;
   }) {
@@ -92,6 +93,12 @@ export class OrdersService {
       throw new BadRequestException('Дата «До» должна быть не раньше даты «От»');
     }
     const and: Prisma.OrderWhereInput[] = [];
+    if (params.systemTags?.length) {
+      if (params.systemTags.some((kind) => !['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE'].includes(kind))) {
+        throw new BadRequestException('Неизвестная системная метка');
+      }
+      and.push({ systemTags: { some: { kind: { in: params.systemTags } } } });
+    }
 
     if (params.noStatus) {
       // «Без статуса заказа»: либо у BlueSales-инфо пустой orderStatusId,

@@ -82,6 +82,11 @@ const RENDER_STEP = 10
 const COLUMN_REFRESH_STEP_MS = 3_000
 const MIN_COLUMN_REFRESH_INTERVAL_MS = 5_000
 const ORDER_SIZE_OPTIONS = ['30x40', '40x60', '60x80']
+const SYSTEM_TAG_OPTIONS = ['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE']
+const SYSTEM_TAG_LABELS: Record<string, string> = {
+  ATTACHMENT_CLEANUP: 'Вложения удалены',
+  AUTO_COMPLETE: 'Будет завершён',
+}
 
 const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedOrderStatusIds: [],
@@ -99,6 +104,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   shippingDeadlineTo: '',
   selectedDeliveryTypes: [],
   selectedSizes: [],
+  selectedSystemTags: [],
 }
 
 interface BoardColumn {
@@ -196,6 +202,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     shippingDeadlineTo: typeof raw.shippingDeadlineTo === 'string' ? raw.shippingDeadlineTo : '',
     selectedDeliveryTypes: parseStringArray(raw.selectedDeliveryTypes),
     selectedSizes: parseStringArray(raw.selectedSizes).filter((size) => ORDER_SIZE_OPTIONS.includes(size)),
+    selectedSystemTags: parseStringArray(raw.selectedSystemTags).filter((kind) => SYSTEM_TAG_OPTIONS.includes(kind)),
   }
 }
 
@@ -647,6 +654,7 @@ export default function OrdersPage() {
   const [shippingDeadlineTo, setShippingDeadlineTo] = useState('')
   const [selectedDeliveryTypes, setSelectedDeliveryTypes] = useState<string[]>([])
   const [selectedSizes, setSelectedSizes] = useState<string[]>([])
+  const [selectedSystemTags, setSelectedSystemTags] = useState<string[]>([])
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [sketchDesigners, setSketchDesigners] = useState<
     OrderAssigneesResponse['sketchDesigners']
@@ -773,6 +781,7 @@ export default function OrdersPage() {
     setShippingDeadlineTo(parsed.shippingDeadlineTo)
     setSelectedDeliveryTypes(parsed.selectedDeliveryTypes)
     setSelectedSizes(parsed.selectedSizes)
+    setSelectedSystemTags(parsed.selectedSystemTags)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -802,6 +811,7 @@ export default function OrdersPage() {
         shippingDeadlineTo,
         selectedDeliveryTypes,
         selectedSizes,
+        selectedSystemTags,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -819,6 +829,7 @@ export default function OrdersPage() {
     shippingDeadlineTo,
     selectedDeliveryTypes,
     selectedSizes,
+    selectedSystemTags,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -890,7 +901,7 @@ export default function OrdersPage() {
       Number(onlyUrgent) +
       Number(Boolean(shippingDeadlineFrom || shippingDeadlineTo)) +
       selectedDeliveryTypes.length +
-      selectedSizes.length,
+      selectedSizes.length + selectedSystemTags.length,
     [
       selectedDeliveryManagers,
       selectedOnboardingManagers,
@@ -902,6 +913,7 @@ export default function OrdersPage() {
       shippingDeadlineTo,
       selectedDeliveryTypes,
       selectedSizes,
+      selectedSystemTags,
     ],
   )
 
@@ -946,6 +958,7 @@ export default function OrdersPage() {
     if (shippingDeadlineTo) params.shippingDeadlineTo = shippingDeadlineTo
     if (selectedDeliveryTypes.length) params.deliveryTypes = selectedDeliveryTypes
     if (selectedSizes.length) params.sizes = selectedSizes
+    if (selectedSystemTags.length) params.systemTags = selectedSystemTags
     return params
   }, [
     activeSearchQuery,
@@ -959,6 +972,7 @@ export default function OrdersPage() {
     shippingDeadlineTo,
     selectedDeliveryTypes,
     selectedSizes,
+    selectedSystemTags,
   ])
 
   const fetchColumnPage = useCallback(
@@ -1533,7 +1547,7 @@ export default function OrdersPage() {
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
             Заказы можно отфильтровать по менеджерам, художникам, наличию
-            закреплённых эскизов, тегу «Срочно», размеру картины, типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
+            закреплённых эскизов, тегу «Срочно», системным меткам, размеру картины, типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
@@ -1595,6 +1609,18 @@ export default function OrdersPage() {
               onChange={(_, values) => setSelectedSizes(values)}
               renderInput={(params) => (
                 <TextField {...params} label="Размер картины" placeholder="Все" helperText="Любой из выбранных размеров" />
+              )}
+            />
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={SYSTEM_TAG_OPTIONS}
+              getOptionLabel={(kind) => SYSTEM_TAG_LABELS[kind] ?? kind}
+              value={selectedSystemTags}
+              onChange={(_, values) => setSelectedSystemTags(values)}
+              renderInput={(params) => (
+                <TextField {...params} label="Системная метка" placeholder="Все" helperText="Любая из выбранных меток" />
               )}
             />
             <Autocomplete
@@ -1688,6 +1714,7 @@ export default function OrdersPage() {
               setShippingDeadlineTo('')
               setSelectedDeliveryTypes([])
               setSelectedSizes([])
+              setSelectedSystemTags([])
             }}
           >
             Сбросить
