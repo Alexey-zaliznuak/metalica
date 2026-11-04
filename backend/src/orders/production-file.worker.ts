@@ -6,7 +6,7 @@ void (async () => {
     const { input, destination, parameters, textSize } = workerData;
     const label = parameters.photoNumber ? `${parameters.orderNumber}-${parameters.photoNumber}` : parameters.orderNumber;
     const image = await productionImage(input, label, parameters.articles,
-      parameters.comment, productionTextScale(textSize), parameters.deliveryService);
+      parameters.comment, productionTextScale(textSize), parameters.deliveryService, parameters.numberOnly);
     await image.toFile(destination);
     parentPort!.postMessage({ ready: true });
   } catch (error) {

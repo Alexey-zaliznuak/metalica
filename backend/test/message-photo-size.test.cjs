@@ -96,25 +96,23 @@ function printPhotoSetup() {
   return { service, attachments, photo, writes };
 }
 
-test('production attachment saves all sizes and serialization retains them on subsequent reads', async () => {
+test('production attachments reject every size marker without changing stored data', async () => {
   const { service, attachments, photo, writes } = printPhotoSetup();
+  photo.photoSize = '30x40'; // A historical marker is retained, but cannot be edited.
   for (const photoSize of ['30x40', '40x60', '60x80']) {
-    const result = await service.updatePrintPhotoSize(10, 9, { photoSize });
-    assert.equal(result.photoSize, photoSize);
-    assert.equal(result.size, 987654);
-    assert.equal(result.url, '/files/painting.jpg');
-    assert.equal((await attachments.serialize([{ ...photo }]))[0].photoSize, photoSize);
+    await assert.rejects(service.updatePrintPhotoSize(10, 9, { photoSize }), { status: 400 });
+    assert.equal((await attachments.serialize([{ ...photo }]))[0].photoSize, '30x40');
   }
-  assert.deepEqual(writes, [{ photoSize: '30x40' }, { photoSize: '40x60' }, { photoSize: '60x80' }]);
+  assert.deepEqual(writes, []);
 });
 
-test('production size update is confined to production photos of the specified order', async () => {
+test('disabled production marker endpoint rejects foreign order and message attachments too', async () => {
   const { service, photo, writes } = printPhotoSetup();
-  await assert.rejects(service.updatePrintPhotoSize(99, 9, { photoSize: '40x60' }), { status: 404 });
-  await assert.rejects(service.updatePrintPhotoSize(10, 99, { photoSize: '40x60' }), { status: 404 });
+  await assert.rejects(service.updatePrintPhotoSize(99, 9, { photoSize: '40x60' }), { status: 400 });
+  await assert.rejects(service.updatePrintPhotoSize(10, 99, { photoSize: '40x60' }), { status: 400 });
   photo.printPhotoOrderId = null;
   photo.messageId = 7;
-  await assert.rejects(service.updatePrintPhotoSize(10, 9, { photoSize: '40x60' }), { status: 404 });
+  await assert.rejects(service.updatePrintPhotoSize(10, 9, { photoSize: '40x60' }), { status: 400 });
   assert.equal(writes.length, 0);
 });
 

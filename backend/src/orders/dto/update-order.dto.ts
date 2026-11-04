@@ -35,6 +35,13 @@ export class UpdateOrderDto {
 
   @ValidateIf((_, value) => value !== undefined)
   @IsArray()
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(1024, { each: true })
+  printInscriptionKeys?: string[];
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsArray()
   @IsInt({ each: true })
   @Min(1, { each: true })
   removePrintPhotoIds?: number[];

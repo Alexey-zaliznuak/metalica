@@ -82,7 +82,6 @@ import type {
   BluesalesStatusOption,
   BluesalesTag,
   Message,
-  MessageKind,
   MessagesPage,
   OrderArticle,
   OrderAssignee,
@@ -479,6 +478,7 @@ const EVENT_FIELD_LABELS: Record<string, string> = {
   finalSketchMessage: 'итоговый эскиз',
   pinnedSketch: 'закреплённый эскиз',
   printPhoto: 'фото для печати',
+  attachmentCleanupRearmed: 'новый срок удаления вложений',
   sketchDesigner: 'художника эскиза',
   revisionDesigner: 'художника правок',
   orderStatus: 'статус заказа',
@@ -613,7 +613,6 @@ function OrderInfoPanel({
   onTextSizeChange,
   onAddPrintPhotos,
   onRemovePrintPhoto,
-  onPrintPhotoSizeChange,
   onOpenImage,
   inDrawer = false,
 }: {
@@ -635,9 +634,8 @@ function OrderInfoPanel({
   printPhotoError: string | null
   textSize: ProductionTextSize
   onTextSizeChange: (size: ProductionTextSize) => void
-  onAddPrintPhotos: (files: File[]) => void
+  onAddPrintPhotos: (files: File[], inscriptions?: boolean) => void
   onRemovePrintPhoto: (photoId: number) => void
-  onPrintPhotoSizeChange: (photoId: number, size: PhotoSize) => Promise<void>
   onOpenImage: (image: LightboxImage) => void
   inDrawer?: boolean
 }) {
@@ -995,7 +993,6 @@ function OrderInfoPanel({
         onTextSizeChange={onTextSizeChange}
         onAddPrintPhotos={onAddPrintPhotos}
         onRemovePrintPhoto={onRemovePrintPhoto}
-        onPhotoSizeChange={onPrintPhotoSizeChange}
         onOpenImage={onOpenImage}
       />
     </Paper>
@@ -1012,7 +1009,15 @@ const printPhotoActionSx = {
   textTransform: 'none',
 } as const
 
-function PrintPhotosBar({
+function PrintPhotosBar(props: React.ComponentProps<typeof PrintFilesBar>) {
+  return <>
+    <PrintFilesBar {...props} />
+    <PrintFilesBar {...props} inscriptions order={{ ...props.order, printPhotos: props.order.printInscriptions }} />
+  </>
+}
+
+function PrintFilesBar({
+  inscriptions = false,
   order,
   savingPrintPhoto,
   printPhotoError,
@@ -1020,40 +1025,39 @@ function PrintPhotosBar({
   onTextSizeChange,
   onAddPrintPhotos,
   onRemovePrintPhoto,
-  onPhotoSizeChange,
   onOpenImage,
 }: {
+  inscriptions?: boolean
   order: Order
   savingPrintPhoto: boolean
   printPhotoError: string | null
   textSize: ProductionTextSize
   onTextSizeChange: (size: ProductionTextSize) => void
-  onAddPrintPhotos: (files: File[]) => void
+  onAddPrintPhotos: (files: File[], inscriptions?: boolean) => void
   onRemovePrintPhoto: (photoId: number) => void
-  onPhotoSizeChange: (photoId: number, size: PhotoSize) => Promise<void>
   onOpenImage: (image: LightboxImage) => void
 }) {
   return (
     <Box
       component="section"
-      aria-label="Фото для печати"
+      aria-label={inscriptions ? 'Надписи для печати' : 'Фото для печати'}
       sx={{ mt: 2 }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()
         if (!savingPrintPhoto && e.dataTransfer.files.length) {
-          onAddPrintPhotos(Array.from(e.dataTransfer.files))
+          onAddPrintPhotos(Array.from(e.dataTransfer.files), inscriptions)
         }
       }}
       onPaste={(e) => {
         if (!savingPrintPhoto && e.clipboardData.files.length) {
           e.preventDefault()
-          onAddPrintPhotos(Array.from(e.clipboardData.files))
+          onAddPrintPhotos(Array.from(e.clipboardData.files), inscriptions)
         }
       }}
     >
       <SectionTitle icon={<ImageIcon fontSize="small" />}>
-        Фото для печати
+        {inscriptions ? 'Надписи для печати' : 'Фото для печати'}
       </SectionTitle>
       <Stack spacing={1} sx={{ mb: 1 }}>
         <ToggleButtonGroup
@@ -1077,7 +1081,7 @@ function PrintPhotosBar({
           disabled={savingPrintPhoto}
           startIcon={savingPrintPhoto ? <CircularProgress size={16} /> : <ImageIcon />}
         >
-          {savingPrintPhoto ? 'Сохранение…' : 'Добавить фото'}
+          {savingPrintPhoto ? 'Сохранение…' : inscriptions ? 'Добавить надписи' : 'Добавить фото'}
           <input
             type="file"
             multiple
@@ -1085,7 +1089,7 @@ function PrintPhotosBar({
             hidden
             disabled={savingPrintPhoto}
             onChange={(e) => {
-              if (e.target.files?.length) onAddPrintPhotos(Array.from(e.target.files))
+              if (e.target.files?.length) onAddPrintPhotos(Array.from(e.target.files), inscriptions)
               e.target.value = ''
             }}
           />
@@ -1112,7 +1116,6 @@ function PrintPhotosBar({
               ) : (
                 <ImageAttachmentPreview
                   image={photo}
-                  onPhotoSizeChange={(size) => onPhotoSizeChange(photo.id, size)}
                   onOpen={() => onOpenImage(photo)}
                 />
               )}
@@ -1502,7 +1505,6 @@ export default function OrderThreadPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [body, setBody] = useState('')
-  const [kind, setKind] = useState<MessageKind>('NORMAL')
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -1654,16 +1656,6 @@ export default function OrderThreadPage() {
     setLightbox((prev) => prev?.id === attachmentId ? { ...prev, photoSize: data.photoSize } : prev)
   }
 
-  const handlePrintPhotoSizeChange = async (attachmentId: number, photoSize: PhotoSize) => {
-    const { data } = await client.patch<Attachment>(
-      `/orders/${orderId}/print-photos/${attachmentId}/photo-size`, { photoSize },
-    )
-    setOrder((prev) => prev?.id === orderId ? { ...prev,
-      printPhotos: prev.printPhotos?.map((photo) => photo.id === attachmentId ? data : photo),
-    } : prev)
-    setLightbox((prev) => prev?.id === attachmentId ? { ...prev, photoSize: data.photoSize } : prev)
-  }
-
   const handlePinnedSketchChange = async (messageId: number, pin: boolean) => {
     setUpdatingPinnedSketch(true)
     setSketchError(null)
@@ -1681,7 +1673,7 @@ export default function OrderThreadPage() {
     }
   }
 
-  const handlePrintPhotosChange = async (files: File[], removePhotoId?: number) => {
+  const handlePrintPhotosChange = async (files: File[], removePhotoId?: number, inscriptions = false) => {
     if (savingPrintPhotoRef.current) return
     if (!files.length && removePhotoId === undefined) return
     setPrintPhotoError(null)
@@ -1705,11 +1697,11 @@ export default function OrderThreadPage() {
         printPhotoKeys.push(data.key)
       }
       const { data } = await client.patch<Order>(`/orders/${orderId}`, {
-        printPhotoKeys,
+        ...(inscriptions ? { printInscriptionKeys: printPhotoKeys } : { printPhotoKeys }),
         productionTextSize,
         removePrintPhotoIds: removePhotoId === undefined ? undefined : [removePhotoId],
       } satisfies UpdateOrderPayload)
-      setOrder((prev) => prev?.id === orderId ? { ...prev, printPhotos: data.printPhotos } : prev)
+      setOrder((prev) => prev?.id === orderId ? { ...prev, printPhotos: data.printPhotos, printInscriptions: data.printInscriptions } : prev)
       await refreshEvents()
     } catch (err) {
       logApiError('сохранение фото для печати', err)
@@ -2189,31 +2181,6 @@ export default function OrderThreadPage() {
     return result
   }, [messages])
 
-  // Есть ли незакрытая правка: запрос правки, на который ещё нет ответа.
-  // Пока такая правка открыта, нельзя отправлять новый запрос правки.
-  const hasOpenRevision = useMemo(() => {
-    const answeredRequestIds = new Set<number>()
-    for (const m of messages) {
-      if (m.kind === 'REVISION_ANSWER' && m.answerToId != null) {
-        answeredRequestIds.add(m.answerToId)
-      }
-    }
-    return messages.some(
-      (m) => m.kind === 'REVISION_REQUEST' && !answeredRequestIds.has(m.id),
-    )
-  }, [messages])
-
-  // Мягко возвращаем режим к обычному сообщению, если выбранный режим больше
-  // недоступен: «Запрос правки» — когда правка уже открыта, «Правка готова» —
-  // когда закрывать нечего (иначе получилось бы два закрытия подряд).
-  useEffect(() => {
-    if (hasOpenRevision && kind === 'REVISION_REQUEST') {
-      setKind('NORMAL')
-    } else if (!hasOpenRevision && kind === 'REVISION_ANSWER') {
-      setKind('NORMAL')
-    }
-  }, [hasOpenRevision, kind])
-
   // Единая лента: сообщения + системные события, отсортированные по времени.
   // События вне загруженного окна сообщений (когда есть ещё более старые
   // сообщения) скрываем, чтобы они не «висели» вверху без контекста —
@@ -2249,14 +2216,7 @@ export default function OrderThreadPage() {
     return items
   }, [messages, events, hasMore])
 
-  const canSend = useMemo(
-    () =>
-      (body.trim().length > 0 || pendingAttachments.length > 0) &&
-      !sending &&
-      !(kind === 'REVISION_REQUEST' && hasOpenRevision) &&
-      !(kind === 'REVISION_ANSWER' && !hasOpenRevision),
-    [body, pendingAttachments.length, sending, kind, hasOpenRevision],
-  )
+  const canSend = (body.trim().length > 0 || pendingAttachments.length > 0) && !sending
 
   const handleSend = async () => {
     if (!canSend) return
@@ -2295,7 +2255,7 @@ export default function OrderThreadPage() {
           `/orders/${orderId}/messages`,
           {
             body: body.trim() || undefined,
-            kind,
+            kind: 'NORMAL',
             attachmentKeys: attachmentKeys.length ? attachmentKeys : undefined,
           },
         )
@@ -2308,7 +2268,6 @@ export default function OrderThreadPage() {
         })
         setPendingAttachments([])
         setBody('')
-        setKind('NORMAL')
         refreshOrderMeta()
       } catch (err) {
         logApiError('отправка сообщения в тред заказа', err)
@@ -2422,6 +2381,23 @@ export default function OrderThreadPage() {
                   </Tooltip>
                 )}
               </Stack>
+              {!!order.systemTags?.length && (
+                <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mt: 1, mb: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">Системные метки:</Typography>
+                  {order.systemTags.map((tag) => {
+                    const remaining = tag.scheduledAt ? new Date(tag.scheduledAt).getTime() - Date.now() : 0
+                    const wait = remaining > 0 ? `через ${Math.ceil(remaining / 3_600_000)} ч.` : 'срок ожидания истёк'
+                    const action = tag.kind === 'ATTACHMENT_CLEANUP'
+                      ? tag.completedAt ? 'Вложения удалены из БД; удаление файлов поставлено в очередь хранилища.' : `Удаление ${wait}. Дата: ${formatDateTime(tag.scheduledAt!)}.`
+                      : tag.completedAt ? 'Заказ переведён в статус «Доставлен».' : 'Запланирован перевод в статус «Доставлен».'
+                    return (
+                      <Tooltip key={tag.id} title={`Метка установлена: ${formatDateTime(tag.markedAt)}. ${action}${!tag.completedAt && !tag.actionEnabled ? ' Автоматическое действие отключено.' : ''}`}>
+                        <Chip size="small" label={tag.name} sx={{ bgcolor: 'grey.200', color: 'grey.700' }} />
+                      </Tooltip>
+                    )
+                  })}
+                </Stack>
+              )}
               <Typography variant="body2" color="text.secondary">
                 {order.title || 'Без названия'}
               </Typography>
@@ -2594,61 +2570,9 @@ export default function OrderThreadPage() {
           </Alert>
         )}
 
-        <ToggleButtonGroup
-          value={kind}
-          exclusive
-          size="small"
-          onChange={(_, val) => val && setKind(val as MessageKind)}
-          sx={{ mb: 1, flexWrap: 'wrap', gap: 0.5 }}
-        >
-          <ToggleButton value="NORMAL">Обычное</ToggleButton>
-          <Tooltip
-            title={
-              hasOpenRevision
-                ? 'По заказу уже есть незакрытая правка — дождитесь её закрытия'
-                : ''
-            }
-          >
-            <span>
-              <ToggleButton
-                value="REVISION_REQUEST"
-                disabled={hasOpenRevision}
-                sx={{
-                  '&.Mui-selected': {
-                    bgcolor: `${ACCENT.revision}1f`,
-                    color: ACCENT.revision,
-                    '&:hover': { bgcolor: `${ACCENT.revision}2e` },
-                  },
-                }}
-              >
-                Запрос правки
-              </ToggleButton>
-            </span>
-          </Tooltip>
-          <Tooltip
-            title={
-              !hasOpenRevision
-                ? 'Нет открытой правки — закрывать нечего'
-                : ''
-            }
-          >
-            <span>
-              <ToggleButton
-                value="REVISION_ANSWER"
-                disabled={!hasOpenRevision}
-                sx={{
-                  '&.Mui-selected': {
-                    bgcolor: `${ACCENT.resolution}1f`,
-                    color: ACCENT.resolution,
-                    '&:hover': { bgcolor: `${ACCENT.resolution}2e` },
-                  },
-                }}
-              >
-                Правка готова
-              </ToggleButton>
-            </span>
-          </Tooltip>
-        </ToggleButtonGroup>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+          Правка начинается в статусе «Правки у художника» и завершается в статусе «Правка готова».
+        </Typography>
 
         {pendingAttachments.length > 0 && (
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 1, gap: 1 }}>
@@ -2794,9 +2718,8 @@ export default function OrderThreadPage() {
             /* ignore quota / private mode */
           }
         }}
-        onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
+        onAddPrintPhotos={(files, inscriptions) => void handlePrintPhotosChange(files, undefined, inscriptions)}
         onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
-        onPrintPhotoSizeChange={handlePrintPhotoSizeChange}
         onOpenImage={setLightbox}
         orderStatusOptions={orderStatusOptions}
         sketchDesignerAssignees={sketchDesignerAssignees}
@@ -2864,9 +2787,8 @@ export default function OrderThreadPage() {
               /* ignore quota / private mode */
             }
           }}
-          onAddPrintPhotos={(files) => void handlePrintPhotosChange(files)}
+          onAddPrintPhotos={(files, inscriptions) => void handlePrintPhotosChange(files, undefined, inscriptions)}
           onRemovePrintPhoto={(photoId) => void handlePrintPhotosChange([], photoId)}
-          onPrintPhotoSizeChange={handlePrintPhotoSizeChange}
           onOpenImage={(image) => {
             setInfoOpen(false)
             setLightbox(image)

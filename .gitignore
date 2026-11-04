@@ -8,5 +8,15 @@ dist/
 deploy.sh
 order_raw_payload.json
 scripts/
+!backend/scripts/
+backend/scripts/*
+!backend/scripts/export-order-statuses.js
+!backend/scripts/order-statuses.catalog.json
+!backend/scripts/test-order-lifecycle.js
+!backend/scripts/test-print-sections.js
+!backend/scripts/test-lifecycle-deletion.js
+!backend/scripts/test-status-revisions.sql
+!backend/scripts/baseline-existing-database.js
+!backend/scripts/BASELINE.md
 tmp-*
 

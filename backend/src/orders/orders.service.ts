@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ProductionFilesService } from './production-files.service';
+import { lifecycleEligible } from './order-lifecycle.policy';
 import { StorageCleanupService } from '../storage/storage-cleanup.service';
 import { productionOrderData } from './production-order-data';
 import { deliveryTypeSql } from './delivery-type';
@@ -384,6 +385,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
+        systemTags: { orderBy: { markedAt: 'asc' } },
         printPhotos: { orderBy: { id: 'asc' } },
         pinnedSketches: {
           orderBy: { message: { createdAt: 'desc' } },
@@ -450,9 +452,16 @@ export class OrdersService {
     const { rawPayload, ...bluesalesInfo } = order.bluesalesInfo ?? {};
     return {
       ...base,
+      systemTags: order.systemTags.map((tag) => ({
+        ...tag,
+        name: tag.kind === 'ATTACHMENT_CLEANUP' ? 'Вложения удалены' : 'Будет завершён',
+        actionEnabled: process.env[tag.kind === 'ATTACHMENT_CLEANUP' ? 'ORDER_ATTACHMENT_CLEANUP_ENABLED' : 'ORDER_AUTO_COMPLETE_ENABLED'] === 'true',
+        scheduledAt: tag.kind === 'ATTACHMENT_CLEANUP' ? new Date(tag.markedAt.getTime() + 7 * 24 * 60 * 60 * 1000) : null,
+      })),
       finalSketchMessageId: order.pinnedSketches[0]?.messageId ?? null,
       pinnedSketches: this.serializePinnedSketches(order.pinnedSketches),
-      printPhotos: await this.attachments.serialize(order.printPhotos),
+      printPhotos: await this.attachments.serialize(order.printPhotos.filter((photo) => photo.kind !== 'print-inscription')),
+      printInscriptions: await this.attachments.serialize(order.printPhotos.filter((photo) => photo.kind === 'print-inscription')),
       source: order.source,
       dialogLink: order.dialogLink,
       deliveryManagerName: order.deliveryManagerName,
@@ -477,7 +486,7 @@ export class OrdersService {
   }
 
   async updatePrintPhotoSize(id: number, attachmentId: number, dto: UpdateAttachmentPhotoSizeDto) {
-    return this.attachments.updatePhotoSize({ id: attachmentId, printPhotoOrderId: id }, dto.photoSize);
+    throw new BadRequestException('В разделах файлов для печати нельзя устанавливать размер картины');
   }
 
   async downloadProductionImage(id: number, attachmentId: number, textSize?: string) {
@@ -690,13 +699,15 @@ export class OrdersService {
       }
     }
 
-    if (dto.printPhotoKeys !== undefined || dto.removePrintPhotoIds !== undefined) {
+    if (dto.printPhotoKeys !== undefined || dto.printInscriptionKeys !== undefined || dto.removePrintPhotoIds !== undefined) {
       const removeIds = [...new Set(dto.removePrintPhotoIds ?? [])];
       const existingIds = new Set(existing.printPhotos.map((photo) => photo.id));
       if (removeIds.some((photoId) => !existingIds.has(photoId))) {
         throw new BadRequestException('Фото для печати не найдено в этом заказе');
       }
-      const keys = [...new Set(dto.printPhotoKeys ?? [])];
+      const inscriptionKeys = new Set(dto.printInscriptionKeys ?? []);
+      if ((dto.printPhotoKeys ?? []).some((key) => inscriptionKeys.has(key))) throw new BadRequestException('Файл нельзя одновременно добавить в два раздела печати');
+      const keys = [...new Set([...(dto.printPhotoKeys ?? []), ...inscriptionKeys])];
       const photos = await Promise.all(keys.map(async (key) => {
         const stat = await this.storage.stat(key);
         if (!stat) throw new BadRequestException('Загруженный файл не найден');
@@ -710,7 +721,7 @@ export class OrdersService {
           mimeType: stat.mimeType,
           size: stat.size,
           ...stat.previews,
-          kind: 'print-photo',
+          kind: inscriptionKeys.has(key) ? 'print-inscription' : 'print-photo',
         };
       }));
       // Add/remove only the requested attachments: concurrent additions stay intact.
@@ -871,7 +882,7 @@ export class OrdersService {
     } else {
       await this.prisma.order.update({ where: { id }, data });
     }
-    try { await this.productionFiles.queueOrder(id, dto.productionTextSize, 'order_update', dto.printPhotoKeys ?? []); }
+    try { await this.productionFiles.queueOrder(id, dto.productionTextSize, 'order_update', [...(dto.printPhotoKeys ?? []), ...(dto.printInscriptionKeys ?? [])]); }
     catch (error) { this.logger.warn(`Очередь производства заказа #${id} будет восстановлена в фоне: ${error.message}`); }
     await this.orderEvents.record(id, actor.id, changes);
     return this.findOne(id);
@@ -1070,7 +1081,7 @@ export class OrdersService {
       }));
   }
 
-  async updateOrderStatus(id: number, statusId: number, actor?: AuthUser) {
+  async updateOrderStatus(id: number, statusId: number, actor?: AuthUser, expectedStatusId?: number) {
     const [order, targetStatus] = await Promise.all([
       this.prisma.order.findUnique({
         where: { id },
@@ -1114,7 +1125,7 @@ export class OrdersService {
           sketchStartedAt: true,
           sketchReadyAt: true,
           bluesalesInfo: {
-            select: { orderStatusId: true, orderStatus: true },
+            select: { orderStatusId: true, orderStatus: true, rawPayload: true },
           },
         },
       });
@@ -1123,6 +1134,8 @@ export class OrdersService {
       }
 
       const prevStatusId = current.bluesalesInfo.orderStatusId;
+      if (expectedStatusId !== undefined && prevStatusId !== expectedStatusId) return;
+      if (expectedStatusId !== undefined && !lifecycleEligible(prevStatusId, current.bluesalesInfo.rawPayload, new Date(), true)) return;
       const prevStatusName = current.bluesalesInfo.orderStatus;
       if (prevStatusId === statusId) return;
 

@@ -14,8 +14,9 @@ export class CreateMessageDto {
   @MaxLength(5000)
   body?: string;
 
+  @IsOptional()
   @IsEnum(MessageKind)
-  kind: MessageKind;
+  kind?: MessageKind;
 
   @IsOptional()
   @IsInt()

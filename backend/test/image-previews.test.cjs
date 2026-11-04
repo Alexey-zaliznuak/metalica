@@ -172,6 +172,7 @@ test('preview backfill runs four distinct sources and refills without waiting fo
   const releases = new Map();
   const started = [];
   const prisma = { attachment: {
+    count: async ({ where }) => rows.filter((row) => row.objectKey === where.objectKey).length,
     findMany: async ({ where, take }) => rows.filter((row) => row.previewStatus === 'pending' && !where.objectKey.notIn.includes(row.objectKey)).slice(0, take),
     updateMany: async ({ where, data }) => {
       for (const row of rows) if (row.objectKey === where.objectKey && row.previewStatus === where.previewStatus) Object.assign(row, data);
@@ -221,6 +222,37 @@ function storageMock({ failVariant = false, failOriginal = false } = {}) {
   };
   return { storage, objects, deleted };
 }
+
+test('preview completed after attachment deletion cleans orphan objects but retains shared sources', async () => {
+  for (const sharedSourceSurvives of [false, true]) {
+    let rows = [{ id: 1, objectKey: 'racing.png', previewStatus: 'pending', previewAttempts: 0 }];
+    let release;
+    const rendering = new Promise((resolve) => { release = resolve; });
+    const enqueued = [], warnings = [];
+    const service = new AttachmentPreviewsService({ attachment: {
+      findMany: async () => [...rows],
+      updateMany: async ({ where, data }) => {
+        for (const row of rows) if (row.objectKey === where.objectKey && row.previewStatus === where.previewStatus) Object.assign(row, data);
+      },
+      count: async ({ where }) => rows.filter((row) => row.objectKey === where.objectKey).length,
+    } }, { ensureImagePreviews: async () => {
+      await rendering;
+      return { ...imagePreviewKeys('racing.png'), previewStatus: 'ready' };
+    } }, { enqueue: async (keys) => { enqueued.push(...keys); } });
+    service.logger = { warn: (message) => warnings.push(message) };
+    const work = service.processBatch();
+    await new Promise((resolve) => setImmediate(resolve));
+    rows = sharedSourceSurvives
+      ? [{ id: 2, objectKey: 'racing.png', previewStatus: 'pending', previewAttempts: 0 }]
+      : [];
+    release();
+    await work;
+    assert.deepEqual(warnings, [], 'success must not silently enter retry handling');
+    assert.deepEqual(enqueued, sharedSourceSurvives ? [] : ['racing.png', ...Object.values(imagePreviewKeys('racing.png'))]);
+    if (sharedSourceSurvives) assert.equal(rows[0].previewStatus, 'ready');
+    assert.equal(service.activeKeys.size, 0);
+  }
+});
 
 test('upload preserves original bytes and exposes separate thumbnail and preview URLs', async () => {
   const { storage, objects } = storageMock();
@@ -300,6 +332,7 @@ test('backfill persists ready states, does not overlap, and stops after three st
   let fail = true;
   const writes = [];
   const service = new AttachmentPreviewsService({ attachment: {
+    count: async ({ where }) => rows.filter((row) => row.objectKey === where.objectKey).length,
     findMany: async () => rows.filter((row) => row.previewStatus === 'pending'),
     updateMany: async ({ where, data }) => {
       writes.push(data);

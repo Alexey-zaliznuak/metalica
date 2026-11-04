@@ -62,6 +62,7 @@ export async function productionHeader(
   comment?: string | null,
   textScale = 1,
   deliveryService?: string | null,
+  numberOnly = false,
 ) {
   const padding = Math.max(1, Math.round(width * 0.02));
   const numberWidth = Math.max(1, Math.round(width * 0.30));
@@ -117,7 +118,7 @@ export async function productionHeader(
   const bottom = height - Math.max(1, Math.round(width * 0.006));
   const stroke = Math.max(1, width * 0.002);
   const head = width * 0.006;
-  const arrows = [width * 0.035, width * 0.395].map((x) =>
+  const arrows = (numberOnly ? [] : [width * 0.035, width * 0.395]).map((x) =>
     `<path d="M ${x} ${bottom - arrowHeight} V ${bottom} M ${x - head} ${bottom - head} L ${x} ${bottom} L ${x + head} ${bottom - head}"/>`,
   ).join('');
   const numberTop = height - padding - number.info.height;
@@ -154,6 +155,7 @@ export async function productionImage(
   comment?: string | null,
   textScale = 1,
   deliveryService?: string | null,
+  numberOnly = false,
 ) {
   const photo = sharp(input, { limitInputPixels: MAX_PIXELS });
   const metadata = await photo.metadata();
@@ -165,7 +167,7 @@ export async function productionImage(
   const height = (rotated ? metadata.width : metadata.height) ?? 0;
   if (width < 32 || height < 1) throw new BadRequestException('Изображение слишком маленькое');
   const sideHeader = width > height;
-  const header = await productionHeader(Math.min(width, height), orderNumber, articles, comment, textScale, deliveryService);
+  const header = await productionHeader(Math.min(width, height), orderNumber, articles, comment, textScale, deliveryService, numberOnly);
   const outputWidth = width + (sideHeader ? header.height : 0);
   const outputHeight = height + (sideHeader ? 0 : header.height);
   if (outputWidth * outputHeight > MAX_PIXELS) {

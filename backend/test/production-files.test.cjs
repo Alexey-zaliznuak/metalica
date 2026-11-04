@@ -77,7 +77,7 @@ async function setup() {
   const prisma = {
     order: { findUnique: async ({ where }) => where.id === order.id ? order : null },
     attachment: table(photos), productionFile: table(jobs),
-    productionTaskEvent: { create: async ({ data }) => { const event = { ...data, createdAt: new Date() }; events.push(event); return event; } },
+    productionTaskEvent: { create: async ({ data }) => { const event = { createdAt: new Date(), ...data }; events.push(event); return event; } },
     storedFileDeletion: table(deletions, { generation: 0, attempts: 0, nextAttemptAt: new Date() }),
     $transaction: async (operation) => operation(prisma),
   };

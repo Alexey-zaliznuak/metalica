@@ -62,6 +62,7 @@ export interface UpdateOrderPayload {
   pinSketchMessageId?: number
   unpinSketchMessageId?: number
   printPhotoKeys?: string[]
+  printInscriptionKeys?: string[]
   removePrintPhotoIds?: number[]
   orderNumber?: string
   title?: string
@@ -157,9 +158,11 @@ export interface PinnedSketch {
 }
 
 export interface Order {
+  systemTags?: { id: number; kind: string; name: string; markedAt: string; completedAt: string | null; scheduledAt: string | null; actionEnabled: boolean }[]
   id: number
   pinnedSketches?: PinnedSketch[]
   printPhotos?: Attachment[]
+  printInscriptions?: Attachment[]
   orderNumber: string
   title: string | null
   note: string | null

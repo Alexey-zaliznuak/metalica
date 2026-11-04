@@ -4,6 +4,7 @@ import { Attachment } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from './storage.service';
 import { imageJobConfiguration } from './image-job.config';
+import { StorageCleanupService } from './storage-cleanup.service';
 
 @Injectable()
 export class AttachmentPreviewsService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -13,7 +14,7 @@ export class AttachmentPreviewsService implements OnApplicationBootstrap, OnModu
   private stopping = false;
   private readonly concurrency = imageJobConfiguration().preview;
 
-  constructor(private prisma: PrismaService, private storage: StorageService) {}
+  constructor(private prisma: PrismaService, private storage: StorageService, private cleanup: StorageCleanupService) {}
 
   onApplicationBootstrap() {
     void this.processBatch();
@@ -62,6 +63,10 @@ export class AttachmentPreviewsService implements OnApplicationBootstrap, OnModu
       await this.prisma.attachment.updateMany({
         where: { objectKey: attachment.objectKey, previewStatus: 'pending' }, data: previews,
       });
+      // A lifecycle cleanup may remove the attachment while its preview is rendering.
+      if (!await this.prisma.attachment.count({ where: { objectKey: attachment.objectKey } })) {
+        await this.cleanup.enqueue([attachment.objectKey, previews.thumbnailKey, previews.previewKey]);
+      }
     } catch (error) {
       this.logger.warn(`Превью вложения #${attachment.id}: ${(error as Error).message}`);
       await this.prisma.attachment.updateMany({

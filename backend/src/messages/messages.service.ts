@@ -17,19 +17,6 @@ import { UpdateAttachmentPhotoSizeDto } from '../storage/dto/update-attachment-p
 const messageInclude = {
   author: { select: { id: true, name: true, role: true } },
   attachments: true,
-  // Наличие revision -> запрос правки; наличие revisionClosure -> ответ/закрытие.
-  revision: { select: { id: true, closure: { select: { id: true } } } },
-  revisionClosure: {
-    select: {
-      id: true,
-      revision: {
-        select: {
-          messageId: true,
-          message: { select: { id: true, createdAt: true, body: true } },
-        },
-      },
-    },
-  },
 } satisfies Prisma.MessageInclude;
 
 type MessageWithRelations = Prisma.MessageGetPayload<{ include: typeof messageInclude }>;
@@ -75,71 +62,8 @@ export class MessagesService {
     const buildAttachments = (attachmentKind: string) =>
       this.attachments.buildCreateInput(dto.attachmentKeys, attachmentKind);
 
-    // Запрос правки: сообщение + связанная (пустая) модель Revision.
-    if (dto.kind === MessageKind.REVISION_REQUEST) {
-      // Нельзя открывать новую правку, пока не закрыта предыдущая: иначе
-      // теряется однозначная связь «правка -> закрытие» и портится аналитика.
-      const openRevision = await this.prisma.revision.findFirst({
-        where: { orderId, closure: { is: null } },
-        select: { id: true },
-      });
-      if (openRevision) {
-        throw new BadRequestException(
-          'По заказу уже есть незакрытая правка. Дождитесь её закрытия, ' +
-            'а новые детали добавьте, отредактировав запрос правки или отправив обычное сообщение.',
-        );
-      }
-
-      const message = await this.prisma.message.create({
-        data: {
-          orderId,
-          authorId,
-          body,
-          attachments: await buildAttachments('attachment'),
-          revision: { create: { orderId } },
-        },
-        include: messageInclude,
-      });
-      this.logCreated(message, orderId, authorId, dto);
-      return this.serialize(message);
-    }
-
-    // Ответ/закрытие правки: находим открытую правку и создаём RevisionClosure
-    // с денормализацией (кто закрыл + время открытия/закрытия).
-    if (dto.kind === MessageKind.REVISION_ANSWER) {
-      const revision = dto.answerToId
-        ? await this.prisma.revision.findFirst({
-            where: { orderId, messageId: dto.answerToId, closure: { is: null } },
-            select: { id: true, openedAt: true },
-          })
-        : await this.prisma.revision.findFirst({
-            where: { orderId, closure: { is: null } },
-            orderBy: { openedAt: 'desc' },
-            select: { id: true, openedAt: true },
-          });
-
-      if (!revision) {
-        throw new BadRequestException('Нет открытой правки для закрытия в этом заказе');
-      }
-
-      const message = await this.prisma.message.create({
-        data: {
-          orderId,
-          authorId,
-          body,
-          attachments: await buildAttachments('revision'),
-          revisionClosure: {
-            create: {
-              revisionId: revision.id,
-              closedById: authorId,
-              openedAt: revision.openedAt,
-            },
-          },
-        },
-        include: messageInclude,
-      });
-      this.logCreated(message, orderId, authorId, dto);
-      return this.serialize(message);
+    if ((dto.kind && dto.kind !== MessageKind.NORMAL) || dto.answerToId != null) {
+      throw new BadRequestException('Правки открываются и закрываются изменением статуса заказа');
     }
 
     // Обычное сообщение.
@@ -227,29 +151,15 @@ export class MessagesService {
   private async serialize(m: MessageWithRelations) {
     const attachments = await this.attachments.serialize(m.attachments);
 
-    const kind = m.revision
-      ? MessageKind.REVISION_REQUEST
-      : m.revisionClosure
-        ? MessageKind.REVISION_ANSWER
-        : MessageKind.NORMAL;
-
-    const answerToMessage = m.revisionClosure?.revision?.message ?? null;
-
     return {
       id: m.id,
       orderId: m.orderId,
-      kind,
+      kind: MessageKind.NORMAL,
       body: m.body,
       createdAt: m.createdAt,
       author: m.author,
-      answerToId: m.revisionClosure?.revision?.messageId ?? null,
-      answerTo: answerToMessage
-        ? {
-            id: answerToMessage.id,
-            createdAt: answerToMessage.createdAt,
-            body: answerToMessage.body,
-          }
-        : null,
+      answerToId: null,
+      answerTo: null,
       attachments,
     };
   }

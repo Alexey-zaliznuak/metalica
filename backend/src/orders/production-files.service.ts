@@ -57,8 +57,10 @@ export class ProductionFilesService implements OnApplicationBootstrap, OnModuleD
       throw new BadRequestException('Для производства прикрепите растровое изображение вместо PDF или DNG');
     }
     // Match the order page's printPhotos order (id ASC), rather than the database ID.
-    const photoNumber = await client.attachment.count({ where: { printPhotoOrderId: orderId, id: { lte: attachmentId } } });
-    return { sourceKey: attachment.objectKey, parameters: productionOrderData.context(order.orderNumber, order.bluesalesInfo?.rawPayload, photoNumber) };
+    const photoNumber = await client.attachment.count({ where: { printPhotoOrderId: orderId, kind: { not: 'print-inscription' }, id: { lte: attachmentId } } });
+    return { sourceKey: attachment.objectKey, parameters: attachment.kind === 'print-inscription'
+      ? { ...productionOrderData.context(order.orderNumber, null), numberOnly: true }
+      : productionOrderData.context(order.orderNumber, order.bluesalesInfo?.rawPayload, photoNumber) };
   }
 
   /** Enqueue only: request handlers never decode an image or wait for its header. */

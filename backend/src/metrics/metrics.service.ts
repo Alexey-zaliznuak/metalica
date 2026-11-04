@@ -184,6 +184,7 @@ export class MetricsService {
       overallCount += 1;
       overallTotalSeconds += seconds;
 
+      if (c.closedById == null) continue;
       const entry = byDesignerMap.get(c.closedById) ?? {
         designerId: c.closedById,
         name: c.closedBy?.name ?? `#${c.closedById}`,
@@ -566,6 +567,7 @@ export class MetricsService {
     });
     const map = new Map<number, number>();
     for (const closure of closures) {
+      if (closure.closedById == null) continue;
       map.set(closure.closedById, (map.get(closure.closedById) ?? 0) + 1);
     }
     return map;
@@ -589,16 +591,9 @@ export class MetricsService {
     >`
       SELECT
         o."revisionDesignerId" AS "userId",
-        COUNT(*) AS "openRevisionOrders"
+        COUNT(DISTINCT o."id") AS "openRevisionOrders"
       FROM "Order" o
-      JOIN LATERAL (
-        SELECT m."id"
-        FROM "Message" m
-        WHERE m."orderId" = o."id"
-        ORDER BY m."createdAt" DESC, m."id" DESC
-        LIMIT 1
-      ) lm ON TRUE
-      JOIN "Revision" rev ON rev."messageId" = lm."id"
+      JOIN "Revision" rev ON rev."orderId" = o."id"
       LEFT JOIN "RevisionClosure" rc ON rc."revisionId" = rev."id"
       WHERE o."revisionDesignerId" IS NOT NULL
         AND rc."id" IS NULL

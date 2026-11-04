@@ -148,6 +148,7 @@ model Order {
   revisions             Revision[]
   events                OrderEvent[]
   statusChanges         OrderStatusChange[]
+  systemTags            OrderSystemTag[]
   // Имена менеджеров подтягиваются из BlueSales (не FK):
   //  - deliveryManagerName  — менеджер ведения (Lead.managerName = customer.manager).
   //    Пишется и при синке заказа, и при синке карточки клиента.
@@ -181,6 +182,18 @@ model Order {
 }
 
 // Данные заказа, специфичные для BlueSales (1-к-1 с Order)
+model OrderSystemTag {
+  id          Int       @id @default(autoincrement())
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     Int
+  kind        String
+  markedAt    DateTime  @default(now())
+  completedAt DateTime?
+
+  @@unique([orderId, kind])
+  @@index([kind, markedAt])
+}
+
 model BluesalesOrderInfo {
   id                    Int       @id @default(autoincrement())
   order                 Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -426,10 +439,7 @@ model Message {
   author          User             @relation(fields: [authorId], references: [id])
   authorId        Int
   body            String?
-  // Тип сообщения теперь выводится из связей, а не хранится в колонке kind:
-  //  - есть revision            -> это ЗАПРОС правки (REVISION_REQUEST)
-  //  - есть revisionClosure     -> это ОТВЕТ/закрытие правки (REVISION_ANSWER)
-  //  - нет ни того ни другого   -> обычное сообщение (NORMAL)
+  // Исторические ссылки; новые правки управляются статусом заказа.
   revision        Revision?        @relation("RevisionRequestMessage")
   revisionClosure RevisionClosure? @relation("RevisionClosureMessage")
   attachments     Attachment[]
@@ -444,9 +454,9 @@ model Revision {
   id        Int              @id @default(autoincrement())
   order     Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
   orderId   Int
-  // 1-к-1 с сообщением-запросом
-  message   Message          @relation("RevisionRequestMessage", fields: [messageId], references: [id], onDelete: Cascade)
-  messageId Int              @unique
+  // Необязательная историческая связь с сообщением-запросом
+  message   Message?         @relation("RevisionRequestMessage", fields: [messageId], references: [id], onDelete: SetNull)
+  messageId Int?             @unique
   openedAt  DateTime         @default(now())
   // 1-к-1 закрытие (если правка закрыта)
   closure   RevisionClosure?
@@ -465,8 +475,8 @@ model RevisionClosure {
   message    Message? @relation("RevisionClosureMessage", fields: [messageId], references: [id], onDelete: SetNull)
   messageId  Int?     @unique
   // Денормализовано: художник правок, закрывший правку
-  closedBy   User     @relation("RevisionClosedBy", fields: [closedById], references: [id])
-  closedById Int
+  closedBy   User?    @relation("RevisionClosedBy", fields: [closedById], references: [id])
+  closedById Int?
   // Денормализовано под аналитику: время открытия (дублирует Revision.openedAt) и закрытия
   openedAt   DateTime
   closedAt   DateTime @default(now())

@@ -116,6 +116,24 @@ test('duplicate keys in a batch create one attachment per file', async () => {
   assert.equal(writes[0].data.printPhotos.create.length, 1);
 });
 
+test('inscriptions use shared print attachment storage with a distinct kind', async () => {
+  const { service, writes } = setup();
+  await service.update(10, { printInscriptionKeys: ['caption.png', 'caption.png'] }, actor);
+  assert.equal(writes[0].data.printPhotos.create.length, 1);
+  assert.equal(writes[0].data.printPhotos.create[0].kind, 'print-inscription');
+  const conflict = setup();
+  await assert.rejects(conflict.service.update(10, {
+    printPhotoKeys: ['same.png'], printInscriptionKeys: ['same.png'],
+  }, actor), /два раздела/);
+  assert.equal(conflict.writes.length, 0);
+});
+
+test('print files cannot receive painting size markers through the API', async () => {
+  const { service, writes } = setup();
+  await assert.rejects(service.updatePrintPhotoSize(10, 1, { photoSize: '30x40' }), /нельзя устанавливать/);
+  assert.equal(writes.length, 0);
+});
+
 test('production photos retain the preview keys generated during upload', async () => {
   const previews = { thumbnailKey: 'photo.jpg.thumbnail-v1.webp', previewKey: 'photo.jpg.preview-v1.webp', previewStatus: 'ready' };
   const { service, writes } = setup({ stat: { size: 30_000_000, mimeType: 'image/jpeg', previews } });

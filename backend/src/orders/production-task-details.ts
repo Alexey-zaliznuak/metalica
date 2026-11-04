@@ -3,7 +3,7 @@ import type { ProductionParameters } from './production-file-renderer';
 import { isShownOnProductionImage, productionArticleText } from './production-image';
 
 export type ProductionTrigger = 'attachment_added' | 'order_update' | 'background_scan' | 'status' | 'download' | 'expedite' | 'worker';
-export type ProductionChange = { field: string; before: string | number | string[] | null; after: string | number | string[] | null };
+export type ProductionChange = { field: string; before: string | number | boolean | string[] | null; after: string | number | boolean | string[] | null };
 const plain = (value?: string | null) => (value ?? '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
 
 /** Compare what is printed. BlueSales does not keep goodsPositions in a stable order. */
@@ -12,6 +12,7 @@ export function productionContent(parameters: ProductionParameters) {
     orderNumber: plain(parameters.orderNumber), photoNumber: parameters.photoNumber ?? null,
     articles: parameters.articles.filter(isShownOnProductionImage).map(productionArticleText).filter(Boolean).sort(),
     comment: plain(parameters.comment), deliveryService: plain(parameters.deliveryService),
+    ...(parameters.numberOnly ? { numberOnly: true } : {}),
   };
 }
 

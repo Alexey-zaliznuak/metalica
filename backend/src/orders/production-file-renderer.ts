@@ -2,7 +2,7 @@ import { Worker } from 'worker_threads';
 import { join } from 'path';
 import { productionOrderData } from './production-order-data';
 
-export type ProductionParameters = ReturnType<typeof productionOrderData.context>;
+export type ProductionParameters = ReturnType<typeof productionOrderData.context> & { numberOnly?: boolean };
 
 export function renderProductionFile(input: string, destination: string, parameters: ProductionParameters, textSize: string): Promise<void> {
   return new Promise((resolve, reject) => {

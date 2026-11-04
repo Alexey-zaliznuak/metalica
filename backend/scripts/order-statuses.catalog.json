@@ -1,0 +1,118 @@
+[
+  {
+    "bsOrderStatusId": 145338,
+    "name": "Новый (ждем фото)"
+  },
+  {
+    "bsOrderStatusId": 145339,
+    "name": "Бронь"
+  },
+  {
+    "bsOrderStatusId": 145340,
+    "name": "Готовим эскиз"
+  },
+  {
+    "bsOrderStatusId": 145341,
+    "name": "На утверждении"
+  },
+  {
+    "bsOrderStatusId": 145342,
+    "name": "Доставлен"
+  },
+  {
+    "bsOrderStatusId": 145343,
+    "name": "Отменен"
+  },
+  {
+    "bsOrderStatusId": 174702,
+    "name": "Разбор/Утиль"
+  },
+  {
+    "bsOrderStatusId": 174704,
+    "name": "Правки у художника"
+  },
+  {
+    "bsOrderStatusId": 174705,
+    "name": "Согласование цены и размера"
+  },
+  {
+    "bsOrderStatusId": 174706,
+    "name": "Выставили счет"
+  },
+  {
+    "bsOrderStatusId": 174707,
+    "name": "Предлагаем допы"
+  },
+  {
+    "bsOrderStatusId": 174708,
+    "name": "Получили оплату (Отправляем на изготовление)"
+  },
+  {
+    "bsOrderStatusId": 174709,
+    "name": "Запросили печать у худ."
+  },
+  {
+    "bsOrderStatusId": 174710,
+    "name": "Напечатано (на упаковке)"
+  },
+  {
+    "bsOrderStatusId": 174711,
+    "name": "Готов к отправке"
+  },
+  {
+    "bsOrderStatusId": 174712,
+    "name": "Отправлен (СМС СДЭК"
+  },
+  {
+    "bsOrderStatusId": 174713,
+    "name": "Брак (переизготовление)"
+  },
+  {
+    "bsOrderStatusId": 174714,
+    "name": "Возможно отказ"
+  },
+  {
+    "bsOrderStatusId": 174764,
+    "name": "Ожидает получения"
+  },
+  {
+    "bsOrderStatusId": 174964,
+    "name": "Правки у клиента"
+  },
+  {
+    "bsOrderStatusId": 174993,
+    "name": "Возврат"
+  },
+  {
+    "bsOrderStatusId": 178802,
+    "name": "На доставке"
+  },
+  {
+    "bsOrderStatusId": 179917,
+    "name": "Эскиз в работе"
+  },
+  {
+    "bsOrderStatusId": 179918,
+    "name": "Правка в работе"
+  },
+  {
+    "bsOrderStatusId": 179919,
+    "name": "Эскиз готов"
+  },
+  {
+    "bsOrderStatusId": 179920,
+    "name": "Правка готова"
+  },
+  {
+    "bsOrderStatusId": 180627,
+    "name": "Переделка эскиза"
+  },
+  {
+    "bsOrderStatusId": 182288,
+    "name": "Самовывоз ГОТОВ"
+  },
+  {
+    "bsOrderStatusId": 182736,
+    "name": "На изготовление ИСПАНИЯ"
+  }
+]
