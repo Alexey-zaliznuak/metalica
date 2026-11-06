@@ -22,6 +22,21 @@ INSERT INTO "BluesalesOrderInfo" VALUES(1,174704,NULL),(2,174704,NULL),(3,1,NULL
 
 \ir ../prisma/migrations/20261104120000_status_driven_revisions/migration.sql
 
+-- Reproduce production startup with db push: tables are current, trigger absent.
+DROP TRIGGER metalica_revision_status_transition ON "BluesalesOrderInfo";
+DROP FUNCTION metalica_revision_status_transition();
+DELETE FROM "Revision" WHERE "messageId" IS NULL;
+\ir ../prisma/migrations/20261106100000_ensure_revision_status_tracking/migration.sql
+CREATE TEMP TABLE first_start_revisions AS SELECT * FROM "Revision";
+-- Restart must preserve IDs and timestamps and must not duplicate cycles.
+\ir ../prisma/migrations/20261106100000_ensure_revision_status_tracking/migration.sql
+DO $$ BEGIN
+ IF EXISTS (SELECT * FROM "Revision" EXCEPT SELECT * FROM first_start_revisions)
+ OR EXISTS (SELECT * FROM first_start_revisions EXCEPT SELECT * FROM "Revision")
+ THEN RAISE EXCEPTION 'restart changed revisions'; END IF;
+END $$;
+DROP TABLE first_start_revisions;
+
 DO $$ BEGIN
  IF (SELECT count(*) FROM "Revision") <> 3 THEN RAISE EXCEPTION 'backfill duplicates legacy cycle'; END IF;
  IF (SELECT count(*) FROM "RevisionClosure") <> 0 THEN RAISE EXCEPTION 'migration closes active requests'; END IF;
