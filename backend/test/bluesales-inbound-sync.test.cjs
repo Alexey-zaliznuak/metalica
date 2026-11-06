@@ -194,6 +194,7 @@ test('outbox delivers and acknowledges a local status without importing remote f
   let remoteStatus = 2;
   const change = { id: 1, orderId: 7, toStatusId: 8, toStatusName: 'Local', attempts: 0, leaseToken: 'lease', verifyFirst: false };
   const tx = {
+    $queryRaw: async () => [],
     orderStatusChange: {
       updateMany: async ({ data }) => { calls.push(['state', data.state]); return { count: 1 }; },
       count: async () => 0,
@@ -235,8 +236,12 @@ test('enabling import restores normal sync and outbox reconciliation', async (t)
   assert.deepEqual(imported, [[101, 1]]);
   let saved;
   const tx = {
+    $queryRaw: async () => [],
     orderStatusChange: { updateMany: async () => ({ count: 1 }), count: async () => 0 },
-    bluesalesOrderInfo: { updateMany: async ({ data }) => { saved = data; } },
+    bluesalesOrderInfo: {
+      findUnique: async () => ({ orderStatusId: 8 }),
+      updateMany: async ({ data }) => { saved = data; return { count: 1 }; },
+    },
   };
   const outbox = new OrderStatusOutboxProcessor({ $transaction: async (task) => task(tx) }, {}, configuration(), inboundSync);
   outbox.logger = silent;

@@ -5,6 +5,7 @@ import { OrderSource, OrderStatusChangeState, Prisma } from '@prisma/client';
 import { AssignmentService } from '../assignment/assignment.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { trackRevisionStatusTransition } from '../orders/revision-status.service';
 import { BluesalesApiService, BluesalesSyncPausedError, BsCustomer, BsOrder } from './bluesales-api.service';
 import { BluesalesInboundSyncService } from './bluesales-inbound-sync';
 import {
@@ -1194,6 +1195,10 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
               : {}),
           },
         });
+        if (canApplyStatus) {
+          await trackRevisionStatusTransition(tx, existingInfo.orderId,
+            currentInfo?.orderStatusId ?? null, statusData.orderStatusId, statusObservedAt);
+        }
         await tx.order.update({
           where: { id: existingInfo.orderId },
           data: {
@@ -1334,8 +1339,13 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       );
       if (!this.inboundSyncEnabled) return;
       try {
-        await this.prisma.bluesalesOrderInfo.create({
-          data: { ...infoData, ...statusData, bsOrderId: bsOrder.id, orderId: sameNumber.id },
+        await this.prisma.$transaction(async (tx) => {
+          await tx.bluesalesOrderInfo.create({
+            data: { ...infoData, ...statusData, orderStatusEnteredAt: statusObservedAt,
+              bsOrderId: bsOrder.id, orderId: sameNumber.id },
+          });
+          await trackRevisionStatusTransition(tx, sameNumber.id, null,
+            statusData.orderStatusId, statusObservedAt);
         });
       } catch (err) {
         if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') {
@@ -1417,17 +1427,29 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       closesSketch,
     );
     if (!this.inboundSyncEnabled) return;
-    const created = await this.prisma.order.create({
-      data: {
-        orderNumber,
-        title,
-        source: OrderSource.BLUESALES,
-        leadId: leadId ?? undefined,
-        ...managerData,
-        ...newSketchData,
-        bluesalesInfo: { create: { ...infoData, ...statusData, bsOrderId: bsOrder.id } },
-      },
-      select: { id: true, orderNumber: true },
+    const created = await this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.create({
+        data: {
+          orderNumber,
+          title,
+          source: OrderSource.BLUESALES,
+          leadId: leadId ?? undefined,
+          ...managerData,
+          ...newSketchData,
+          bluesalesInfo: {
+            create: {
+              ...infoData,
+              ...statusData,
+              orderStatusEnteredAt: statusObservedAt,
+              bsOrderId: bsOrder.id,
+            },
+          },
+        },
+        select: { id: true, orderNumber: true },
+      });
+      await trackRevisionStatusTransition(tx, order.id, null,
+        statusData.orderStatusId, statusObservedAt);
+      return order;
     });
 
     if (statusData.orderStatusId != null && statusData.orderStatus) {

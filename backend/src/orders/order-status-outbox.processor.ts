@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { BsOrder, BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { BluesalesInboundSyncService } from '../bluesales/bluesales-inbound-sync';
 import { PrismaService } from '../prisma/prisma.service';
+import { trackRevisionStatusTransition } from './revision-status.service';
 
 const ACTIVE_STATES: OrderStatusChangeState[] = [
   OrderStatusChangeState.PENDING,
@@ -289,7 +290,11 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
 
   private async completeChange(change: ClaimedStatusChange, actual: BsOrder, observedAt: Date): Promise<void> {
     const actualStatusId = actual.orderStatus!.id;
+    if (actualStatusId == null) throw new Error('BlueSales returned no order status ID');
     const saved = await this.prisma.$transaction(async (tx) => {
+      // Same lock order as manual status updates: order info, then outbox rows.
+      await tx.$queryRaw`SELECT "orderId" FROM "BluesalesOrderInfo"
+        WHERE "orderId" = ${change.orderId} FOR UPDATE`;
       const completed = await tx.orderStatusChange.updateMany({
         where: {
           id: change.id,
@@ -317,7 +322,10 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
       // Ответ BS подтверждает доставку, но при выключенном импорте не меняет
       // локальную карточку: статус уже сохранён действием менеджера.
       if (newerPending === 0 && this.inboundSync.enabled) {
-        await tx.bluesalesOrderInfo.updateMany({
+        const previous = await tx.bluesalesOrderInfo.findUnique({
+          where: { orderId: change.orderId }, select: { orderStatusId: true },
+        });
+        const updated = await tx.bluesalesOrderInfo.updateMany({
           where: {
             orderId: change.orderId,
             OR: [
@@ -329,9 +337,15 @@ export class OrderStatusOutboxProcessor implements OnModuleInit, OnModuleDestroy
             orderStatusId: actualStatusId,
             orderStatus: actual.orderStatus?.name ?? change.toStatusName,
             orderStatusObservedAt: observedAt,
+            ...(previous?.orderStatusId !== actualStatusId
+              ? { orderStatusEnteredAt: observedAt } : {}),
             lastSyncedAt: observedAt,
           },
         });
+        if (updated.count) {
+          await trackRevisionStatusTransition(tx, change.orderId,
+            previous?.orderStatusId ?? null, actualStatusId, observedAt);
+        }
       }
       return true;
     });

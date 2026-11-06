@@ -24,6 +24,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { AuthUser } from '../auth/current-user.decorator';
 import { OrderEventChange, OrderEventsService } from './order-events.service';
 import { computeSketchTimestampUpdate } from './sketch-status';
+import { trackRevisionStatusTransition } from './revision-status.service';
 import { AssignmentService } from '../assignment/assignment.service';
 import { BluesalesApiService } from '../bluesales/bluesales-api.service';
 import { BluesalesSyncService } from '../bluesales/bluesales-sync.service';
@@ -1174,6 +1175,7 @@ export class OrdersService {
           orderStatusObservedAt: changedAt,
         },
       });
+      await trackRevisionStatusTransition(tx, id, prevStatusId, statusId, changedAt);
       // Даже если метки не меняются, update поднимает Order.updatedAt и карточку
       // с новым статусом наверх доски.
       await tx.order.update({
