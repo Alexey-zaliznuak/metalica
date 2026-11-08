@@ -229,6 +229,7 @@ export interface OrdersBoardSettings {
   selectedDeliveryTypes: string[]
   selectedSizes: string[]
   selectedSystemTags: string[]
+  selectedTagIds: string[]
 }
 
 export interface OrdersColumnResponse {

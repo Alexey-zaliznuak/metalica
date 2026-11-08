@@ -50,6 +50,7 @@ import { describeApiError, logApiError } from '../api/errors'
 import { useAuth } from '../auth/AuthContext'
 import type {
   BluesalesStatusOption,
+  BluesalesTag,
   Order,
   OrderAssigneesResponse,
   OrderFilterOptions,
@@ -105,6 +106,7 @@ const DEFAULT_BOARD_SETTINGS: OrdersBoardSettings = {
   selectedDeliveryTypes: [],
   selectedSizes: [],
   selectedSystemTags: [],
+  selectedTagIds: [],
 }
 
 interface BoardColumn {
@@ -202,6 +204,7 @@ function parseBoardSettings(raw: unknown): OrdersBoardSettings {
     shippingDeadlineTo: typeof raw.shippingDeadlineTo === 'string' ? raw.shippingDeadlineTo : '',
     selectedDeliveryTypes: parseStringArray(raw.selectedDeliveryTypes),
     selectedSizes: parseStringArray(raw.selectedSizes).filter((size) => ORDER_SIZE_OPTIONS.includes(size)),
+    selectedTagIds: parseStringArray(raw.selectedTagIds),
     selectedSystemTags: parseStringArray(raw.selectedSystemTags).filter((kind) => SYSTEM_TAG_OPTIONS.includes(kind)),
   }
 }
@@ -655,6 +658,10 @@ export default function OrdersPage() {
   const [selectedDeliveryTypes, setSelectedDeliveryTypes] = useState<string[]>([])
   const [selectedSizes, setSelectedSizes] = useState<string[]>([])
   const [selectedSystemTags, setSelectedSystemTags] = useState<string[]>([])
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [tagOptions, setTagOptions] = useState<BluesalesTag[]>([])
+  const [tagsLoading, setTagsLoading] = useState(false)
+  const [tagsError, setTagsError] = useState<string | null>(null)
   const [peopleFilterOpen, setPeopleFilterOpen] = useState(false)
   const [sketchDesigners, setSketchDesigners] = useState<
     OrderAssigneesResponse['sketchDesigners']
@@ -749,6 +756,21 @@ export default function OrdersPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!peopleFilterOpen) return
+    let active = true
+    setTagsLoading(true)
+    setTagsError(null)
+    void client.get<BluesalesTag[]>('/orders/tags')
+      .then(({ data }) => { if (active) setTagOptions(data) })
+      .catch(() => { if (active) setTagsError('Не удалось загрузить теги. Откройте фильтры повторно.') })
+      .finally(() => { if (active) setTagsLoading(false) })
+    return () => { active = false }
+  }, [peopleFilterOpen])
+
+  const tagNameById = useMemo(() => new Map(tagOptions.map(tag => [tag.id, tag.name])), [tagOptions])
+  const availableTagIds = useMemo(() => [...new Set([...tagOptions.map(tag => tag.id), ...selectedTagIds])], [tagOptions, selectedTagIds])
+
   // Применение настроек доски (источник истины — бэкенд).
   useEffect(() => {
     if (!statusesLoaded) return
@@ -782,6 +804,7 @@ export default function OrdersPage() {
     setSelectedDeliveryTypes(parsed.selectedDeliveryTypes)
     setSelectedSizes(parsed.selectedSizes)
     setSelectedSystemTags(parsed.selectedSystemTags)
+    setSelectedTagIds(parsed.selectedTagIds)
     setSelectedOrderStatusIds(normalized.selectedIds)
     setColumnOrder(normalized.columnOrder)
     setInitialized(true)
@@ -812,6 +835,7 @@ export default function OrdersPage() {
         selectedDeliveryTypes,
         selectedSizes,
         selectedSystemTags,
+        selectedTagIds,
       } satisfies OrdersBoardSettings,
     })
   }, [
@@ -830,6 +854,7 @@ export default function OrdersPage() {
     selectedDeliveryTypes,
     selectedSizes,
     selectedSystemTags,
+    selectedTagIds,
     columnOrder,
     updateFrontendSettings,
   ])
@@ -901,7 +926,7 @@ export default function OrdersPage() {
       Number(onlyUrgent) +
       Number(Boolean(shippingDeadlineFrom || shippingDeadlineTo)) +
       selectedDeliveryTypes.length +
-      selectedSizes.length + selectedSystemTags.length,
+      selectedSizes.length + selectedSystemTags.length + selectedTagIds.length,
     [
       selectedDeliveryManagers,
       selectedOnboardingManagers,
@@ -914,6 +939,7 @@ export default function OrdersPage() {
       selectedDeliveryTypes,
       selectedSizes,
       selectedSystemTags,
+      selectedTagIds,
     ],
   )
 
@@ -959,6 +985,7 @@ export default function OrdersPage() {
     if (selectedDeliveryTypes.length) params.deliveryTypes = selectedDeliveryTypes
     if (selectedSizes.length) params.sizes = selectedSizes
     if (selectedSystemTags.length) params.systemTags = selectedSystemTags
+    if (selectedTagIds.length) params.tagIds = selectedTagIds
     return params
   }, [
     activeSearchQuery,
@@ -973,6 +1000,7 @@ export default function OrdersPage() {
     selectedDeliveryTypes,
     selectedSizes,
     selectedSystemTags,
+    selectedTagIds,
   ])
 
   const fetchColumnPage = useCallback(
@@ -1547,7 +1575,7 @@ export default function OrdersPage() {
         <DialogContent dividers>
           <DialogContentText sx={{ mb: 2 }}>
             Заказы можно отфильтровать по менеджерам, художникам, наличию
-            закреплённых эскизов, тегу «Срочно», системным меткам, размеру картины, типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
+            закреплённых эскизов, тегам клиентов, системным меткам, размеру картины, типу доставки и дедлайну отправки. Пустой фильтр — без ограничения.
           </DialogContentText>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
@@ -1609,6 +1637,22 @@ export default function OrdersPage() {
               onChange={(_, values) => setSelectedSizes(values)}
               renderInput={(params) => (
                 <TextField {...params} label="Размер картины" placeholder="Все" helperText="Любой из выбранных размеров" />
+              )}
+            />
+            <Autocomplete
+              multiple
+              disableCloseOnSelect
+              size="small"
+              options={availableTagIds}
+              getOptionLabel={(id) => tagNameById.get(id) ?? `Тег #${id}`}
+              value={selectedTagIds}
+              onChange={(_, values) => setSelectedTagIds(values)}
+              loading={tagsLoading}
+              loadingText="Загрузка тегов…"
+              noOptionsText="Теги не найдены"
+              renderInput={(params) => (
+                <TextField {...params} label="Теги клиентов" placeholder="Все"
+                  error={Boolean(tagsError)} helperText={tagsError ?? 'Любой из выбранных тегов, например ИСПАНИЯ'} />
               )}
             />
             <Autocomplete
@@ -1715,6 +1759,7 @@ export default function OrdersPage() {
               setSelectedDeliveryTypes([])
               setSelectedSizes([])
               setSelectedSystemTags([])
+              setSelectedTagIds([])
             }}
           >
             Сбросить

@@ -49,6 +49,7 @@ export class OrdersController {
     @Query('systemTags') systemTags?: string | string[],
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('tagIds') tagIds?: string | string[],
   ) {
     const toArray = (value?: string | string[]): string[] | undefined => {
       if (value == null) return undefined;
@@ -76,6 +77,7 @@ export class OrdersController {
       deliveryTypes: toArray(deliveryTypes),
       sizes: toArray(sizes),
       systemTags: toArray(systemTags),
+      tagIds: toArray(tagIds),
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });

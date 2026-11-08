@@ -3,6 +3,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { OrdersService } = require('../dist/orders/orders.service');
 const { OrdersController } = require('../dist/orders/orders.controller');
+const visibleOrder = { OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null } } }] };
+const visibleWhere = { AND: [visibleOrder] };
 
 function setup({ exact = null, matches = [], orders = [] } = {}) {
   const calls = { raw: 0, where: null };
@@ -28,6 +30,7 @@ test('system tags match any selected tag and combine with status before paginati
   service.prisma.order.findMany = async args => { list = args; return []; };
   await service.findAll({ systemTags: ['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE'], orderStatusId: 3, page: 2, limit: 10 });
   assert.deepEqual(calls.where.AND, [
+    visibleOrder,
     { systemTags: { some: { kind: { in: ['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE'] } } } },
     { bluesalesInfo: { is: { orderStatusId: 3 } } },
   ]);
@@ -40,7 +43,7 @@ test('empty system tag selection is unrestricted and invalid tags are rejected',
   for (const systemTags of [undefined, []]) {
     const { service, calls } = setup();
     await service.findAll({ systemTags });
-    assert.deepEqual(calls.where, {});
+    assert.deepEqual(calls.where, visibleWhere);
   }
   const { service, calls } = setup();
   await assert.rejects(service.findAll({ systemTags: ['unknown'] }), error => error.getStatus() === 400);
@@ -69,6 +72,7 @@ test('exact order number takes priority and skips the text scan', async () => {
   });
   const result = await service.findAll({ q: '123456', orderStatusId: 3 });
   assert.deepEqual(calls.where.AND, [
+    visibleOrder,
     { bluesalesInfo: { is: { orderStatusId: 3 } } },
     { id: 7 },
   ]);
@@ -88,14 +92,14 @@ test('text matches include message count and comment flag and share one scan', a
   assert.equal(calls.raw, 1);
   assert.deepEqual(first.items[0].searchMatch, { messageCount: 2, comment: true });
   assert.deepEqual(second.items[0].searchMatch, { messageCount: 2, comment: true });
-  assert.deepEqual(calls.where.AND[1].OR[2], { id: { in: [9] } });
+  assert.deepEqual(calls.where.AND[2].OR[2], { id: { in: [9] } });
 });
 
 test('short number query keeps the light search only', async () => {
   const { service, calls } = setup();
   await service.findAll({ q: '1234' });
   assert.equal(calls.raw, 0);
-  assert.deepEqual(calls.where.AND[0].OR[0], {
+  assert.deepEqual(calls.where.AND[1].OR[0], {
     orderNumber: { contains: '1234', mode: 'insensitive' },
   });
 });
@@ -104,7 +108,7 @@ test('text shorter than six characters does not activate search', async () => {
   const { service, calls } = setup();
   await service.findAll({ q: 'эскиз' });
   assert.equal(calls.raw, 0);
-  assert.deepEqual(calls.where, {});
+  assert.deepEqual(calls.where, visibleWhere);
 });
 
 test('orders without pinned sketches use the same relation filter for count and pagination', async () => {
@@ -113,6 +117,7 @@ test('orders without pinned sketches use the same relation filter for count and 
   service.prisma.order.findMany = async ({ where }) => { listWhere = where; return []; };
   await service.findAll({ withoutPinnedSketches: true, orderStatusId: 3, ignoreDesigners: true });
   assert.deepEqual(calls.where.AND, [
+    visibleOrder,
     { bluesalesInfo: { is: { orderStatusId: 3 } } },
     { pinnedSketches: { none: {} } },
   ]);
@@ -122,7 +127,7 @@ test('orders without pinned sketches use the same relation filter for count and 
 test('disabled pinned sketch filter leaves all orders available', async () => {
   const { service, calls } = setup();
   await service.findAll({ withoutPinnedSketches: false });
-  assert.deepEqual(calls.where, {});
+  assert.deepEqual(calls.where, visibleWhere);
 });
 
 test('shipping deadline range filters count and paginated items together', async () => {
@@ -138,6 +143,7 @@ test('shipping deadline range filters count and paginated items together', async
   };
   await service.findAll({ shippingDeadlineFrom: '2026-10-01', shippingDeadlineTo: '2026-10-03', withoutPinnedSketches: true });
   assert.deepEqual(calls.where.AND, [
+    visibleOrder,
     { pinnedSketches: { none: {} } },
     { id: { in: [7, 9] } },
   ]);
@@ -155,6 +161,7 @@ test('urgent tag filter applies before pagination and combines with other board 
   await service.findAll({ onlyUrgent: true, orderStatusId: 3, withoutPinnedSketches: true, deliveryManagers: ['Менеджер'] });
   const predicate = { equals: 'Срочно', mode: 'insensitive' };
   assert.deepEqual(calls.where.AND, [
+    visibleOrder,
     { bluesalesInfo: { is: { orderStatusId: 3 } } },
     { deliveryManagerName: { in: ['Менеджер'] } },
     { pinnedSketches: { none: {} } },
@@ -168,7 +175,7 @@ test('disabled or missing urgent filter includes orders without the tag and with
   for (const onlyUrgent of [undefined, false]) {
     const { service, calls } = setup();
     await service.findAll({ onlyUrgent });
-    assert.deepEqual(calls.where, {});
+    assert.deepEqual(calls.where, visibleWhere);
   }
 });
 
@@ -180,7 +187,7 @@ test('shipping deadline accepts either boundary and returns no orders for no mat
   ]) {
     const { service, calls } = setup();
     await service.findAll(params);
-    assert.deepEqual(calls.where, { AND: [{ id: { in: [] } }] });
+    assert.deepEqual(calls.where, { AND: [visibleOrder, { id: { in: [] } }] });
     assert.equal(calls.raw, 1);
   }
 });
@@ -206,6 +213,7 @@ test('delivery type filter intersects other filters before pagination', async ()
   service.prisma.$queryRaw = async (sql) => { query = sql; return [{ orderId: 8 }]; };
   await service.findAll({ deliveryTypes: ['СДЭК / Самовывоз', 'Почта'], withoutPinnedSketches: true });
   assert.deepEqual(calls.where.AND, [
+    visibleOrder,
     { pinnedSketches: { none: {} } },
     { id: { in: [8] } },
   ]);
@@ -216,7 +224,7 @@ test('delivery type filter intersects other filters before pagination', async ()
 test('delivery types with no matching orders return an empty selection', async () => {
   const { service, calls } = setup();
   await service.findAll({ deliveryTypes: ['Неизвестный тип'] });
-  assert.deepEqual(calls.where, { AND: [{ id: { in: [] } }] });
+  assert.deepEqual(calls.where, { AND: [visibleOrder, { id: { in: [] } }] });
 });
 
 test('delivery type options come from the same expression as filtering', async () => {
@@ -232,7 +240,7 @@ test('size multiselect matches either SKU before pagination and combines with ot
   let list;
   service.prisma.order.findMany = async (query) => { list = query; return []; };
   await service.findAll({ sizes: ['30x40', '60x80'], onlyUrgent: true, orderStatusId: 3, page: 2, limit: 1 });
-  assert.deepEqual(calls.where.AND[2], { bluesalesInfo: { is: { OR: [
+  assert.deepEqual(calls.where.AND[3], { bluesalesInfo: { is: { OR: [
     { rawPayload: { path: ['goodsPositions'], array_contains: [{ goods: { marking: 'Картина на металле 30*40см' } }] } },
     { rawPayload: { path: ['goodsPositions'], array_contains: [{ goods: { marking: 'Картина на металле 60*80см' } }] } },
   ] } } });
@@ -245,12 +253,12 @@ test('empty size selection leaves all orders available, duplicates do not repeat
   for (const sizes of [undefined, []]) {
     const { service, calls } = setup();
     await service.findAll({ sizes });
-    assert.deepEqual(calls.where, {});
+    assert.deepEqual(calls.where, visibleWhere);
   }
   const { service, calls } = setup();
   await service.findAll({ sizes: ['40x60', '40x60'] });
-  assert.equal(calls.where.AND[0].bluesalesInfo.is.OR.length, 1);
-  assert.equal(calls.where.AND[0].bluesalesInfo.is.OR[0].rawPayload.array_contains[0].goods.marking, 'Картина на металле 40*60см');
+  assert.equal(calls.where.AND[1].bluesalesInfo.is.OR.length, 1);
+  assert.equal(calls.where.AND[1].bluesalesInfo.is.OR[0].rawPayload.array_contains[0].goods.marking, 'Картина на металле 40*60см');
 });
 
 test('unsupported sizes fail before querying instead of silently removing the filter', async () => {
@@ -270,5 +278,35 @@ test('size query accepts one or several selections and trims empty values', asyn
     args[13] = input;
     controller.findAll(...args);
     assert.deepEqual(params.sizes, expected);
+  }
+});
+test('customer tag IDs match any selected tag before pagination and combine with status, search and urgent filtering', async () => {
+  const { service, calls } = setup({ exact: { id: 7 } });
+  let list;
+  service.prisma.order.findMany = async args => { list = args; return []; };
+  await service.findAll({ tagIds: ['728420', '123', '728420'], q: '123456', orderStatusId: 3, onlyUrgent: true, page: 2, limit: 10 });
+  assert.deepEqual(calls.where.AND[1], { lead: { is: { tags: { some: { bsTagId: { in: ['728420', '123'] } } } } } });
+  assert.ok(calls.where.AND.some(p => p.id === 7));
+  assert.ok(calls.where.AND.some(p => p.bluesalesInfo?.is?.orderStatusId === 3));
+  assert.ok(calls.where.AND.some(p => p.lead?.is?.tags?.some?.name?.equals === 'Срочно'));
+  assert.deepEqual(list.where, calls.where);
+  assert.equal(list.skip, 10); assert.equal(list.take, 10);
+});
+
+test('clearing the tag filter also permits untagged customers and orders without customers', async () => {
+  for (const tagIds of [undefined, []]) {
+    const { service, calls } = setup();
+    await service.findAll({ tagIds });
+    assert.deepEqual(calls.where, visibleWhere);
+  }
+});
+
+test('tag query accepts single and multiple IDs and discards blank selections', () => {
+  for (const [input, expected] of [['728420', ['728420']], [[' 728420 ', '', '123'], ['728420', '123']], ['', undefined]]) {
+    let params;
+    const controller = new OrdersController({ findAll: value => { params = value; } });
+    const args = Array(18).fill(undefined); args[17] = input;
+    controller.findAll(...args);
+    assert.deepEqual(params.tagIds, expected);
   }
 });
