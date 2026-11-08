@@ -93,7 +93,7 @@ export class OrdersService {
     if (from && to && from > to) {
       throw new BadRequestException('Дата «До» должна быть не раньше даты «От»');
     }
-    const and: Prisma.OrderWhereInput[] = [{ OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null, exportState: { not: 'SKIPPED' } } } }] }];
+    const and: Prisma.OrderWhereInput[] = [{ OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null } } }] }];
     if (params.systemTags?.length) {
       if (params.systemTags.some((kind) => !['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE'].includes(kind))) {
         throw new BadRequestException('Неизвестная системная метка');

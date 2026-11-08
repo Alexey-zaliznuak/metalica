@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { order, config } = require('./metavista.fixture.cjs');
-const { validatePage, canExport, markerId } = require('../dist/metavista/metavista.types');
+const { validatePage, markerId } = require('../dist/metavista/metavista.types');
 const { buildBsOrder } = require('../dist/metavista/metavista-payload');
 const { matchingGoodsId, selectMappedOrder } = require('../dist/metavista/metavista-catalog');
 const { metavistaConfig } = require('../dist/metavista/metavista.config');
@@ -17,13 +17,13 @@ test('cursor accepts deletion-only pages and rejects out-of-page/stale revisions
   assert.throws(() => validatePage({ ...page, deletedOrders: [], nextCursor: 1, hasMore: true }, 1));
   validatePage({ ...page, deletedOrders: [], nextCursor: 1 }, 1);
 });
-test('only explicitly paid orders are exported; cancelled/refunded are excluded', () => {
-  for (const status of ['unpaid', 'pending', 'partially_paid', 'refunded', 'unknown']) {
-    assert.equal(canExport(order({ payment: { status } }), ['paid']), false, status);
+test('all source states produce BS orders without inventing payment for unpaid orders', () => {
+  for (const status of ['pending', 'cancelled', 'refunded', 'delivered']) {
+    const payload = buildBsOrder(order({ status, payment: { status: 'unpaid', paidAmount: null, paidAt: null } }), 1, 90);
+    assert.equal(payload.prepay, 0);
+    assert.ok(payload.goodsPositions.length);
+    assert.ok(payload.internalComments.includes(status));
   }
-  assert.equal(canExport(order(), ['paid']), true);
-  assert.equal(canExport(order({ status: 'cancelled' }), ['paid']), false);
-  assert.equal(canExport(order({ status: 'refunded' }), ['paid']), false);
 });
 test('BS conversion preserves full total including shipping, discounts and actual payment', () => {
   const source = order(); source.items[0].qty = 3; source.pricing.discount = 10; source.pricing.total -= 10;
@@ -116,9 +116,9 @@ test('unknown items and shipping are omitted as lines but their value stays in t
   assert.equal(selected.payment.paidAmount, 100);
   assert.equal(selected.sourceAmounts.total, 100);
   assert.deepEqual(selectMappedOrder(selected), selected);
-  const payload = buildBsOrder(selected, 1, 90);
+  const payload = buildBsOrder(source, 1, 90);
   assert.equal(payload.goodsPositions.reduce((sum, p) => sum + p.quantity * p.price, 0), 9000);
-  assert.ok(!payload.internalComments.includes('Unsupported'));
+  assert.ok(payload.internalComments.includes('Unsupported'), 'source composition is retained in the creation note');
   assert.ok(payload.goodsPositions.every(p => p.goods.id === 486959));
   assert.equal(source.items.length, 2, 'source must not be mutated');
 });
@@ -142,4 +142,10 @@ test('zero-price matched products still carry the full amount and preserve quant
   assert.equal(payload.goodsPositions.reduce((sum, p) => sum + Math.round(p.price * 100) * p.quantity, 0), total);
   assert.equal(payload.goodsPositions.reduce((sum, p) => sum + p.quantity, 0), 5);
   assert.equal(payload.prepay, total / 100);
+});
+
+test('orders with no matched products use the verified general print product and full total', () => {
+  const source = order(); source.items[0].spec = '61 × 45,7';
+  const payload = buildBsOrder(source, 1, 90);
+  assert.deepEqual(payload.goodsPositions, [{ goods: { id: 493830 }, price: 7371, quantity: 1 }]);
 });

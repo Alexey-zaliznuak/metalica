@@ -57,10 +57,6 @@ export function validatePage(page: MetavistaPage, cursor: number): void {
   for (const deleted of page.deletedOrders) if (!Number.isFinite(Date.parse(deleted.deletedAt))) throw new Error('Некорректная дата удаления');
 }
 
-export function canExport(order: MetavistaOrder, paidStatuses: string[]): boolean {
-  return paidStatuses.includes(order.payment.status.toLowerCase()) && !['cancelled', 'refunded'].includes(order.status);
-}
-
 export function orderMarker(id: string): string { return `Metavista: ${id}`; }
 export function markerId(comments: unknown): string | null {
   return typeof comments === 'string' ? comments.match(/^Metavista: (MV-\d{6})\s*$/m)?.[1] ?? null : null;

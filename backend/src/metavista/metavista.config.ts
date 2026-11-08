@@ -6,7 +6,7 @@ export const METAVISTA_SETTINGS = Object.freeze({
   baseUrl: 'https://metavista.es/api/integrations/crm/v1',
   importHistory: true, pollMs: 60_000, pageSize: 10, timeoutMs: 30_000,
   maxFileBytes: 100 * 1024 * 1024,
-  paidStatuses: ['paid'],
+  fallbackGoodsId: 493830, // Existing general product «Фотопечать» for an unmatched basket.
   statusName: 'Новый (ждем фото)', statusId: 145338,
   tagName: 'ИСПАНИЯ', tagId: 728420,
   rateUrl: 'https://www.cbr-xml-daily.ru/daily_json.js',
