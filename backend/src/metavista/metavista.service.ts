@@ -12,6 +12,7 @@ import { EurRateService } from './eur-rate.service';
 import { buildBsOrder } from './metavista-payload';
 import { selectMappedOrder } from './metavista-catalog';
 import { BluesalesSyncService } from '../bluesales/bluesales-sync.service';
+import { BsCustomer } from '../bluesales/bluesales-api.service';
 
 @Injectable()
 export class MetavistaService implements OnModuleInit {
@@ -268,7 +269,7 @@ export class MetavistaService implements OnModuleInit {
       return;
     }
     const tagId = await this.bs.tagId();
-    let customer = row.bsCustomerId ? await this.bs.customer(row.bsCustomerId) : await this.bs.findCustomer(order);
+    let customer: BsCustomer | null = row.bsCustomerId ? { id: row.bsCustomerId } : await this.bs.findCustomer(order);
     if (!customer) {
       if (row.customerAttemptAt) throw new Error('Результат создания клиента неизвестен. Автоповтор запрещён; проверьте БС');
       await this.assertLock();
@@ -283,9 +284,16 @@ export class MetavistaService implements OnModuleInit {
       }
       if (!customer?.id) throw new Error('БС не вернул ID созданного клиента');
     }
-    await this.prisma.metavistaOrder.update({ where: { externalId }, data: { bsCustomerId: customer.id } });
+    const email = order.customer.email.trim().toLowerCase();
+    const customerId = customer.id!;
+    const customerName = customer.fullName;
+    await this.prisma.$transaction(async tx => {
+      await tx.metavistaOrder.update({ where: { externalId }, data: { bsCustomerId: customerId } });
+      await tx.lead.upsert({ where: { bsCustomerId: customerId },
+        create: { bsCustomerId: customerId, fullName: customerName, email }, update: { email } });
+    });
     // Read current tags just before updating: don't replace them with a stale set.
-    customer = await this.bs.customer(customer.id!);
+    customer = await this.bs.customer(customerId);
     await this.assertLock();
     await this.bs.ensureTag(customer, tagId);
     const lead = await this.prisma.lead.upsert({ where: { bsCustomerId: customer.id },

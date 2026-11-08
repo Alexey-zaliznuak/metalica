@@ -30,17 +30,27 @@ export class MetavistaBsService {
     return result;
   }
   async findCustomer(order: MetavistaOrder): Promise<BsCustomer | null> {
-    // Email filtering isn't documented by BS. Read all pages and compare exact
-    // normalized email, rather than relying on an ignored server-side filter.
-    const customers = await this.list<BsCustomer>('customers.get', 'customers', { firstContactDateFrom: null, firstContactDateTill: null });
     const email = order.customer.email.trim().toLowerCase();
-    const found = customers.filter(c => String(c.email ?? '').trim().toLowerCase() === email);
-    if (found.length > 1) throw new Error('Несколько клиентов БС с этим email: требуется проверка');
-    return found[0] ?? null;
+    if (!email) throw new Error('Не указан email клиента Metavista');
+    const leads = await this.prisma.lead.findMany({
+      where: { email, bsCustomerId: { not: null } }, select: { bsCustomerId: true }, take: 2,
+    });
+    // Older imports and interrupted exports may already know the BS ID before
+    // the local lead has been saved. Reuse that durable association as well.
+    const previous = await this.prisma.$queryRaw<Array<{ bsCustomerId: number | null; uncertain: boolean }>>`
+      SELECT DISTINCT "bsCustomerId", ("bsCustomerId" IS NULL AND "customerAttemptAt" IS NOT NULL) AS uncertain
+      FROM "MetavistaOrder"
+      WHERE lower(btrim("snapshot" #>> '{customer,email}')) = ${email}
+        AND ("bsCustomerId" IS NOT NULL OR "customerAttemptAt" IS NOT NULL)`;
+    const ids = [...new Set([...leads, ...previous].map(c => c.bsCustomerId).filter((id): id is number => id != null))];
+    if (ids.length > 1) throw new Error('Несколько клиентов БС с этим email: требуется проверка');
+    if (ids.length) return { id: ids[0] };
+    if (previous.some(c => c.uncertain)) throw new Error('Результат создания клиента неизвестен. Автоповтор запрещён; проверьте БС');
+    return null;
   }
   async customer(id: number) {
-    const customers = await this.list<BsCustomer>('customers.get', 'customers', { ids: [id] });
-    const customer = customers.find(c => c.id === id);
+    const response = await this.send<{ customers: BsCustomer[] }>('customers.get', { ids: [id], pageSize: 1, startRowNumber: 0 });
+    const customer = response.customers?.find(c => c.id === id);
     if (!customer) throw new Error('Клиент БС не найден');
     return customer;
   }

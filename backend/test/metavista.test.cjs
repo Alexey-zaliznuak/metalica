@@ -61,18 +61,42 @@ test('adding Spain preserves all existing customer tags', async () => {
   await bs.ensureTag({ id: 42, tags: [{ id: 3 }] }, 3);
   assert.equal(requests.length, 1);
 });
-test('customer lookup continues through short pages and fails on ambiguous email', async () => {
-  const offsets = [];
-  const bs = new MetavistaBsService({ send: async (_, data) => {
-    offsets.push(data.startRowNumber);
-    return data.startRowNumber === 0
-      ? { customers: [{ id: 1, email: 'different@example.invalid' }], notReturnedCount: 1 }
-      : { customers: [{ id: 2, email: 'METAVISTA-TEST@example.invalid' }], notReturnedCount: 0 };
+test('customer lookup uses normalized local email and never calls BlueSales, including misses and conflicts', async () => {
+  let leads = [{ bsCustomerId: 2 }], previous = [], query;
+  const bs = new MetavistaBsService({ send: async () => assert.fail('No API calls during lookup') }, {
+    lead: { findMany: async args => { query = args; return leads; } },
+    $queryRaw: async () => previous,
+  }, config());
+  const source = order(); source.customer.email = '  METAVISTA-TEST@example.invalid ';
+  assert.deepEqual(await bs.findCustomer(source), { id: 2 });
+  assert.deepEqual(query.where, { email: 'metavista-test@example.invalid', bsCustomerId: { not: null } });
+  assert.equal(query.take, 2);
+  previous = [{ bsCustomerId: 2, uncertain: false }];
+  assert.deepEqual(await bs.findCustomer(source), { id: 2 }, 'same ID from both sources is not ambiguous');
+  leads = [];
+  assert.deepEqual(await bs.findCustomer(source), { id: 2 }, 'reuse saved export after interrupted lead save');
+  previous = [];
+  assert.equal(await bs.findCustomer(source), null);
+  leads = [{ bsCustomerId: 1 }, { bsCustomerId: 2 }];
+  await assert.rejects(bs.findCustomer(source), /Несколько клиентов/);
+  leads = [{ bsCustomerId: 1 }]; previous = [{ bsCustomerId: 2, uncertain: false }];
+  await assert.rejects(bs.findCustomer(source), /Несколько клиентов/);
+  leads = []; previous = [{ bsCustomerId: null, uncertain: true }];
+  await assert.rejects(bs.findCustomer(source), /Автоповтор запрещён/);
+  source.customer.email = ' ';
+  await assert.rejects(bs.findCustomer(source), /Не указан email/);
+});
+
+test('customer refresh performs exactly one targeted request and fails if that ID is missing', async () => {
+  const requests = [];
+  const bs = new MetavistaBsService({ send: async (method, data) => {
+    requests.push({ method, data });
+    return { customers: [{ id: 2 }], notReturnedCount: 1000 };
   } }, {}, config());
-  assert.equal((await bs.findCustomer(order())).id, 2);
-  assert.deepEqual(offsets, [0, 1]);
-  bs.api.send = async () => ({ customers: [{ id: 1, email: order().customer.email }, { id: 2, email: order().customer.email }], notReturnedCount: 0 });
-  await assert.rejects(bs.findCustomer(order()), /Несколько клиентов/);
+  assert.equal((await bs.customer(2)).id, 2);
+  assert.deepEqual(requests, [{ method: 'customers.get', data: { ids: [2], pageSize: 1, startRowNumber: 0 } }]);
+  await assert.rejects(bs.customer(3), /Клиент БС не найден/);
+  assert.equal(requests.length, 2);
 });
 test('Metavista HTTP request keeps bearer server-side and honors Retry-After', async t => {
   const service = new MetavistaService({}, config({ METAVISTA_API_KEY: 'secret-test' }), {}, {}, {});

@@ -319,6 +319,8 @@ model Lead {
   bsCustomerId   Int?      @unique
   name           String?
   fullName       String?
+  // Нормализованный email для локального поиска клиентов (Metavista).
+  email          String?
   // Менеджер клиента в BlueSales (customer.manager): имя и BS-id.
   // Денормализовано (не FK), т.к. это менеджер BlueSales, а не User системы.
   managerName    String?
@@ -348,6 +350,7 @@ model Lead {
   updatedAt      DateTime  @updatedAt
 
   @@index([crmStatus])
+  @@index([email])
   @@index([lastContactAt])
   @@index([managerId])
 }

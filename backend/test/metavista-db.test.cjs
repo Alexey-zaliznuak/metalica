@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const { PrismaClient } = require('@prisma/client');
 const { order, config } = require('./metavista.fixture.cjs');
 const { MetavistaService } = require('../dist/metavista/metavista.service');
+const { MetavistaBsService } = require('../dist/metavista/metavista-bs.service');
+const { BluesalesSyncService } = require('../dist/bluesales/bluesales-sync.service');
 if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(process.env.DATABASE_URL).hostname)) {
   throw new Error('Metavista DB tests require a local database');
 }
@@ -123,4 +125,56 @@ test('old waiting orders recover at the same revision, while file failures remai
   await service.requeuePreviouslyExcluded();
   row = await db.metavistaOrder.findUnique({ where: { externalId: source.id } });
   assert.equal(row.exportState, 'PENDING'); assert.equal(row.lastError, null);
+}));
+
+test('local customer email survives partial BS responses and resolves without any API scans', () => isolated(async (service, db) => {
+  const noApi = { send: async () => assert.fail('Local lookup must not use BS') };
+  const bs = new MetavistaBsService(noApi, db, config());
+  const sync = new BluesalesSyncService(noApi, db, config(), null, null, { enabled: true });
+  const customer = { id: 1999999981, fullName: 'Test', email: '  METAVISTA-TEST@example.invalid ' };
+  await sync.upsertLead(customer, false);
+  await sync.upsertLead({ id: customer.id, fullName: 'Test' }, false);
+  assert.equal((await db.lead.findUnique({ where: { bsCustomerId: customer.id } })).email, order().customer.email);
+  assert.deepEqual(await bs.findCustomer(order()), { id: customer.id });
+  await sync.upsertLead({ id: customer.id, email: null }, false);
+  assert.equal(await bs.findCustomer(order()), null, 'explicit email removal is respected');
+  await service.importOrder(order());
+  await db.metavistaOrder.update({ where: { externalId: order().id }, data: { customerAttemptAt: new Date() } });
+  await assert.rejects(bs.findCustomer(order({ id: 'MV-999982' })), /Автоповтор запрещён/);
+  await db.metavistaOrder.update({ where: { externalId: order().id }, data: { bsCustomerId: customer.id } });
+  assert.deepEqual(await bs.findCustomer(order()), { id: customer.id }, 'recover saved ID even without email on lead');
+  await db.lead.create({ data: { bsCustomerId: 1999999982, email: order().customer.email } });
+  await assert.rejects(bs.findCustomer(order()), /Несколько клиентов/);
+}));
+
+test('two orders with the same email create one customer and only read customers by ID', () => isolated(async (service, db) => {
+  assert.equal(await db.metavistaOrder.count({ where: { externalId: 'MV-999982' } }), 0);
+  let customersAdded = 0, ordersAdded = 0;
+  const reads = [];
+  service.bs = new MetavistaBsService({
+    send: async (method, data) => {
+      if (method === 'customers.add') { customersAdded++; return { id: 1999999981 }; }
+      if (method === 'customers.get') {
+        reads.push(data);
+        assert.deepEqual(data.ids, [1999999981]);
+        return { customers: [{ id: 1999999981, tags: [{ id: 728420 }] }], notReturnedCount: 0 };
+      }
+      if (method === 'orders.get') return { orders: [], notReturnedCount: 0 };
+      assert.equal(method, 'orders.add');
+      return { id: 1999999980 + ++ordersAdded };
+    },
+    getOrdersByIds: async () => [],
+  }, db, config());
+  service.rates = { current: async () => ({ rate: 90, source: 'fallback' }) };
+  const first = order(), second = order({ id: 'MV-999982' });
+  second.customer.email = '  METAVISTA-TEST@example.invalid ';
+  for (const source of [first, second]) {
+    await service.importOrder(source);
+    await service.exportOrder(source.id);
+    await service.exportOrder(source.id);
+  }
+  assert.equal(customersAdded, 1);
+  assert.equal(ordersAdded, 2);
+  assert.equal(reads.length, 2, 'one targeted customer read per new order');
+  assert.equal(await db.lead.count({ where: { email: first.customer.email } }), 1);
 }));

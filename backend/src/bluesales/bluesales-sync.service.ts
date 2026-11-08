@@ -894,6 +894,9 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
     if (!customer?.id) return null;
 
     const fullName = (customer.fullName ?? '').trim() || null;
+    // Order responses may omit email: don't erase a previously synced address.
+    const email = customer.email === undefined ? undefined
+      : typeof customer.email === 'string' ? customer.email.trim().toLowerCase() || null : null;
     const name = fullName ? fullName.split(/\s+/)[0] : null;
     // Менеджер клиента в BlueSales (customer.manager): имя + BS-id.
     const managerName = (customer.manager?.fullName ?? '').trim() || null;
@@ -933,6 +936,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
         bsCustomerId: customer.id,
         name,
         fullName,
+        email,
         managerName,
         managerId,
         vkUserId,
@@ -950,6 +954,7 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
       update: {
         name,
         fullName,
+        email,
         managerName,
         managerId,
         vkUserId,
