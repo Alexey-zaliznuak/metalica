@@ -1116,6 +1116,30 @@ export class BluesalesSyncService implements OnModuleInit, OnModuleDestroy {
 
     const managerData = { deliveryManagerName, onboardingManagerName };
 
+    // A BS read can race the response to orders.add. Attach by the creation
+    // comment before the generic importer can create a second local card.
+    const mvId = typeof bsOrder.internalComments === 'string'
+      ? bsOrder.internalComments.match(/^Metavista: (MV-\d{6})\s*$/m)?.[1] : null;
+    if (mvId && this.prisma.metavistaOrder) {
+      const mv = await this.prisma.metavistaOrder.findUnique({ where: { externalId: mvId } });
+      if (mv?.deletedAt && !mv.orderId) return;
+      if (mv?.orderId) {
+        if (mv.bsOrderId && mv.bsOrderId !== bsOrder.id) {
+          this.logger.error(`Metavista ${mvId}: конфликт ID BlueSales; импорт дубля пропущен`);
+          return;
+        }
+        await this.prisma.$transaction(async tx => {
+          const info = await tx.bluesalesOrderInfo.findUnique({ where: { bsOrderId: bsOrder.id } });
+          if (info && info.orderId !== mv.orderId) throw new Error(`Metavista ${mvId}: конфликт локальной карточки`);
+          await tx.bluesalesOrderInfo.upsert({ where: { orderId: mv.orderId! },
+            create: { orderId: mv.orderId!, bsOrderId: bsOrder.id }, update: {} });
+          await tx.order.update({ where: { id: mv.orderId! }, data: { source: OrderSource.BLUESALES } });
+          await tx.metavistaOrder.update({ where: { externalId: mvId }, data: { bsOrderId: bsOrder.id, exportState: mv.deletedAt ? 'DELETED' : 'EXPORTED' } });
+        });
+        existing = { orderId: mv.orderId };
+      }
+    }
+
     // В батч-режиме existing уже предвыбран (см. refreshBatch), иначе грузим здесь.
     const existingInfo =
       existing !== undefined

@@ -158,6 +158,15 @@ export interface PinnedSketch {
 }
 
 export interface Order {
+  metavista?: {
+    externalId: string; paymentStatus: string | null; totalEur: number | null;
+    exchangeRate: number | null; rateSource: string | null; exportState: string;
+    lastError: string | null; deletedAt: string | null;
+    snapshot: { pricing: { total: number }; sourceAmounts?: { total: number; shipping: number; paidAmount: number | null }; customer: { firstName: string; lastName: string; email: string; phone: string | null };
+      delivery: { country: string; city: string; zip: string; address: string };
+      items: { id: number; name: string; spec: string | null; qty: number; files: { id: string; slot: string }[] }[] } | null;
+    files: { id: number; slot: string; itemId: number; fileId: string; filename: string; url: string }[];
+  } | null
   systemTags?: { id: number; kind: string; name: string; markedAt: string; completedAt: string | null; scheduledAt: string | null; actionEnabled: boolean }[]
   id: number
   pinnedSketches?: PinnedSketch[]

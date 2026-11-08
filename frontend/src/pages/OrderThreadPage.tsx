@@ -681,6 +681,27 @@ function OrderInfoPanel({
       <SectionTitle icon={<ReceiptLongIcon fontSize="small" />}>
         Информация о заказе
       </SectionTitle>
+      {order.metavista && (
+        <Box sx={{ mb: 2 }}>
+          <InfoRow label="Номер Metavista" value={order.metavista.externalId} />
+          <InfoRow label="Оплата Metavista" value={order.metavista.paymentStatus ?? dash} />
+          <InfoRow label="Сумма Metavista" value={order.metavista.totalEur == null ? dash : `${order.metavista.totalEur.toLocaleString('ru-RU')} €`} />
+          {order.metavista.exchangeRate != null && <InfoRow label="Курс при отправке" value={`${order.metavista.exchangeRate} ₽/€${order.metavista.rateSource === 'fallback' ? ' (резервный)' : ''}`} />}
+          <InfoRow label="Отправка в БС" value={({ WAITING_PAYMENT: 'Ожидает оплаты', PENDING: 'В очереди', RETRY: 'Повтор отправки', REVIEW: 'Требуется проверка в БС', EXPORTED: 'Отправлен', DELETED: 'Удалён в Metavista', SKIPPED: 'Нет соответствующих товаров' } as Record<string, string>)[order.metavista.exportState] ?? order.metavista.exportState} />
+          {order.metavista.lastError && <Alert severity="warning" sx={{ my: 1 }}>{order.metavista.lastError}</Alert>}
+          {order.metavista.snapshot && <>
+            <InfoRow label="Клиент Metavista" value={`${order.metavista.snapshot.customer.firstName} ${order.metavista.snapshot.customer.lastName}`} />
+            <InfoRow label="Email" value={order.metavista.snapshot.customer.email} />
+            <InfoRow label="Телефон" value={order.metavista.snapshot.customer.phone ?? dash} />
+            <InfoRow label="Адрес Metavista" value={Object.values(order.metavista.snapshot.delivery).join(', ')} />
+            {order.metavista.snapshot.items.map(item => <InfoRow key={item.id} label={item.name} value={`${item.spec ?? ''} × ${item.qty}`} />)}
+          </>}
+          {order.metavista.files.filter(file => order.metavista?.snapshot?.items.some(item => item.id === file.itemId && item.files.some(f => f.id === file.fileId && f.slot === file.slot))).map(file => (
+            <Box key={file.id} sx={{ py: 0.5 }}><a href={file.url} target="_blank" rel="noreferrer">{file.slot === 'original' ? 'Оригинал' : file.slot === 'back' ? 'Надпись на обороте' : 'Файл печати'} · {file.itemId}</a></Box>
+          ))}
+          <Typography variant="caption" color="text.secondary"><a href="https://www.cbr-xml-daily.ru/" target="_blank" rel="noreferrer">Курсы валют, API</a></Typography>
+        </Box>
+      )}
       <Stack divider={<Divider flexItem />}>
         <InfoRow
           label="Менеджер ведения"

@@ -13,6 +13,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { ChatsModule } from './chats/chats.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AssignmentModule } from './assignment/assignment.module';
+import { MetavistaModule } from './metavista/metavista.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { AssignmentModule } from './assignment/assignment.module';
     ChatsModule,
     NotificationsModule,
     AssignmentModule,
+    MetavistaModule,
   ],
 })
 export class AppModule {}

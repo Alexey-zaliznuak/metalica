@@ -136,6 +136,7 @@ model User {
 }
 
 model Order {
+  metavista             MetavistaOrder?
   id                    Int                 @id @default(autoincrement())
   orderNumber           String              @unique
   title                 String?
@@ -179,6 +180,59 @@ model Order {
   @@index([onboardingManagerName])
   @@index([sketchDesignerId])
   @@index([revisionDesignerId])
+}
+
+// Cursor advances only after the complete page and its files are durable.
+model MetavistaSyncState {
+  id          Int       @id @default(1)
+  cursor      Int       @default(0)
+  initialized Boolean   @default(false)
+  lockToken   String?
+  lockedUntil DateTime?
+  lastPollAt  DateTime?
+  lastError   String?
+  bsTagId     Int?
+  tagAttemptAt DateTime?
+}
+
+model MetavistaOrder {
+  externalId       String    @id
+  revision         Int       @default(-1)
+  orderId          Int?      @unique
+  order            Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  snapshot         Json?
+  deletedAt        DateTime?
+  paymentStatus    String?
+  totalEur         Decimal?  @db.Decimal(14, 2)
+  exchangeRate     Decimal?  @db.Decimal(14, 6)
+  rateSource       String?
+  bsCustomerId     Int?
+  bsOrderId        Int?      @unique
+  customerAttemptAt DateTime?
+  orderAttemptAt  DateTime?
+  exportState      String    @default("WAITING_PAYMENT")
+  lastError        String?
+  nextAttemptAt    DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  files            MetavistaFile[]
+
+  @@index([exportState, nextAttemptAt])
+}
+
+model MetavistaFile {
+  id          Int           @id @default(autoincrement())
+  externalId  String
+  order       MetavistaOrder @relation(fields: [externalId], references: [externalId], onDelete: Cascade)
+  itemId      Int
+  fileId      String
+  slot        String
+  objectKey   String
+  filename    String
+  mimeType    String
+  size        Int
+  attachmentId Int?
+  @@unique([externalId, itemId, fileId, slot])
 }
 
 // Данные заказа, специфичные для BlueSales (1-к-1 с Order)

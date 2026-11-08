@@ -22,6 +22,8 @@ const BASE_URL = 'https://bluesales.ru/app/Customers/WebServer.aspx';
 const MIN_REQUEST_GAP_MS = 300;
 
 export class BluesalesError extends Error {}
+/** Explicit API rejection, safe to correct and retry a create operation. */
+export class BluesalesRejectedError extends BluesalesError {}
 export class BluesalesHttpError extends BluesalesError {}
 export class BluesalesAuthError extends BluesalesError {}
 /** Сетевая ошибка соединения с BlueSales — транзиентная (можно повторить). */
@@ -490,7 +492,9 @@ export class BluesalesApiService {
 
       throw transient
         ? new BluesalesBusyError(`${method}: ${errorText}`)
-        : new BluesalesError(`${method}: ${errorText}`);
+        : responseStatus < 500
+          ? new BluesalesRejectedError(`${method}: ${errorText}`)
+          : new BluesalesError(`${method}: ${errorText}`);
     }
 
     // Записываем только успешную попытку, после проверки HTTP и ошибок API.

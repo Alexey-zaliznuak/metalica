@@ -93,7 +93,7 @@ export class OrdersService {
     if (from && to && from > to) {
       throw new BadRequestException('Дата «До» должна быть не раньше даты «От»');
     }
-    const and: Prisma.OrderWhereInput[] = [];
+    const and: Prisma.OrderWhereInput[] = [{ OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null, exportState: { not: 'SKIPPED' } } } }] }];
     if (params.systemTags?.length) {
       if (params.systemTags.some((kind) => !['ATTACHMENT_CLEANUP', 'AUTO_COMPLETE'].includes(kind))) {
         throw new BadRequestException('Неизвестная системная метка');
@@ -393,6 +393,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
+        metavista: { include: { files: true } },
         systemTags: { orderBy: { markedAt: 'asc' } },
         printPhotos: { orderBy: { id: 'asc' } },
         pinnedSketches: {
@@ -460,6 +461,21 @@ export class OrdersService {
     const { rawPayload, ...bluesalesInfo } = order.bluesalesInfo ?? {};
     return {
       ...base,
+      metavista: order.metavista ? {
+        externalId: order.metavista.externalId,
+        paymentStatus: order.metavista.paymentStatus,
+        totalEur: order.metavista.totalEur == null ? null : Number(order.metavista.totalEur),
+        exchangeRate: order.metavista.exchangeRate == null ? null : Number(order.metavista.exchangeRate),
+        rateSource: order.metavista.rateSource,
+        exportState: order.metavista.exportState,
+        lastError: order.metavista.lastError,
+        deletedAt: order.metavista.deletedAt,
+        snapshot: order.metavista.snapshot,
+        files: await Promise.all(order.metavista.files.map(async file => ({
+          id: file.id, slot: file.slot, itemId: file.itemId, fileId: file.fileId,
+          filename: file.filename, url: await this.storage.getUrl(file.objectKey),
+        }))),
+      } : null,
       systemTags: order.systemTags.map((tag) => ({
         ...tag,
         name: tag.kind === 'ATTACHMENT_CLEANUP' ? 'Вложения удалены' : 'Будет завершён',
