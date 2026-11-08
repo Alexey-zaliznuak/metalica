@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import { randomUUID } from 'crypto';
@@ -14,7 +14,7 @@ import { selectMappedOrder } from './metavista-catalog';
 import { BluesalesSyncService } from '../bluesales/bluesales-sync.service';
 
 @Injectable()
-export class MetavistaService {
+export class MetavistaService implements OnModuleInit {
   private readonly logger = new Logger(MetavistaService.name);
   private readonly settings;
   private running = false;
@@ -23,6 +23,17 @@ export class MetavistaService {
   constructor(private readonly prisma: PrismaService, config: ConfigService,
     private readonly storage: StorageService, private readonly bs: MetavistaBsService,
     private readonly rates: EurRateService, private readonly bsSync: BluesalesSyncService) { this.settings = metavistaConfig(config); }
+
+  onModuleInit() {
+    if (!this.settings.enabled) {
+      this.logger.log('Metavista: импорт выключен (METAVISTA_ENABLED=false)');
+    } else if (!this.settings.key) {
+      this.logger.warn('Metavista: импорт не запущен — METAVISTA_API_KEY не задан');
+    } else {
+      this.logger.log(`Metavista: импорт включён; опрос каждые ${this.settings.pollMs / 1000} с; первый запуск — в течение 10 с; БС=${this.bs.api.isConfigured ? 'настроен' : 'не настроен'}`);
+      if (!this.bs.api.isConfigured) this.logger.warn('Metavista: заказы будут сохраняться в CRM, но отправка в БС недоступна без настроек BlueSales');
+    }
+  }
 
   @Interval(10_000)
   async tick() {
@@ -46,7 +57,7 @@ export class MetavistaService {
       }, 30_000);
       const state = await this.prisma.metavistaSyncState.findUniqueOrThrow({ where: { id: 1 } });
       if (Date.now() >= this.retryAfter && (!state.lastPollAt || Date.now() - state.lastPollAt.getTime() >= this.settings.pollMs)) {
-        try { await this.poll(); }
+        try { await this.poll(); await this.logQueueSummary(); }
         catch (error) {
           const message = this.errorMessage(error);
           await this.prisma.metavistaSyncState.update({ where: { id: 1 }, data: { lastError: message, lastPollAt: new Date() } });
@@ -60,6 +71,7 @@ export class MetavistaService {
           where: { exportState: { in: ['PENDING', 'RETRY', 'REVIEW'] }, deletedAt: null, nextAttemptAt: { lte: new Date() } },
           orderBy: { nextAttemptAt: 'asc' }, take: 5,
         });
+        if (pending.length) this.logger.log(`Metavista: обрабатываем очередь отправки в БС; заказов=${pending.length}`);
         for (const row of pending) {
           await this.assertLock();
           try { await this.exportOrder(row.externalId); }
@@ -80,6 +92,17 @@ export class MetavistaService {
       this.lockToken = null;
       await this.prisma.metavistaSyncState.updateMany({ where: { id: 1, lockToken: token }, data: { lockToken: null, lockedUntil: null } }).catch(() => {});
       this.running = false;
+    }
+  }
+
+  private async logQueueSummary() {
+    try {
+      const groups = await this.prisma.metavistaOrder.groupBy({ by: ['exportState'], _count: { _all: true } });
+      const states = Object.fromEntries(groups.map(g => [g.exportState, g._count._all]));
+      this.logger.log(`Metavista: состояние заказов ${JSON.stringify(states)}; WAITING_PAYMENT также включает отменённые/возвращённые; SKIPPED — нет подходящих товаров`);
+    } catch {
+      // Diagnostic failures must not turn a successful import into a retry.
+      this.logger.warn('Metavista: не удалось получить сводку очереди');
     }
   }
 
@@ -111,6 +134,7 @@ export class MetavistaService {
     return response;
   }
   async poll() {
+    const startedAt = Date.now();
     const state = await this.prisma.metavistaSyncState.findUniqueOrThrow({ where: { id: 1 } });
     let cursor = state.cursor;
     if (!state.initialized) {
@@ -122,6 +146,7 @@ export class MetavistaService {
       await this.prisma.metavistaSyncState.update({ where: { id: 1 }, data: { initialized: true, cursor } });
     }
     // Continue backlog on subsequent ticks; only commit a fully saved page.
+    this.logger.log(`Metavista: запрашиваем изменения; курсор=${cursor}`);
     const page = await (await this.request(`/orders?after=${cursor}&limit=${this.settings.pageSize}`)).json() as MetavistaPage;
     validatePage(page, cursor);
     const events = [...page.orders.map(order => ({ revision: order.revision, order })),
@@ -137,17 +162,20 @@ export class MetavistaService {
           create: { externalId: d.id, revision: d.revision, deletedAt: new Date(d.deletedAt), exportState: 'DELETED' },
           update: { revision: d.revision, deletedAt: new Date(d.deletedAt), exportState: 'DELETED', snapshot: Prisma.DbNull },
         });
+        this.logger.log(`Metavista ${d.id}: удаление источника обработано; ревизия=${d.revision}`);
       }
     }
     await this.assertLock();
     await this.prisma.metavistaSyncState.update({ where: { id: 1 }, data: {
       cursor: page.nextCursor, lastError: null, lastPollAt: page.hasMore ? null : new Date(),
     } });
+    this.logger.log(`Metavista: опрос завершён; заказов=${page.orders.length}; удалений=${page.deletedOrders.length}; курсор=${cursor}→${page.nextCursor}; ещёСтраницы=${page.hasMore}; время=${Date.now() - startedAt} мс`);
   }
   async importOrder(sourceOrder: MetavistaOrder) {
     const order = selectMappedOrder(sourceOrder);
     let row = await this.prisma.metavistaOrder.findUnique({ where: { externalId: order.id } });
     if (row && row.revision >= order.revision) return;
+    this.logger.log(`Metavista ${order.id}: обрабатываем ревизию=${order.revision}; подходящихТоваров=${order.items.length}/${sourceOrder.items.length}; файлов=${order.items.reduce((n, item) => n + item.files.length, 0)}`);
     if (!order.items.length && !row?.orderId) {
       // A cursor/revision record, not a CRM card. Never create an empty BS order.
       const data = { revision: order.revision, snapshot: order as unknown as Prisma.InputJsonValue,
@@ -155,6 +183,7 @@ export class MetavistaService {
         deletedAt: null, exportState: 'SKIPPED', lastError: null };
       await this.prisma.metavistaOrder.upsert({ where: { externalId: order.id },
         create: { externalId: order.id, ...data }, update: data });
+      this.logger.log(`Metavista ${order.id}: пропущен — нет соответствующих товаров; карточка CRM и заказ БС не создаются`);
       return;
     }
     if (!row?.orderId) {
@@ -212,6 +241,11 @@ export class MetavistaService {
       exportState: current.bsOrderId ? 'EXPORTED' : !order.items.length ? 'SKIPPED' : canExport(order, this.settings.paidStatuses) ? 'PENDING' : 'WAITING_PAYMENT',
       lastError: null, nextAttemptAt: new Date(),
     } });
+    const reason = current.bsOrderId ? 'уже связан с БС'
+      : !order.items.length ? 'нет соответствующих товаров'
+      : ['cancelled', 'refunded'].includes(order.status) ? 'отменён или возвращён в Metavista'
+      : canExport(order, this.settings.paidStatuses) ? 'готов к отправке в БС' : 'ожидает оплаты';
+    this.logger.log(`Metavista ${order.id}: сохранён в CRM; ${reason}`);
   }
 
   async exportOrder(externalId: string) {
@@ -271,6 +305,7 @@ export class MetavistaService {
       if (!bsOrder?.id) throw new Error('БС не вернул ID созданного заказа');
     }
     await this.linkOrder(externalId, bsOrder.id, customer.id!, lead.id);
+    this.logger.log(`Metavista ${externalId}: успешно связан с заказом БС #${bsOrder.id}`);
     // Fetch the actual BS status ID and payload immediately; subsequent inbound
     // refreshes use the saved bsOrderId and never create another local card.
     const actual = await this.bs.api.getOrdersByIds([bsOrder.id], 'background', false);

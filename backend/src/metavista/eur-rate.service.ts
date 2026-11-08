@@ -33,6 +33,7 @@ export class EurRateService {
       const rate = euro && euro.Value / euro.Nominal;
       if (!rate || !Number.isFinite(rate) || rate <= 0 || !euro || euro.Nominal <= 0) throw new Error('Invalid EUR rate');
       this.rate = rate; this.source = 'cbr-xml-daily';
+      this.logger.log(`Metavista: курс EUR обновлён; 1 EUR = ${this.rate} RUB; следующая проверка через ${this.settings.ratePollMs / 1000} с`);
     } catch {
       this.rate = this.settings.fallbackRate; this.source = 'fallback';
       this.logger.warn(`Курс EUR недоступен: используется ${this.rate} RUB`);
