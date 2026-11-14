@@ -21,6 +21,7 @@ test('all source states produce BS orders without inventing payment for unpaid o
   for (const status of ['pending', 'cancelled', 'refunded', 'delivered']) {
     const payload = buildBsOrder(order({ status, payment: { status: 'unpaid', paidAmount: null, paidAt: null } }), 1, 90);
     assert.equal(payload.prepay, 0);
+    assert.deepEqual(payload.orderStatus, { name: 'Заявка с сайта' });
     assert.ok(payload.goodsPositions.length);
     assert.ok(payload.internalComments.includes(status));
   }
@@ -33,7 +34,7 @@ test('BS conversion preserves full total including shipping, discounts and actua
   assert.equal(actualCents, Math.round(source.pricing.total * 93.123456 * 100));
   assert.equal(payload.goodsPositions.filter(p => p.goods.id === 486959).reduce((s, p) => s + p.quantity, 0), 3);
   assert.equal(payload.prepay, Math.round(50 * 93.123456 * 100) / 100);
-  assert.equal(payload.orderStatus.name, 'Новый (ждем фото)');
+  assert.equal(payload.orderStatus.name, 'Заявка с сайта');
   assert.equal(markerId(payload.internalComments), source.id);
   assert.equal(payload.customFields, undefined);
   assert.equal(payload.externalNumber, undefined);
@@ -116,8 +117,34 @@ test('Metavista HTTP request keeps bearer server-side and honors Retry-After', a
 test('verified tag/status and operational settings cannot be overridden by old env entries', () => {
   const settings = metavistaConfig(config({ METAVISTA_BS_TAG_ID: '1', METAVISTA_BS_TAG: 'wrong', METAVISTA_BS_STATUS: 'wrong', METAVISTA_EUR_FALLBACK_RUB: '1' }));
   assert.equal(settings.tagId, 728420); assert.equal(settings.tagName, 'ИСПАНИЯ');
-  assert.equal(settings.statusId, 145338); assert.equal(settings.statusName, 'Новый (ждем фото)');
+  assert.equal(settings.statusName, 'Заявка с сайта');
   assert.equal(settings.fallbackRate, 90);
+});
+
+test('CRM linking resolves the website status ID and never substitutes the previous initial status', async () => {
+  for (const catalogId of [1999999980, null]) {
+    let saved;
+    const db = {
+      metavistaOrder: {
+        findUniqueOrThrow: async () => ({ orderId: 42, snapshot: order(), exchangeRate: 90 }),
+        update: async () => {},
+      },
+      bluesalesOrderStatus: { findFirst: async query => {
+        assert.deepEqual(query.where, { name: 'Заявка с сайта' });
+        return catalogId === null ? null : { bsOrderStatusId: catalogId };
+      } },
+      bluesalesOrderInfo: {
+        findUnique: async () => null,
+        upsert: async args => { saved = args; },
+      },
+      order: { update: async () => {} },
+    };
+    const service = new MetavistaService({ $transaction: work => work(db) }, config(), {}, {}, {}, {});
+    await service.linkOrder(order().id, 123, 456, 789);
+    assert.equal(saved.create.orderStatus, 'Заявка с сайта');
+    assert.equal(saved.create.orderStatusId, catalogId);
+    assert.deepEqual(saved.update, {}, 'relinking must preserve an existing order status');
+  }
 });
 test('mapping uses exact saved dimensions in either orientation, never size labels', () => {
   const item = order().items[0];

@@ -333,9 +333,14 @@ export class MetavistaService implements OnModuleInit {
       if (linked && linked.orderId !== row.orderId) throw new Error('Заказ БС уже связан с другой карточкой');
       const snapshot = row.snapshot as unknown as MetavistaOrder;
       const fullTotal = selectMappedOrder(snapshot).pricing.total;
+      // Resolve the configured name instead of retaining another status's ID.
+      // If the catalog has not seen it yet, the subsequent BS refresh supplies it.
+      const status = await tx.bluesalesOrderStatus.findFirst({
+        where: { name: this.settings.statusName }, select: { bsOrderStatusId: true },
+      });
       await tx.bluesalesOrderInfo.upsert({ where: { orderId: row.orderId },
         create: { orderId: row.orderId, bsOrderId, bsCustomerId, orderStatus: this.settings.statusName,
-          orderStatusId: this.settings.statusId, orderStatusEnteredAt: new Date(), bsCreatedAt: new Date(),
+          orderStatusId: status?.bsOrderStatusId ?? null, orderStatusEnteredAt: new Date(), bsCreatedAt: new Date(),
           totalSum: row.exchangeRate ? Math.round(fullTotal * Number(row.exchangeRate) * 100) / 100 : null },
         update: {},
       });
