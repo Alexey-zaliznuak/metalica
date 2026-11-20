@@ -12,7 +12,7 @@ export class MetavistaBsService {
     this.settings = metavistaConfig(config);
   }
   send<T>(method: string, data: unknown): Promise<T> {
-    // Never automatically retry non-idempotent creation after transport failures.
+    // Retry creation through the durable import queue, with its normal backoff.
     return this.api.send<T>(method, data, { priority: 'background', respectSyncSchedule: false, label: 'metavista' });
   }
   private async list<T>(method: string, key: string, filters: object): Promise<T[]> {
@@ -33,19 +33,20 @@ export class MetavistaBsService {
     const email = order.customer.email.trim().toLowerCase();
     if (!email) throw new Error('Не указан email клиента Metavista');
     const leads = await this.prisma.lead.findMany({
-      where: { email, bsCustomerId: { not: null } }, select: { bsCustomerId: true }, take: 2,
+      where: { email, bsCustomerId: { not: null } }, select: { bsCustomerId: true },
+      orderBy: { bsCustomerId: 'asc' }, take: 1,
     });
     // Older imports and interrupted exports may already know the BS ID before
     // the local lead has been saved. Reuse that durable association as well.
-    const previous = await this.prisma.$queryRaw<Array<{ bsCustomerId: number | null; uncertain: boolean }>>`
-      SELECT DISTINCT "bsCustomerId", ("bsCustomerId" IS NULL AND "customerAttemptAt" IS NOT NULL) AS uncertain
+    const previous = await this.prisma.$queryRaw<Array<{ bsCustomerId: number }>>`
+      SELECT DISTINCT "bsCustomerId"
       FROM "MetavistaOrder"
       WHERE lower(btrim("snapshot" #>> '{customer,email}')) = ${email}
-        AND ("bsCustomerId" IS NOT NULL OR "customerAttemptAt" IS NOT NULL)`;
-    const ids = [...new Set([...leads, ...previous].map(c => c.bsCustomerId).filter((id): id is number => id != null))];
-    if (ids.length > 1) throw new Error('Несколько клиентов БС с этим email: требуется проверка');
+        AND "bsCustomerId" IS NOT NULL`;
+    // Duplicates are accepted: choose a stable known ID, or create a customer
+    // again when an earlier attempt never saved its result.
+    const ids = [...new Set([...leads, ...previous].map(c => c.bsCustomerId).filter((id): id is number => id != null))].sort((a, b) => a - b);
     if (ids.length) return { id: ids[0] };
-    if (previous.some(c => c.uncertain)) throw new Error('Результат создания клиента неизвестен. Автоповтор запрещён; проверьте БС');
     return null;
   }
   async customer(id: number) {
@@ -56,8 +57,7 @@ export class MetavistaBsService {
   }
   async findOrder(customerId: number, externalId: string) {
     const orders = await this.list<BsOrder>('orders.get', 'orders', { customerId, dateFrom: null, dateTill: null, orderStatuses: [], ids: null, internalNumbers: null });
-    const found = orders.filter(o => markerId(o.internalComments) === externalId);
-    if (found.length > 1) throw new Error('Несколько заказов БС с номером Metavista: требуется проверка');
+    const found = orders.filter(o => markerId(o.internalComments) === externalId).sort((a, b) => a.id - b.id);
     return found[0] ?? null;
   }
   async tagId(): Promise<number> {

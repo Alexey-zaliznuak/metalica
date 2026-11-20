@@ -14,6 +14,11 @@ import { selectMappedOrder } from './metavista-catalog';
 import { BluesalesSyncService } from '../bluesales/bluesales-sync.service';
 import { BsCustomer } from '../bluesales/bluesales-api.service';
 
+interface ExportTrace {
+  externalId: string; attemptId: string; startedAt: number; stage: string;
+  orderId: number | null; bsCustomerId: number | null; bsOrderId: number | null;
+}
+
 @Injectable()
 export class MetavistaService implements OnModuleInit {
   private readonly logger = new Logger(MetavistaService.name);
@@ -69,6 +74,13 @@ export class MetavistaService implements OnModuleInit {
       // Delivery is independent of the input cursor: a BS outage never loses a
       // saved order and does not stop importing subsequent source pages.
       if (this.bs.api.isConfigured) {
+        await this.assertLock();
+        // Resume the backlog left by the former no-retry policy on the first tick.
+        const resumed = await this.prisma.metavistaOrder.updateMany({
+          where: { exportState: 'REVIEW', deletedAt: null, bsOrderId: null },
+          data: { exportState: 'RETRY', nextAttemptAt: new Date() },
+        });
+        if (resumed.count) this.logger.log(`Metavista: возвращены к автоматической отправке ранее заблокированные заказы; заказов=${resumed.count}`);
         const pending = await this.prisma.metavistaOrder.findMany({
           where: { exportState: { in: ['PENDING', 'RETRY', 'REVIEW'] }, deletedAt: null, nextAttemptAt: { lte: new Date() } },
           orderBy: { nextAttemptAt: 'asc' }, take: 5,
@@ -77,15 +89,7 @@ export class MetavistaService implements OnModuleInit {
         for (const row of pending) {
           await this.assertLock();
           try { await this.exportOrder(row.externalId); }
-          catch (error) {
-            const current = await this.prisma.metavistaOrder.findUniqueOrThrow({ where: { externalId: row.externalId } });
-            const review = !!(current.orderAttemptAt && !current.bsOrderId) || !!(current.customerAttemptAt && !current.bsCustomerId);
-            await this.prisma.metavistaOrder.update({ where: { externalId: row.externalId }, data: {
-              exportState: review ? 'REVIEW' : 'RETRY', lastError: this.errorMessage(error),
-              nextAttemptAt: new Date(Date.now() + (review ? 3600_000 : 60_000)),
-            } });
-            this.logger.error(`Metavista ${row.externalId}: ${this.errorMessage(error)}`);
-          }
+          catch { /* exportOrder records the error and schedules its next attempt. */ }
         }
       }
     } catch (error) { this.logger.error(this.errorMessage(error)); }
@@ -260,18 +264,68 @@ export class MetavistaService implements OnModuleInit {
   }
 
   async exportOrder(externalId: string) {
+    const trace: ExportTrace = { externalId, attemptId: randomUUID(), startedAt: Date.now(),
+      stage: 'load', orderId: null, bsCustomerId: null, bsOrderId: null };
+    try {
+      if (await this.exportAttempt(externalId, trace)) await this.recordExportEvent(trace, 'success');
+    } catch (error) {
+      const message = this.errorMessage(error);
+      let nextAttemptAt: Date | null = new Date(Date.now() + 60_000);
+      try {
+        await this.prisma.metavistaOrder.update({ where: { externalId }, data: {
+          exportState: 'RETRY', lastError: `[${trace.stage}] ${message}`.slice(0, 1000), nextAttemptAt,
+        } });
+      } catch (scheduleError) {
+        nextAttemptAt = null;
+        this.logger.error(`Metavista ${externalId}: не удалось назначить повтор: ${this.errorMessage(scheduleError)}`);
+      }
+      await this.recordExportEvent(trace, 'error', message, nextAttemptAt);
+      throw error;
+    }
+  }
+
+  private async recordExportEvent(trace: ExportTrace, outcome: 'start' | 'success' | 'error', error: string | null = null, nextAttemptAt: Date | null = null) {
+    const durationMs = Date.now() - trace.startedAt;
+    const message = `Metavista ${trace.externalId}: попытка=${trace.attemptId}; этап=${trace.stage}; результат=${outcome}; время=${durationMs} мс`
+      + (error ? `; ошибка=${error}` : '')
+      + (nextAttemptAt ? `; повтор=${nextAttemptAt.toISOString()}` : '');
+    if (outcome === 'error') this.logger.error(message); else this.logger.log(message);
+    if (!trace.orderId) return;
+    try {
+      await this.prisma.orderEvent.create({ data: {
+        orderId: trace.orderId, field: 'metavistaExport', newValue: outcome,
+        meta: { source: 'metavista', externalId: trace.externalId, attemptId: trace.attemptId,
+          stage: trace.stage, outcome, durationMs, error, nextAttemptAt: nextAttemptAt?.toISOString() ?? null,
+          bsCustomerId: trace.bsCustomerId, bsOrderId: trace.bsOrderId },
+      } });
+    } catch (auditError) {
+      // Logging failures must never repeat a successfully created customer/order.
+      this.logger.error(`Metavista ${trace.externalId}: история попытки=${trace.attemptId} не сохранена: ${this.errorMessage(auditError)}`);
+    }
+  }
+
+  private async exportAttempt(externalId: string, trace: ExportTrace) {
     let row = await this.prisma.metavistaOrder.findUniqueOrThrow({ where: { externalId } });
     const snapshot = row.snapshot as unknown as MetavistaOrder;
     const order = snapshot;
     if (row.deletedAt || !row.orderId || !order) return;
+    trace.orderId = row.orderId;
+    trace.bsCustomerId = row.bsCustomerId;
+    trace.bsOrderId = row.bsOrderId;
     if (row.bsOrderId) {
+      if (row.exportState === 'EXPORTED') return;
+      trace.stage = 'order.alreadyLinked';
+      await this.recordExportEvent(trace, 'start');
       await this.prisma.metavistaOrder.update({ where: { externalId }, data: { exportState: 'EXPORTED', lastError: null } });
-      return;
+      return true;
     }
+    await this.recordExportEvent(trace, 'start');
+    trace.stage = 'customer.lookup';
     const tagId = await this.bs.tagId();
     let customer: BsCustomer | null = row.bsCustomerId ? { id: row.bsCustomerId } : await this.bs.findCustomer(order);
     if (!customer) {
-      if (row.customerAttemptAt) throw new Error('Результат создания клиента неизвестен. Автоповтор запрещён; проверьте БС');
+      trace.stage = 'customers.add';
+      if (row.customerAttemptAt) this.logger.warn(`Metavista ${externalId}: повторяем создание клиента после попытки без сохранённого ID`);
       await this.assertLock();
       await this.prisma.metavistaOrder.update({ where: { externalId }, data: { customerAttemptAt: new Date() } });
       try { customer = await this.bs.send('customers.add', {
@@ -282,8 +336,10 @@ export class MetavistaService implements OnModuleInit {
         if (this.bs.isRejected(error)) await this.prisma.metavistaOrder.update({ where: { externalId }, data: { customerAttemptAt: null } });
         throw error;
       }
-      if (!customer?.id) throw new Error('БС не вернул ID созданного клиента');
+      if (!customer?.id) throw new Error(`БС не вернул ID созданного клиента; поля ответа: ${this.responseKeys(customer)}`);
     }
+    trace.bsCustomerId = customer.id!;
+    trace.stage = 'customer.save';
     const email = order.customer.email.trim().toLowerCase();
     const customerId = customer.id!;
     const customerName = customer.fullName;
@@ -293,21 +349,26 @@ export class MetavistaService implements OnModuleInit {
         create: { bsCustomerId: customerId, fullName: customerName, email }, update: { email } });
     });
     // Read current tags just before updating: don't replace them with a stale set.
+    trace.stage = 'customers.get';
     customer = await this.bs.customer(customerId);
     await this.assertLock();
+    trace.stage = 'customer.tag';
     await this.bs.ensureTag(customer, tagId);
     const lead = await this.prisma.lead.upsert({ where: { bsCustomerId: customer.id },
       create: { bsCustomerId: customer.id, fullName: customer.fullName, tags: { connect: { bsTagId: String(tagId) } } },
       update: { tags: { connect: { bsTagId: String(tagId) } } },
     });
     await this.prisma.order.update({ where: { id: row.orderId }, data: { leadId: lead.id } });
+    trace.stage = 'orders.lookup';
     let bsOrder = await this.bs.findOrder(customer.id!, externalId);
     if (!bsOrder) {
-      if (row.orderAttemptAt) throw new Error('Результат создания заказа неизвестен. Автоповтор запрещён; проверьте БС');
+      if (row.orderAttemptAt) this.logger.warn(`Metavista ${externalId}: заказ по метке не найден, повторяем создание`);
       if (!row.exchangeRate) {
+        trace.stage = 'exchangeRate';
         const rate = await this.rates.current();
         row = await this.prisma.metavistaOrder.update({ where: { externalId }, data: { exchangeRate: rate.rate, rateSource: rate.source } });
       }
+      trace.stage = 'orders.add';
       const payload = buildBsOrder(order, customer.id!, Number(row.exchangeRate));
       await this.assertLock();
       await this.prisma.metavistaOrder.update({ where: { externalId }, data: { orderAttemptAt: new Date() } });
@@ -316,14 +377,25 @@ export class MetavistaService implements OnModuleInit {
         if (this.bs.isRejected(error)) await this.prisma.metavistaOrder.update({ where: { externalId }, data: { orderAttemptAt: null } });
         throw error;
       }
-      if (!bsOrder?.id) throw new Error('БС не вернул ID созданного заказа');
+      if (!bsOrder?.id) throw new Error(`БС не вернул ID созданного заказа; поля ответа: ${this.responseKeys(bsOrder)}`);
     }
+    trace.bsOrderId = bsOrder.id;
+    trace.stage = 'order.link';
     await this.linkOrder(externalId, bsOrder.id, customer.id!, lead.id);
     this.logger.log(`Metavista ${externalId}: успешно связан с заказом БС #${bsOrder.id}`);
     // Fetch the actual BS status ID and payload immediately; subsequent inbound
     // refreshes use the saved bsOrderId and never create another local card.
+    trace.stage = 'orders.refresh';
     const actual = await this.bs.api.getOrdersByIds([bsOrder.id], 'background', false);
     if (actual[0]) await this.bsSync.upsertOrder(actual[0], lead.id);
+    return true;
+  }
+
+  private responseKeys(value: unknown): string {
+    // Describe a malformed response without exposing the customer or credentials.
+    return value && typeof value === 'object'
+      ? this.errorMessage(new Error(Object.keys(value).slice(0, 20).join(', ') || '(пустой объект)'))
+      : value === null ? 'null' : typeof value;
   }
   async linkOrder(externalId: string, bsOrderId: number, bsCustomerId: number, leadId: number) {
     await this.prisma.$transaction(async tx => {

@@ -69,7 +69,8 @@ export class OrderEventsService {
 
   async list(orderId: number) {
     const rows = await this.prisma.orderEvent.findMany({
-      where: { orderId },
+      // Integration diagnostics have a separate paginated endpoint, not the chat timeline.
+      where: { orderId, field: { not: 'metavistaExport' } },
       orderBy: { id: 'asc' },
       include: eventInclude,
     });

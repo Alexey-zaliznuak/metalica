@@ -62,7 +62,7 @@ test('adding Spain preserves all existing customer tags', async () => {
   await bs.ensureTag({ id: 42, tags: [{ id: 3 }] }, 3);
   assert.equal(requests.length, 1);
 });
-test('customer lookup uses normalized local email and never calls BlueSales, including misses and conflicts', async () => {
+test('customer lookup reuses a stable known ID and allows retry after an uncertain creation', async () => {
   let leads = [{ bsCustomerId: 2 }], previous = [], query;
   const bs = new MetavistaBsService({ send: async () => assert.fail('No API calls during lookup') }, {
     lead: { findMany: async args => { query = args; return leads; } },
@@ -71,7 +71,8 @@ test('customer lookup uses normalized local email and never calls BlueSales, inc
   const source = order(); source.customer.email = '  METAVISTA-TEST@example.invalid ';
   assert.deepEqual(await bs.findCustomer(source), { id: 2 });
   assert.deepEqual(query.where, { email: 'metavista-test@example.invalid', bsCustomerId: { not: null } });
-  assert.equal(query.take, 2);
+  assert.equal(query.take, 1);
+  assert.deepEqual(query.orderBy, { bsCustomerId: 'asc' });
   previous = [{ bsCustomerId: 2, uncertain: false }];
   assert.deepEqual(await bs.findCustomer(source), { id: 2 }, 'same ID from both sources is not ambiguous');
   leads = [];
@@ -79,13 +80,22 @@ test('customer lookup uses normalized local email and never calls BlueSales, inc
   previous = [];
   assert.equal(await bs.findCustomer(source), null);
   leads = [{ bsCustomerId: 1 }, { bsCustomerId: 2 }];
-  await assert.rejects(bs.findCustomer(source), /Несколько клиентов/);
+  assert.deepEqual(await bs.findCustomer(source), { id: 1 });
   leads = [{ bsCustomerId: 1 }]; previous = [{ bsCustomerId: 2, uncertain: false }];
-  await assert.rejects(bs.findCustomer(source), /Несколько клиентов/);
+  assert.deepEqual(await bs.findCustomer(source), { id: 1 });
   leads = []; previous = [{ bsCustomerId: null, uncertain: true }];
-  await assert.rejects(bs.findCustomer(source), /Автоповтор запрещён/);
+  assert.equal(await bs.findCustomer(source), null);
   source.customer.email = ' ';
   await assert.rejects(bs.findCustomer(source), /Не указан email/);
+});
+
+test('duplicate order markers reuse the smallest BS ID regardless of response order', async () => {
+  const bs = new MetavistaBsService({ send: async () => ({ orders: [
+    { id: 8, internalComments: 'Metavista: MV-999981' },
+    { id: 2, internalComments: 'Metavista: MV-999982' },
+    { id: 4, internalComments: 'Metavista: MV-999981' },
+  ], notReturnedCount: 0 }) }, {}, config());
+  assert.equal((await bs.findOrder(1, 'MV-999981')).id, 4);
 });
 
 test('customer refresh performs exactly one targeted request and fails if that ID is missing', async () => {

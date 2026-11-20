@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, Query } from '@nestjs/common';
 import { OrderStatusChangeState } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -46,6 +46,24 @@ export class BluesalesDiagController {
       customerId: order.customer?.id ?? null,
       customerCrmStatus: order.customer?.crmStatus?.name ?? null,
     };
+  }
+
+  /** Durable Metavista export history; contains no customer snapshots or API keys. */
+  @Get('metavista/:externalId')
+  async metavista(@Param('externalId') externalId: string, @Query('beforeId') beforeIdRaw?: string) {
+    if (!/^MV-\d{6}$/.test(externalId)) throw new BadRequestException('Неверный номер Metavista');
+    const beforeId = beforeIdRaw === undefined ? undefined : Number(beforeIdRaw);
+    if (beforeId !== undefined && (!Number.isSafeInteger(beforeId) || beforeId < 1)) throw new BadRequestException('Неверный beforeId');
+    const state = await this.prisma.metavistaOrder.findUnique({ where: { externalId }, select: {
+      externalId: true, orderId: true, exportState: true, lastError: true, nextAttemptAt: true,
+      bsCustomerId: true, bsOrderId: true, customerAttemptAt: true, orderAttemptAt: true,
+    } });
+    if (!state) return { error: 'Заказ Metavista не найден', externalId };
+    const events = state.orderId ? await this.prisma.orderEvent.findMany({
+      where: { orderId: state.orderId, field: 'metavistaExport', ...(beforeId === undefined ? {} : { id: { lt: beforeId } }) },
+      orderBy: { id: 'desc' }, take: 51, select: { id: true, createdAt: true, meta: true },
+    }) : [];
+    return { state, events: events.slice(0, 50), nextBeforeId: events.length > 50 ? events[49].id : null };
   }
 
   /**

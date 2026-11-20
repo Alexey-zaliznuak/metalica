@@ -81,14 +81,12 @@ test('unpaid orders export immediately once with stable FX and no invented payme
   assert.equal(info.totalSum, 7371, 'CRM total must include the full 81.9 EUR including shipping');
   assert.equal(await db.order.count({ where: { id: row.orderId, source: 'BLUESALES' } }), 1);
 }));
-test('unknown create result is reconciled by marker and never blindly retried', () => isolated(async (service, db) => {
+test('unknown create result reuses an order found by marker', () => isolated(async (service, db) => {
   await service.importOrder(order());
   await db.metavistaOrder.update({ where: { externalId: order().id }, data: { bsCustomerId: 1999999981, orderAttemptAt: new Date() } });
   await db.bluesalesTag.upsert({ where: { bsTagId: '1999999981' }, create: { bsTagId: '1999999981', name: 'Test Spain' }, update: {} });
   service.bs = { tagId: async () => 1999999981, customer: async () => ({ id: 1999999981 }), ensureTag: async () => {},
-    findOrder: async () => null, send: async () => assert.fail('Must not create again'), api: { getOrdersByIds: async () => [] } };
-  await assert.rejects(service.exportOrder(order().id), /Автоповтор запрещён/);
-  service.bs.findOrder = async () => ({ id: 1999999981 });
+    findOrder: async () => ({ id: 1999999981 }), send: async () => assert.fail('Reuse the found order'), api: { getOrdersByIds: async () => [] } };
   await service.exportOrder(order().id);
   assert.equal((await db.metavistaOrder.findUnique({ where: { externalId: order().id } })).bsOrderId, 1999999981);
 }));
@@ -140,11 +138,11 @@ test('local customer email survives partial BS responses and resolves without an
   assert.equal(await bs.findCustomer(order()), null, 'explicit email removal is respected');
   await service.importOrder(order());
   await db.metavistaOrder.update({ where: { externalId: order().id }, data: { customerAttemptAt: new Date() } });
-  await assert.rejects(bs.findCustomer(order({ id: 'MV-999982' })), /Автоповтор запрещён/);
+  assert.equal(await bs.findCustomer(order({ id: 'MV-999982' })), null);
   await db.metavistaOrder.update({ where: { externalId: order().id }, data: { bsCustomerId: customer.id } });
   assert.deepEqual(await bs.findCustomer(order()), { id: customer.id }, 'recover saved ID even without email on lead');
   await db.lead.create({ data: { bsCustomerId: 1999999982, email: order().customer.email } });
-  await assert.rejects(bs.findCustomer(order()), /Несколько клиентов/);
+  assert.deepEqual(await bs.findCustomer(order()), { id: customer.id });
 }));
 
 test('two orders with the same email create one customer and only read customers by ID', () => isolated(async (service, db) => {
