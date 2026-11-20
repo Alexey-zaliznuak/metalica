@@ -339,7 +339,8 @@ export class MetavistaService implements OnModuleInit {
         // This client status is separate from the order's «Заявка с сайта».
         // https://bluesales.ru/app/api/BlueSalesApiDemo/app.js
         firstContactDate: new Date(order.createdAt).toISOString().slice(0, 10), crmStatus: { name: 'Обратился' },
-        phone: order.customer.phone ?? '', country: { name: order.delivery.country }, city: { name: order.delivery.city },
+        // BlueSales support advised omitting the customer city; delivery keeps it.
+        phone: order.customer.phone ?? '', country: { name: order.delivery.country },
         address: `${order.delivery.zip} ${order.delivery.address}`, tags: [{ id: tagId }],
       }); } catch (error) {
         if (this.bs.isRejected(error)) await this.prisma.metavistaOrder.update({ where: { externalId }, data: { customerAttemptAt: null } });

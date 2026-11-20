@@ -83,6 +83,7 @@ function harness(count = 1, options = {}) {
       if (method === 'customers.add') {
         assert.equal(data.firstContactDate, '2026-10-29');
         assert.deepEqual(data.crmStatus, { name: 'Обратился' });
+        assert.ok(!('city' in data), 'BlueSales rejects city in customers.add');
         const customer = { ...data, id: 100 + customers.length };
         customers.push(customer);
         if (options.customerError) throw options.customerError;
@@ -118,6 +119,7 @@ test('the seven REVIEW and nine dependent RETRY orders resume and export in boun
   assert.equal(h.customers.length, 7);
   assert.equal(h.orders.length, 16);
   assert.ok(h.orders.every(o => o.orderStatus.name === 'Заявка с сайта'));
+  assert.ok(h.orders.every(o => o.delivery.city === 'Madrid'));
   assert.ok(h.infos.every(i => i.orderStatus === 'Заявка с сайта' && i.orderStatusId === 999));
   assert.ok(h.rows.slice(16).every(r => r.exportState === 'REVIEW'));
   assert.equal(h.events.filter(e => e.meta.outcome === 'success').length, 16);
