@@ -12,7 +12,7 @@ import { EurRateService } from './eur-rate.service';
 import { buildBsOrder } from './metavista-payload';
 import { selectMappedOrder } from './metavista-catalog';
 import { BluesalesSyncService } from '../bluesales/bluesales-sync.service';
-import { BsCustomer } from '../bluesales/bluesales-api.service';
+import { BsCustomer, BluesalesInvalidResponseError, BluesalesResponseDetails } from '../bluesales/bluesales-api.service';
 
 interface ExportTrace {
   externalId: string; attemptId: string; startedAt: number; stage: string;
@@ -137,7 +137,8 @@ export class MetavistaService implements OnModuleInit {
   private errorMessage(error: unknown) {
     // Never retain the bearer key even if a transport library includes it.
     const message = error instanceof Error ? error.message : 'Ошибка интеграции';
-    return (this.settings.key ? message.split(this.settings.key).join('[redacted]') : message).slice(0, 1000);
+    return (this.settings.key ? message.split(this.settings.key).join('[redacted]') : message)
+      .replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 1000);
   }
   private async assertLock() {
     if (!this.lockToken) throw new Error('Блокировка импорта Metavista потеряна');
@@ -279,12 +280,15 @@ export class MetavistaService implements OnModuleInit {
         nextAttemptAt = null;
         this.logger.error(`Metavista ${externalId}: не удалось назначить повтор: ${this.errorMessage(scheduleError)}`);
       }
-      await this.recordExportEvent(trace, 'error', message, nextAttemptAt);
+      const response = error instanceof BluesalesInvalidResponseError ? { ...error.responseDetails,
+        body: this.settings.key ? error.responseDetails.body.split(this.settings.key).join('[redacted]') : error.responseDetails.body,
+      } : null;
+      await this.recordExportEvent(trace, 'error', message, nextAttemptAt, response);
       throw error;
     }
   }
 
-  private async recordExportEvent(trace: ExportTrace, outcome: 'start' | 'success' | 'error', error: string | null = null, nextAttemptAt: Date | null = null) {
+  private async recordExportEvent(trace: ExportTrace, outcome: 'start' | 'success' | 'error', error: string | null = null, nextAttemptAt: Date | null = null, response: BluesalesResponseDetails | null = null) {
     const durationMs = Date.now() - trace.startedAt;
     const message = `Metavista ${trace.externalId}: попытка=${trace.attemptId}; этап=${trace.stage}; результат=${outcome}; время=${durationMs} мс`
       + (error ? `; ошибка=${error}` : '')
@@ -296,7 +300,7 @@ export class MetavistaService implements OnModuleInit {
         orderId: trace.orderId, field: 'metavistaExport', newValue: outcome,
         meta: { source: 'metavista', externalId: trace.externalId, attemptId: trace.attemptId,
           stage: trace.stage, outcome, durationMs, error, nextAttemptAt: nextAttemptAt?.toISOString() ?? null,
-          bsCustomerId: trace.bsCustomerId, bsOrderId: trace.bsOrderId },
+          bsCustomerId: trace.bsCustomerId, bsOrderId: trace.bsOrderId, response },
       } });
     } catch (auditError) {
       // Logging failures must never repeat a successfully created customer/order.
@@ -330,6 +334,10 @@ export class MetavistaService implements OnModuleInit {
       await this.prisma.metavistaOrder.update({ where: { externalId }, data: { customerAttemptAt: new Date() } });
       try { customer = await this.bs.send('customers.add', {
         fullName: `${order.customer.firstName} ${order.customer.lastName}`.trim(), email: order.customer.email,
+        // Match the CRM fields in the official customers.add example. Its date
+        // input sends YYYY-MM-DD; code 0 is the example's alternative to a name.
+        // https://bluesales.ru/app/api/BlueSalesApiDemo/app.js?v=3
+        firstContactDate: new Date(order.createdAt).toISOString().slice(0, 10), crmStatus: { code: 0 },
         phone: order.customer.phone ?? '', country: { name: order.delivery.country }, city: { name: order.delivery.city },
         address: `${order.delivery.zip} ${order.delivery.address}`, tags: [{ id: tagId }],
       }); } catch (error) {

@@ -5,6 +5,7 @@ const { MetavistaService } = require('../dist/metavista/metavista.service');
 const { MetavistaBsService } = require('../dist/metavista/metavista-bs.service');
 const { BluesalesDiagController } = require('../dist/bluesales/bluesales-diag.controller');
 const { OrderEventsService } = require('../dist/orders/order-events.service');
+const { BluesalesInvalidResponseError } = require('../dist/bluesales/bluesales-api.service');
 
 // In-memory persistence and BS transport; run the real queue/export/linking code.
 function harness(count = 1, options = {}) {
@@ -80,8 +81,11 @@ function harness(count = 1, options = {}) {
     send: async (method, data) => {
       calls.push({ method, data });
       if (method === 'customers.add') {
+        assert.equal(data.firstContactDate, '2026-10-29');
+        assert.deepEqual(data.crmStatus, { code: 0 });
         const customer = { ...data, id: 100 + customers.length };
         customers.push(customer);
+        if (options.customerError) throw options.customerError;
         if (customerFailures-- > 0) throw new Error('timeout secret-test');
         if (options.missingCustomerId) return { errorDetail: 'private customer data' };
         return customer;
@@ -181,6 +185,32 @@ test('missing IDs retain useful stage and response field names without response 
   assert.match(h.events.at(-1).meta.error, /errorDetail/);
   assert.ok(!JSON.stringify(h.events).includes('private customer data'));
   assert.equal(h.orders.length, 0);
+});
+
+test('HTML failure details survive in persistent history and retry logs stay on one line', async () => {
+  const body = 'page text '.repeat(200) + 'actual error secret-test';
+  const h = harness(1, { customerError: new BluesalesInvalidResponseError({
+    method: 'customers.add', status: 200, contentType: 'text/html', redirected: true,
+    path: '/app/Error.aspx', bodyChars: 9000, body,
+  }) });
+  await h.service.tick();
+  assert.equal(h.rows[0].exportState, 'RETRY');
+  const event = h.events.at(-1).meta;
+  assert.equal(event.stage, 'customers.add');
+  assert.ok(event.response.body.endsWith('actual error [redacted]'));
+  assert.ok(event.response.body.length > 1000);
+  assert.equal(event.response.status, 200);
+  assert.ok(!JSON.stringify(h.events).includes('secret-test'));
+  assert.ok(h.logs.some(l => l.message.includes('повтор=') && l.message.includes('HTTP=200')));
+  assert.ok(h.logs.every(l => !/[\r\n]/.test(l.message)));
+  assert.equal(h.orders.length, 0);
+});
+
+test('multiline transport errors keep the reason and retry time visible to grep', async () => {
+  const h = harness(1, { customerError: new Error('Network error:\r\nsecond line secret-test') });
+  await h.service.tick();
+  assert.equal(h.events.at(-1).meta.error, 'Network error: second line [redacted]');
+  assert.ok(h.logs.some(l => /Network error: second line \[redacted\]; повтор=/.test(l.message)));
 });
 
 test('diagnostics paginate persistent history and the regular timeline excludes technical events', async () => {

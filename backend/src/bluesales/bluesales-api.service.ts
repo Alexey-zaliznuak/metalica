@@ -22,6 +22,19 @@ const BASE_URL = 'https://bluesales.ru/app/Customers/WebServer.aspx';
 const MIN_REQUEST_GAP_MS = 300;
 
 export class BluesalesError extends Error {}
+export type BluesalesResponseDetails = {
+  method: string; status: number; contentType: string; redirected: boolean;
+  path: string; bodyChars: number; body: string;
+};
+/** Non-JSON is an uncertain result, never an explicit rejection of a write. */
+export class BluesalesInvalidResponseError extends BluesalesError {
+  constructor(readonly responseDetails: BluesalesResponseDetails) {
+    const r = responseDetails;
+    super(`Invalid JSON from BlueSales: method=${r.method}; HTTP=${r.status}; `
+      + `type=${r.contentType || '(missing)'}; redirected=${r.redirected}; `
+      + `path=${r.path || '(unknown)'}; chars=${r.bodyChars}; response=${r.body.slice(0, 600)}`);
+  }
+}
 /** Explicit API rejection, safe to correct and retry a create operation. */
 export class BluesalesRejectedError extends BluesalesError {}
 export class BluesalesHttpError extends BluesalesError {}
@@ -317,6 +330,32 @@ export class BluesalesApiService {
     return value.length <= maxLength ? value : `${value.slice(0, maxLength)}…`;
   }
 
+  private responseSummary(text: string): string {
+    // Error pages can have several KB of styles before the actual explanation.
+    // Strip markup BEFORE truncating, and keep the message on one log line.
+    let summary = text;
+    if (/<(?:!doctype|html|head|body)\b/i.test(text)) {
+      const title = text.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '';
+      summary = text.replace(/<!--[\s\S]*?-->/g, ' ')
+        .replace(/<(script|style|head)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ');
+      summary = `${title} ${summary}`;
+    }
+    summary = summary.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (entity, code: string) => {
+      if (code[0] === '#') {
+        const point = code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+        return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : entity;
+      }
+      return ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' } as Record<string, string>)[code.toLowerCase()];
+    });
+    // Never retain the authenticated URL if an error page echoes the request.
+    summary = summary.replace(/([?&](?:login|password|token|key)=)[^\s&<>"']*/gi, '$1[redacted]');
+    for (const secret of [this.login, this.passwordHash]) {
+      if (secret) summary = summary.split(secret).join('[redacted]');
+    }
+    return this.truncateLogValue(summary.replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim(), 6000) || '(empty body)';
+  }
+
   private async sendRaw<T>(
     method: string,
     data?: unknown,
@@ -361,6 +400,9 @@ export class BluesalesApiService {
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     let text: string;
     let responseStatus = 0;
+    let responseType = '';
+    let responsePath = '';
+    let redirected = false;
     const startedAt = Date.now();
     const startedAtMonotonic = performance.now();
     let durationMs = 0;
@@ -369,15 +411,23 @@ export class BluesalesApiService {
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
         body: JSON.stringify(data ?? null),
         signal: controller.signal,
       });
       responseStatus = response.status;
+      responseType = response.headers?.get('content-type') ?? '';
+      redirected = response.redirected === true;
+      // Query strings may contain login/password or the original authenticated URL.
+      if (response.url) responsePath = new URL(response.url).pathname;
       if (response.status === 404) {
         throw new BluesalesHttpError(`Method ${method} not found!`);
       }
-      text = await response.text();
+      // The JSON API uses UTF-8, but its HTML error pages can use Windows-1251.
+      const charset = responseType.match(/charset\s*=\s*["']?([\w-]+)/i)?.[1]?.toLowerCase();
+      text = charset === 'windows-1251' || charset === 'cp1251'
+        ? new TextDecoder('windows-1251').decode(await response.arrayBuffer())
+        : await response.text();
       durationMs = performance.now() - startedAtMonotonic;
       completedAt = new Date();
     } catch (err) {
@@ -409,11 +459,13 @@ export class BluesalesApiService {
     try {
       parsed = JSON.parse(text);
     } catch {
+      const error = new BluesalesInvalidResponseError({ method, status: responseStatus,
+        contentType: this.truncateLogValue(responseType, 100), redirected,
+        path: this.truncateLogValue(responsePath, 120), bodyChars: text.length, body: this.responseSummary(text) });
       this.logger.error(
-        `BlueSales ${method}: invalid JSON; status=${responseStatus}; attempt=${attempt}; ` +
-          `request=${requestDescription}; response=${this.truncateLogValue(text)}`,
+        `BlueSales ${method}: invalid JSON; label=${label}; attempt=${attempt}; response=${JSON.stringify(error.responseDetails)}`,
       );
-      throw new BluesalesError(`Invalid JSON from BlueSales: ${text.slice(0, 200)}`);
+      throw error;
     }
 
     const responseError =
