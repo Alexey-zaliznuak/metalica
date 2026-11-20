@@ -334,10 +334,10 @@ export class MetavistaService implements OnModuleInit {
       await this.prisma.metavistaOrder.update({ where: { externalId }, data: { customerAttemptAt: new Date() } });
       try { customer = await this.bs.send('customers.add', {
         fullName: `${order.customer.firstName} ${order.customer.lastName}`.trim(), email: order.customer.email,
-        // Match the CRM fields in the official customers.add example. Its date
-        // input sends YYYY-MM-DD; code 0 is the example's alternative to a name.
-        // https://bluesales.ru/app/api/BlueSalesApiDemo/app.js?v=3
-        firstContactDate: new Date(order.createdAt).toISOString().slice(0, 10), crmStatus: { code: 0 },
+        // The active demo sends crmStatus.name (code is commented out).
+        // This client status is separate from the order's «Заявка с сайта».
+        // https://bluesales.ru/app/api/BlueSalesApiDemo/app.js
+        firstContactDate: new Date(order.createdAt).toISOString().slice(0, 10), crmStatus: { name: 'Обратился' },
         phone: order.customer.phone ?? '', country: { name: order.delivery.country }, city: { name: order.delivery.city },
         address: `${order.delivery.zip} ${order.delivery.address}`, tags: [{ id: tagId }],
       }); } catch (error) {

@@ -82,7 +82,7 @@ function harness(count = 1, options = {}) {
       calls.push({ method, data });
       if (method === 'customers.add') {
         assert.equal(data.firstContactDate, '2026-10-29');
-        assert.deepEqual(data.crmStatus, { code: 0 });
+        assert.deepEqual(data.crmStatus, { name: 'Обратился' });
         const customer = { ...data, id: 100 + customers.length };
         customers.push(customer);
         if (options.customerError) throw options.customerError;
