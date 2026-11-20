@@ -283,12 +283,13 @@ export class MetavistaService implements OnModuleInit {
       const response = error instanceof BluesalesInvalidResponseError ? { ...error.responseDetails,
         body: this.settings.key ? error.responseDetails.body.split(this.settings.key).join('[redacted]') : error.responseDetails.body,
       } : null;
-      await this.recordExportEvent(trace, 'error', message, nextAttemptAt, response);
+      const requestBody = error instanceof BluesalesInvalidResponseError ? error.requestBody ?? null : null;
+      await this.recordExportEvent(trace, 'error', message, nextAttemptAt, response, requestBody);
       throw error;
     }
   }
 
-  private async recordExportEvent(trace: ExportTrace, outcome: 'start' | 'success' | 'error', error: string | null = null, nextAttemptAt: Date | null = null, response: BluesalesResponseDetails | null = null) {
+  private async recordExportEvent(trace: ExportTrace, outcome: 'start' | 'success' | 'error', error: string | null = null, nextAttemptAt: Date | null = null, response: BluesalesResponseDetails | null = null, requestBody: string | null = null) {
     const durationMs = Date.now() - trace.startedAt;
     const message = `Metavista ${trace.externalId}: попытка=${trace.attemptId}; этап=${trace.stage}; результат=${outcome}; время=${durationMs} мс`
       + (error ? `; ошибка=${error}` : '')
@@ -300,7 +301,7 @@ export class MetavistaService implements OnModuleInit {
         orderId: trace.orderId, field: 'metavistaExport', newValue: outcome,
         meta: { source: 'metavista', externalId: trace.externalId, attemptId: trace.attemptId,
           stage: trace.stage, outcome, durationMs, error, nextAttemptAt: nextAttemptAt?.toISOString() ?? null,
-          bsCustomerId: trace.bsCustomerId, bsOrderId: trace.bsOrderId, response },
+          bsCustomerId: trace.bsCustomerId, bsOrderId: trace.bsOrderId, response, requestBody },
       } });
     } catch (auditError) {
       // Logging failures must never repeat a successfully created customer/order.

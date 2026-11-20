@@ -28,7 +28,7 @@ export type BluesalesResponseDetails = {
 };
 /** Non-JSON is an uncertain result, never an explicit rejection of a write. */
 export class BluesalesInvalidResponseError extends BluesalesError {
-  constructor(readonly responseDetails: BluesalesResponseDetails) {
+  constructor(readonly responseDetails: BluesalesResponseDetails, readonly requestBody?: string) {
     const r = responseDetails;
     super(`Invalid JSON from BlueSales: method=${r.method}; HTTP=${r.status}; `
       + `type=${r.contentType || '(missing)'}; redirected=${r.redirected}; `
@@ -305,7 +305,20 @@ export class BluesalesApiService {
     return Number.isFinite(seconds) ? seconds : null;
   }
 
-  private describeRequest(method: string, data: unknown): string {
+  private describeRequest(method: string, data: unknown, label: string, body: string): string {
+    if (label === 'metavista') {
+      // Keep the complete JSON actually sent, including customer/contact fields.
+      // Only authentication values are hidden; the authenticated URL is never logged.
+      const secrets = [this.login, this.passwordHash,
+        this.config.get<string>('BLUESALES_PASSWORD', ''), this.config.get<string>('METAVISTA_API_KEY', '')].filter(Boolean);
+      return JSON.stringify(JSON.parse(body), (key, value) => {
+        if (/^(?:login|password|passwordHash|authorization|cookie|token|accessToken|refreshToken|apiKey|api_key|key|secret)$/i.test(key)) return '[redacted]';
+        if (typeof value !== 'string') return value;
+        let safe = value.replace(/([?&](?:login|password|token|key)=)[^\s&<>"']*/gi, '$1[redacted]');
+        for (const secret of secrets) safe = safe.split(secret).join('[redacted]');
+        return safe;
+      });
+    }
     if (method === 'orders.updateMany' || method === 'orders.setStatus') {
       return JSON.stringify(data);
     }
@@ -395,6 +408,8 @@ export class BluesalesApiService {
       }
     }
 
+    const requestBody = JSON.stringify(data ?? null);
+    const requestDescription = this.describeRequest(method, data, label, requestBody);
     // Таймаут на HTTP-запрос: без него зависший fetch держал бы очередь вечно.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
@@ -407,12 +422,11 @@ export class BluesalesApiService {
     const startedAtMonotonic = performance.now();
     let durationMs = 0;
     let completedAt = new Date(startedAt);
-    const requestDescription = this.describeRequest(method, data);
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify(data ?? null),
+        body: requestBody,
         signal: controller.signal,
       });
       responseStatus = response.status;
@@ -436,7 +450,7 @@ export class BluesalesApiService {
       }
       if (controller.signal.aborted) {
         this.logger.error(
-          `BlueSales ${method}: timeout; attempt=${attempt}; ` +
+          `BlueSales ${method}: timeout; label=${label}; attempt=${attempt}; ` +
             `request=${requestDescription}; elapsedMs=${Date.now() - startedAt}`,
         );
         throw new BluesalesTimeoutError(
@@ -444,7 +458,7 @@ export class BluesalesApiService {
         );
       }
       this.logger.error(
-        `BlueSales ${method}: connection error; attempt=${attempt}; ` +
+        `BlueSales ${method}: connection error; label=${label}; attempt=${attempt}; ` +
           `request=${requestDescription}; error=${(err as Error).message}`,
       );
       throw new BluesalesConnectionError(
@@ -461,9 +475,10 @@ export class BluesalesApiService {
     } catch {
       const error = new BluesalesInvalidResponseError({ method, status: responseStatus,
         contentType: this.truncateLogValue(responseType, 100), redirected,
-        path: this.truncateLogValue(responsePath, 120), bodyChars: text.length, body: this.responseSummary(text) });
+        path: this.truncateLogValue(responsePath, 120), bodyChars: text.length, body: this.responseSummary(text) },
+        label === 'metavista' ? requestDescription : undefined);
       this.logger.error(
-        `BlueSales ${method}: invalid JSON; label=${label}; attempt=${attempt}; response=${JSON.stringify(error.responseDetails)}`,
+        `BlueSales ${method}: invalid JSON; label=${label}; attempt=${attempt}; request=${requestDescription}; response=${JSON.stringify(error.responseDetails)}`,
       );
       throw error;
     }
@@ -487,7 +502,7 @@ export class BluesalesApiService {
           ? responseError
           : `HTTP ${responseStatus}`;
       this.logger.error(
-        `BlueSales ${method}: API error; status=${responseStatus}; attempt=${attempt}; ` +
+        `BlueSales ${method}: API error; label=${label}; status=${responseStatus}; attempt=${attempt}; ` +
           `request=${requestDescription}; response=${this.truncateLogValue(text)}`,
       );
 

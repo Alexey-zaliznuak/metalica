@@ -63,7 +63,14 @@ export class BluesalesDiagController {
       where: { orderId: state.orderId, field: 'metavistaExport', ...(beforeId === undefined ? {} : { id: { lt: beforeId } }) },
       orderBy: { id: 'desc' }, take: 51, select: { id: true, createdAt: true, meta: true },
     }) : [];
-    return { state, events: events.slice(0, 50), nextBeforeId: events.length > 50 ? events[49].id : null };
+    // Request bodies contain customer contacts. Keep them in server logs/history,
+    // but do not expose them through this unauthenticated diagnostics route.
+    const publicEvents = events.slice(0, 50).map(event => {
+      if (!event.meta || typeof event.meta !== 'object' || Array.isArray(event.meta)) return event;
+      const { requestBody: _privateBody, ...meta } = event.meta;
+      return { ...event, meta };
+    });
+    return { state, events: publicEvents, nextBeforeId: events.length > 50 ? events[49].id : null };
   }
 
   /**

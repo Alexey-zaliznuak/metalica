@@ -5,7 +5,7 @@ const { BluesalesApiService, BluesalesInvalidResponseError, BluesalesRejectedErr
 
 function setup() {
   const logs = [], successes = [];
-  const config = { get: (key, fallback) => ({ BLUESALES_LOGIN: 'fake-login', BLUESALES_PASSWORD: 'fake-password' })[key] ?? fallback };
+  const config = { get: (key, fallback) => ({ BLUESALES_LOGIN: 'fake-login', BLUESALES_PASSWORD: 'fake-password', METAVISTA_API_KEY: 'fake-bearer' })[key] ?? fallback };
   const api = new BluesalesApiService(config, { recordSuccess: async r => successes.push(r) }, { enabled: true });
   api.waitForRequestGap = async () => {};
   api.logger = { log() {}, warn() {}, error: message => logs.push(message) };
@@ -84,4 +84,56 @@ test('valid JSON retains normal success and rejection behavior', async t => {
   assert.deepEqual(JSON.parse(fetch.mock.calls[0].arguments[1].body), { fullName: 'Иван' });
   await assert.rejects(api.send('customers.add'), BluesalesRejectedError);
   assert.equal(successes.length, 1);
+});
+
+test('Metavista error logs retain the full wire JSON and redact credentials without changing the request', async t => {
+  const { api, logs } = setup();
+  const payload = {
+    fullName: 'Иван', email: 'customer@example.invalid', phone: '+34600000000',
+    address: 'Madrid', crmStatus: { name: 'Обратился' }, firstContactDate: '2026-11-20',
+    comments: 'large request\n' + 'x'.repeat(8000),
+    auth: { login: 'fake-login', password: 'fake-password', token: 'another-token', nested: [{ apiKey: 'another-key' }] },
+    note: `fake-bearer ${api.passwordHash} fake-password fake-login`,
+  };
+  let serializations = 0;
+  const data = { toJSON() { serializations++; return payload; } };
+  const fetch = t.mock.method(global, 'fetch', async () => new Response('<html><body>Server error</body></html>'));
+  await assert.rejects(api.send('customers.add', data, { label: 'metavista' }), error => {
+    const request = JSON.parse(error.requestBody);
+    assert.equal(request.email, payload.email);
+    assert.equal(request.comments, payload.comments);
+    assert.deepEqual(request.crmStatus, { name: 'Обратился' });
+    assert.equal(request.auth.password, '[redacted]');
+    assert.equal(request.auth.nested[0].apiKey, '[redacted]');
+    assert.ok(logs.some(log => log.includes(`request=${error.requestBody}; response=`)));
+    for (const secret of ['fake-login', 'fake-password', 'fake-bearer', api.passwordHash, 'another-token', 'another-key']) {
+      assert.ok(!error.requestBody.includes(secret), secret);
+      assert.ok(!logs.join().includes(secret), secret);
+    }
+    assert.doesNotMatch(logs.join(), /[\r\n]/);
+    return true;
+  });
+  assert.equal(serializations, 1);
+  assert.deepEqual(JSON.parse(fetch.mock.calls[0].arguments[1].body), payload);
+});
+
+test('API rejection and connection failure log Metavista request bodies with their label', async t => {
+  const { api, logs } = setup();
+  const data = { fullName: 'Test', crmStatus: { name: 'Обратился' } };
+  t.mock.method(global, 'fetch', async () => Response.json({ error: 'Rejected' }));
+  await assert.rejects(api.send('customers.add', data, { label: 'metavista' }));
+  t.mock.method(global, 'fetch', async () => { throw new Error('network down'); });
+  await assert.rejects(api.send('customers.add', data, { label: 'metavista' }));
+  assert.equal(logs.length, 2);
+  assert.ok(logs.every(log => log.includes('label=metavista') && log.includes(`request=${JSON.stringify(data)}`)));
+});
+
+test('other integrations keep customer payloads hidden', async t => {
+  const { api, logs } = setup();
+  t.mock.method(global, 'fetch', async () => new Response('not JSON'));
+  await assert.rejects(api.send('customers.add', { email: 'private@example.invalid' }), error => {
+    assert.equal(error.requestBody, undefined);
+    return true;
+  });
+  assert.ok(!logs.join().includes('private@example.invalid'));
 });

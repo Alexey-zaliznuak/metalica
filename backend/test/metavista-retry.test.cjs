@@ -189,10 +189,11 @@ test('missing IDs retain useful stage and response field names without response 
 
 test('HTML failure details survive in persistent history and retry logs stay on one line', async () => {
   const body = 'page text '.repeat(200) + 'actual error secret-test';
+  const requestBody = JSON.stringify({ email: 'customer@example.invalid', crmStatus: { name: 'Обратился' } });
   const h = harness(1, { customerError: new BluesalesInvalidResponseError({
     method: 'customers.add', status: 200, contentType: 'text/html', redirected: true,
     path: '/app/Error.aspx', bodyChars: 9000, body,
-  }) });
+  }, requestBody) });
   await h.service.tick();
   assert.equal(h.rows[0].exportState, 'RETRY');
   const event = h.events.at(-1).meta;
@@ -200,6 +201,7 @@ test('HTML failure details survive in persistent history and retry logs stay on 
   assert.ok(event.response.body.endsWith('actual error [redacted]'));
   assert.ok(event.response.body.length > 1000);
   assert.equal(event.response.status, 200);
+  assert.equal(event.requestBody, requestBody);
   assert.ok(!JSON.stringify(h.events).includes('secret-test'));
   assert.ok(h.logs.some(l => l.message.includes('повтор=') && l.message.includes('HTTP=200')));
   assert.ok(h.logs.every(l => !/[\r\n]/.test(l.message)));
@@ -219,12 +221,16 @@ test('diagnostics paginate persistent history and the regular timeline excludes 
     metavistaOrder: { findUnique: async () => ({ externalId: 'MV-900000', orderId: 1 }) },
     orderEvent: { findMany: async query => {
       eventsQuery = query;
-      return Array.from({ length: 51 }, (_, i) => ({ id: 100 - i }));
+      return Array.from({ length: 51 }, (_, i) => ({ id: 100 - i, meta: {
+        stage: 'customers.add', requestBody: '{"email":"private@example.invalid"}', response: { status: 200 },
+      } }));
     } },
   };
   const controller = new BluesalesDiagController(db, {});
   const result = await controller.metavista('MV-900000', '101');
   assert.equal(result.events.length, 50); assert.equal(result.nextBeforeId, 51);
+  assert.ok(result.events.every(e => !('requestBody' in e.meta) && e.meta.response.status === 200));
+  assert.ok(!JSON.stringify(result).includes('private@example.invalid'));
   assert.deepEqual(eventsQuery.where, { orderId: 1, field: 'metavistaExport', id: { lt: 101 } });
   await assert.rejects(controller.metavista('wrong'), /Неверный номер/);
   await assert.rejects(controller.metavista('MV-900000', '-1'), /Неверный beforeId/);
