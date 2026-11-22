@@ -22,9 +22,12 @@ import OrderStatusesPage from './pages/OrderStatusesPage'
 import NotificationsPage from './pages/NotificationsPage'
 import NotificationBellHost from './components/NotificationBellHost'
 import { NotificationsProvider } from './notifications/NotificationsContext'
+import type { OrderCountry } from './api/types'
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+function App() {
+  const [orderCountry, setOrderCountry] = React.useState<OrderCountry>('ru')
+
+  return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
@@ -36,8 +39,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 path="/orders"
                 element={
                   <ProtectedRoute>
-                    <AppLayout>
-                      <OrdersPage />
+                    <AppLayout orderCountry={{ value: orderCountry, onChange: setOrderCountry }}>
+                      <OrdersPage country={orderCountry} />
                     </AppLayout>
                   </ProtectedRoute>
                 }
@@ -176,5 +179,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>
+  )
+}
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
   </React.StrictMode>,
 )

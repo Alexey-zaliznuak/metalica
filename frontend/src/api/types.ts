@@ -1,3 +1,5 @@
+export type OrderCountry = 'ru' | 'es'
+
 export type UserRole =
   | 'SKETCH_DESIGNER'
   | 'REVISION_DESIGNER'

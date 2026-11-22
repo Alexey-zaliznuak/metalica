@@ -2,6 +2,7 @@ import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ForumIcon from '@mui/icons-material/Forum'
 import GroupIcon from '@mui/icons-material/Group'
+import LanguageIcon from '@mui/icons-material/Language'
 import InsightsIcon from '@mui/icons-material/Insights'
 import SpeedIcon from '@mui/icons-material/Speed'
 import ListAltIcon from '@mui/icons-material/ListAlt'
@@ -33,7 +34,7 @@ import {
 } from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import type { UserScope } from '../api/types'
+import type { OrderCountry, UserScope } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { canManageArtistShifts, hasScope, roleLabel } from '../utils'
 
@@ -183,7 +184,75 @@ function initials(name: string): string {
     .join('')
 }
 
-export default function AppLayout({ children }: { children: ReactNode }) {
+const ORDER_COUNTRIES = [
+  { value: 'es', label: 'Испания', flag: 'linear-gradient(#aa151b 25%, #f1bf00 25% 75%, #aa151b 75%)' },
+  { value: 'ru', label: 'Россия', flag: 'linear-gradient(#fff 33.33%, #0039a6 33.33% 66.67%, #d52b1e 66.67%)' },
+] as const
+
+interface OrderCountryPicker {
+  value: OrderCountry
+  onChange: (country: OrderCountry) => void
+}
+
+function OrderCountryMenu({ value, onChange }: OrderCountryPicker) {
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  const label = `Страна заказов: ${value === 'es' ? 'Испания' : 'Россия'}`
+
+  return (
+    <>
+      <Tooltip title={label}>
+        <IconButton
+          id="order-country-button"
+          color="inherit"
+          size="small"
+          aria-label={label}
+          aria-haspopup="menu"
+          aria-expanded={Boolean(anchorEl)}
+          aria-controls={anchorEl ? 'order-country-menu' : undefined}
+          onClick={(event) => setAnchorEl(event.currentTarget)}
+        >
+          <LanguageIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        MenuListProps={{ id: 'order-country-menu', 'aria-labelledby': 'order-country-button' }}
+      >
+        {ORDER_COUNTRIES.map((country) => (
+          <MenuItem
+            key={country.value}
+            role="menuitemradio"
+            aria-checked={country.value === value}
+            selected={country.value === value}
+            onClick={() => {
+              onChange(country.value)
+              setAnchorEl(null)
+            }}
+          >
+            <Box
+              component="span"
+              aria-hidden="true"
+              sx={{ width: 24, height: 16, mr: 1, background: country.flag, border: 1, borderColor: 'divider' }}
+            />
+            {country.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  )
+}
+
+export default function AppLayout({
+  children,
+  orderCountry,
+}: {
+  children: ReactNode
+  orderCountry?: OrderCountryPicker
+}) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -292,6 +361,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               alignItems="center"
               sx={{ mr: 0.25, flexShrink: 0 }}
             >
+              {orderCountry && <OrderCountryMenu {...orderCountry} />}
               <Avatar
                 sx={{
                   width: 30,

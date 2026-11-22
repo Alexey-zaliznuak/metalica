@@ -24,6 +24,29 @@ function setup({ exact = null, matches = [], orders = [] } = {}) {
   return { service, calls };
 }
 
+test('country filters apply to both the order count and paginated list', async () => {
+  const spainTag = { bsTagId: '728420' };
+  const filters = {
+    es: { lead: { is: { tags: { some: spainTag } } } },
+    ru: {
+      OR: [
+        { lead: { is: null } },
+        { lead: { is: { tags: { none: spainTag } } } },
+      ],
+    },
+  };
+  for (const [country, filter] of Object.entries(filters)) {
+    const { service, calls } = setup({ exact: { id: 7 } });
+    let list;
+    service.prisma.order.findMany = async args => { list = args; return []; };
+    await service.findAll({ country, q: '123456', page: 2, limit: 10 });
+    assert.deepEqual(calls.where, { AND: [visibleOrder, filter, { id: 7 }] });
+    assert.deepEqual(list.where, calls.where);
+    assert.equal(list.skip, 10);
+    assert.equal(list.take, 10);
+  }
+});
+
 test('system tags match any selected tag and combine with status before pagination', async () => {
   const { service, calls } = setup();
   let list;

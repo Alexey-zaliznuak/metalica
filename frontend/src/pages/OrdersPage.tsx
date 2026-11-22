@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -52,6 +53,7 @@ import type {
   BluesalesStatusOption,
   BluesalesTag,
   Order,
+  OrderCountry,
   OrderAssigneesResponse,
   OrderFilterOptions,
   OrderStatusSyncResponse,
@@ -637,7 +639,7 @@ function ShiftSwitch() {
   )
 }
 
-export default function OrdersPage() {
+export default function OrdersPage({ country }: { country: OrderCountry }) {
   const navigate = useNavigate()
   const { user, updateFrontendSettings } = useAuth()
 
@@ -701,6 +703,16 @@ export default function OrdersPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastColumnRefreshAtRef = useRef<Record<number, number>>({})
   const columnRequestVersionRef = useRef<Record<number, number>>({})
+  const boardVersionRef = useRef(0)
+
+  useLayoutEffect(() => {
+    boardVersionRef.current += 1
+    columnRequestVersionRef.current = {}
+    lastColumnRefreshAtRef.current = {}
+    draggingOrderIdRef.current = null
+    setColumnData({})
+    setError(null)
+  }, [country])
   const dirtyRef = useRef(false)
   const skipSaveRef = useRef(false)
 
@@ -970,7 +982,7 @@ export default function OrdersPage() {
   }, [hasStatusTimers])
 
   const buildFilterParams = useCallback((): Record<string, unknown> => {
-    const params: Record<string, unknown> = {}
+    const params: Record<string, unknown> = { country }
     if (activeSearchQuery) params.q = activeSearchQuery
     if (selectedDeliveryManagers.length) params.deliveryManagers = selectedDeliveryManagers
     if (selectedOnboardingManagers.length)
@@ -988,6 +1000,7 @@ export default function OrdersPage() {
     if (selectedTagIds.length) params.tagIds = selectedTagIds
     return params
   }, [
+    country,
     activeSearchQuery,
     selectedDeliveryManagers,
     selectedOnboardingManagers,
@@ -1005,8 +1018,12 @@ export default function OrdersPage() {
 
   const fetchColumnPage = useCallback(
     async (columnId: number, page: number, replace: boolean, preserveDepth = false) => {
+      const boardVersion = boardVersionRef.current
       const requestVersion = (columnRequestVersionRef.current[columnId] ?? 0) + 1
       columnRequestVersionRef.current[columnId] = requestVersion
+      const isCurrentRequest = () =>
+        boardVersionRef.current === boardVersion &&
+        columnRequestVersionRef.current[columnId] === requestVersion
       // Автообновление должно сохранить уже загруженную глубину колонки.
       const pageCount = replace && preserveDepth
         ? Math.max(1, columnDataRef.current[columnId]?.page ?? 1)
@@ -1045,7 +1062,7 @@ export default function OrdersPage() {
         )
         const data = responses[responses.length - 1].data
         setColumnData((prev) => {
-          if (columnRequestVersionRef.current[columnId] !== requestVersion) return prev
+          if (!isCurrentRequest()) return prev
           const existing = prev[columnId]
           const items = replace
             ? responses.flatMap((response) => response.data.items)
@@ -1073,9 +1090,10 @@ export default function OrdersPage() {
           }
         })
       } catch (err) {
-        if (columnRequestVersionRef.current[columnId] !== requestVersion) return
+        if (!isCurrentRequest()) return
         logApiError('загрузка колонки заказов', err)
         setColumnData((prev) => {
+          if (!isCurrentRequest()) return prev
           const existing = prev[columnId] ?? EMPTY_COLUMN_STATE
           return {
             ...prev,
@@ -1271,6 +1289,7 @@ export default function OrdersPage() {
       }
       const fromColumnId = sourceColumnId
       const originalOrder = sourceOrder
+      const boardVersion = boardVersionRef.current
 
       setMovingOrderId(orderId)
       // Оптимистично переносим карточку между колонками.
@@ -1300,6 +1319,7 @@ export default function OrdersPage() {
           statusId: targetColumnId,
         })
         setColumnData((prev) => {
+          if (boardVersionRef.current !== boardVersion) return prev
           const to = prev[targetColumnId]
           if (!to) return prev
           return {
@@ -1312,8 +1332,10 @@ export default function OrdersPage() {
         })
       } catch (err) {
         logApiError('перемещение заказа между статусами', err)
+        if (boardVersionRef.current !== boardVersion) return
         // Откат: возвращаем заказ в исходную колонку.
         setColumnData((prev) => {
+          if (boardVersionRef.current !== boardVersion) return prev
           const next = { ...prev }
           const to = prev[targetColumnId]
           if (to) {

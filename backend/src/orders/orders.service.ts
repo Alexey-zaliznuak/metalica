@@ -12,6 +12,7 @@ import { StorageCleanupService } from '../storage/storage-cleanup.service';
 import { productionOrderData } from './production-order-data';
 import { deliveryTypeSql } from './delivery-type';
 import { orderSizeFilter } from './order-size';
+import { METAVISTA_SETTINGS } from '../metavista/metavista.config';
 import {
   BluesalesOrderStatus,
   OrderSource,
@@ -85,6 +86,7 @@ export class OrdersService {
     sizes?: string[];
     systemTags?: string[];
     tagIds?: string[];
+    country?: string;
     page?: number;
     limit?: number;
   }) {
@@ -95,6 +97,15 @@ export class OrdersService {
       throw new BadRequestException('Дата «До» должна быть не раньше даты «От»');
     }
     const and: Prisma.OrderWhereInput[] = [{ OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null } } }] }];
+    if (params.country !== undefined) {
+      if (params.country !== 'ru' && params.country !== 'es') {
+        throw new BadRequestException('Неизвестная страна заказов');
+      }
+      const hasSpainTag = { bsTagId: String(METAVISTA_SETTINGS.tagId) };
+      and.push(params.country === 'es'
+        ? { lead: { is: { tags: { some: hasSpainTag } } } }
+        : { OR: [{ lead: { is: null } }, { lead: { is: { tags: { none: hasSpainTag } } } }] });
+    }
     if (params.tagIds?.length) {
       and.push({ lead: { is: { tags: { some: { bsTagId: { in: [...new Set(params.tagIds)] } } } } } });
     }
