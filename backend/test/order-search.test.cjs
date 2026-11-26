@@ -6,6 +6,26 @@ const { OrdersController } = require('../dist/orders/orders.controller');
 const visibleOrder = { OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null } } }] };
 const visibleWhere = { AND: [visibleOrder] };
 
+test('Spain activity uses the same tag and visibility rules for orders and their revisions', async () => {
+  const service = Object.create(OrdersService.prototype);
+  const where = {
+    AND: [visibleOrder, { lead: { is: { tags: { some: { bsTagId: '728420' } } } } }],
+  };
+  const query = { orderBy: { id: 'desc' }, select: { id: true } };
+  service.prisma = {
+    order: { findFirst: async args => {
+      assert.deepEqual(args, { ...query, where });
+      return { id: 42 };
+    } },
+    revision: { findFirst: async args => {
+      assert.deepEqual(args, { ...query, where: { order: { is: where } } });
+      return { id: 17 };
+    } },
+  };
+  const controller = new OrdersController(service);
+  assert.deepEqual(await controller.getSpainActivity(), { orderId: 42, revisionId: 17 });
+});
+
 function setup({ exact = null, matches = [], orders = [] } = {}) {
   const calls = { raw: 0, where: null };
   const service = Object.create(OrdersService.prototype);

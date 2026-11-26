@@ -90,6 +90,11 @@ export class OrdersController {
     return this.orders.getManagerOptions();
   }
 
+  @Get('spain-activity')
+  getSpainActivity() {
+    return this.orders.getSpainActivity();
+  }
+
   @Get('order-statuses')
   getOrderStatuses() {
     return this.orders.getOrderStatuses();

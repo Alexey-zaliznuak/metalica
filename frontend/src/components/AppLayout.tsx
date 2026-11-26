@@ -184,19 +184,44 @@ function initials(name: string): string {
     .join('')
 }
 
-const ORDER_COUNTRIES = [
-  { value: 'es', label: 'Испания', flag: 'linear-gradient(#aa151b 25%, #f1bf00 25% 75%, #aa151b 75%)' },
-  { value: 'ru', label: 'Россия', flag: 'linear-gradient(#fff 33.33%, #0039a6 33.33% 66.67%, #d52b1e 66.67%)' },
-] as const
+const ORDER_COUNTRIES = {
+  es: { label: 'Испания', flag: 'linear-gradient(#aa151b 25%, #f1bf00 25% 75%, #aa151b 75%)' },
+  ru: { label: 'Россия', flag: 'linear-gradient(#fff 33.33%, #0039a6 33.33% 66.67%, #d52b1e 66.67%)' },
+} as const
+
+const ORDER_COUNTRY_OPTIONS: OrderCountry[] = ['es', 'ru']
+
+function CountryFlag({ country }: { country: OrderCountry }) {
+  return (
+    <Box
+      component="span"
+      aria-hidden="true"
+      sx={{
+        display: 'inline-block', width: 24, height: 16, flexShrink: 0,
+        background: ORDER_COUNTRIES[country].flag, border: 1, borderColor: 'divider',
+      }}
+    />
+  )
+}
 
 interface OrderCountryPicker {
   value: OrderCountry
   onChange: (country: OrderCountry) => void
+  hasNewOrder: boolean
+  hasNewRevision: boolean
 }
 
-function OrderCountryMenu({ value, onChange }: OrderCountryPicker) {
+function OrderCountryMenu({ value, onChange, hasNewOrder, hasNewRevision }: OrderCountryPicker) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
-  const label = `Страна заказов: ${value === 'es' ? 'Испания' : 'Россия'}`
+  const label = [
+    `Страна заказов: ${ORDER_COUNTRIES[value].label}`,
+    hasNewOrder && 'Новые заказы в Испании',
+    hasNewRevision && 'Новые правки в Испании',
+  ].filter(Boolean).join('. ')
+  const dotSx = {
+    position: 'absolute', right: -4, width: 8, height: 8,
+    borderRadius: '50%', border: '1px solid', borderColor: 'primary.dark',
+  } as const
 
   return (
     <>
@@ -210,8 +235,14 @@ function OrderCountryMenu({ value, onChange }: OrderCountryPicker) {
           aria-expanded={Boolean(anchorEl)}
           aria-controls={anchorEl ? 'order-country-menu' : undefined}
           onClick={(event) => setAnchorEl(event.currentTarget)}
+          sx={{ gap: 0.5, borderRadius: 1 }}
         >
-          <LanguageIcon fontSize="small" />
+          <CountryFlag country={value} />
+          <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', position: 'relative' }}>
+            <LanguageIcon fontSize="small" />
+            {hasNewOrder && <Box component="span" sx={{ ...dotSx, top: -2, bgcolor: 'success.light' }} />}
+            {hasNewRevision && <Box component="span" sx={{ ...dotSx, bottom: -2, bgcolor: 'warning.light' }} />}
+          </Box>
         </IconButton>
       </Tooltip>
       <Menu
@@ -222,23 +253,20 @@ function OrderCountryMenu({ value, onChange }: OrderCountryPicker) {
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         MenuListProps={{ id: 'order-country-menu', 'aria-labelledby': 'order-country-button' }}
       >
-        {ORDER_COUNTRIES.map((country) => (
+        {ORDER_COUNTRY_OPTIONS.map((country) => (
           <MenuItem
-            key={country.value}
+            key={country}
             role="menuitemradio"
-            aria-checked={country.value === value}
-            selected={country.value === value}
+            aria-checked={country === value}
+            selected={country === value}
             onClick={() => {
-              onChange(country.value)
+              onChange(country)
               setAnchorEl(null)
             }}
+            sx={{ gap: 1 }}
           >
-            <Box
-              component="span"
-              aria-hidden="true"
-              sx={{ width: 24, height: 16, mr: 1, background: country.flag, border: 1, borderColor: 'divider' }}
-            />
-            {country.label}
+            <CountryFlag country={country} />
+            {ORDER_COUNTRIES[country].label}
           </MenuItem>
         ))}
       </Menu>

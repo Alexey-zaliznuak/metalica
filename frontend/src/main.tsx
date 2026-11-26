@@ -23,160 +23,160 @@ import NotificationsPage from './pages/NotificationsPage'
 import NotificationBellHost from './components/NotificationBellHost'
 import { NotificationsProvider } from './notifications/NotificationsContext'
 import type { OrderCountry } from './api/types'
+import { useSpainOrderActivity } from './hooks/useSpainOrderActivity'
 
 function App() {
   const [orderCountry, setOrderCountry] = React.useState<OrderCountry>('ru')
+  const spainActivity = useSpainOrderActivity(orderCountry)
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
-        <AuthProvider>
-          <NotificationsProvider>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route
-                path="/orders"
-                element={
-                  <ProtectedRoute>
-                    <AppLayout orderCountry={{ value: orderCountry, onChange: setOrderCountry }}>
-                      <OrdersPage country={orderCountry} />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/orders/:id"
-                element={
-                  <ProtectedRoute>
-                    <AppLayout>
-                      <OrderThreadPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/metrics"
-                element={
-                  <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
-                    <AppLayout>
-                      <MetricsPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/dev-metrics"
-                element={<ProtectedRoute requiredScopes={['API_METRICS_VIEW']}><AppLayout><DevMetricsPage /></AppLayout></ProtectedRoute>}
-              />
-              <Route
-                path="/metrics/revisions"
-                element={
-                  <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
-                    <AppLayout>
-                      <RevisionAnalyticsPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/metrics/sketches"
-                element={
-                  <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
-                    <AppLayout>
-                      <SketchAnalyticsPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workload"
-                element={
-                  <ProtectedRoute requiredScopes={['WORKLOAD_VIEW']}>
-                    <AppLayout>
-                      <WorkloadPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workload/journal"
-                element={
-                  <ProtectedRoute requiredScopes={['WORKLOAD_VIEW']}>
-                    <AppLayout>
-                      <AssignmentJournalPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/chats"
-                element={
-                  <ProtectedRoute>
-                    <AppLayout>
-                      <ChatsPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/chats/:id"
-                element={
-                  <ProtectedRoute>
-                    <AppLayout>
-                      <ChatThreadPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/notifications"
-                element={
-                  <ProtectedRoute>
-                    <AppLayout>
-                      <NotificationsPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/users"
-                element={
-                  <ProtectedRoute requireShiftManagement>
-                    <AppLayout>
-                      <UsersPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/dictionary/statuses"
-                element={
-                  <ProtectedRoute requireAdmin>
-                    <AppLayout>
-                      <OrderStatusesPage />
-                    </AppLayout>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/dictionary"
-                element={<Navigate to="/dictionary/statuses" replace />}
-              />
-              {/* Старые адреса статусов: и отдельная страница, и /dictionary/orders. */}
-              <Route
-                path="/order-statuses"
-                element={<Navigate to="/dictionary/statuses" replace />}
-              />
-              <Route
-                path="/dictionary/orders"
-                element={<Navigate to="/dictionary/statuses" replace />}
-              />
-              <Route path="*" element={<Navigate to="/orders" replace />} />
-            </Routes>
-            <NotificationBellHost />
-          </NotificationsProvider>
-        </AuthProvider>
+        <NotificationsProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route
+              path="/orders"
+              element={
+                <ProtectedRoute>
+                  <AppLayout orderCountry={{ value: orderCountry, onChange: setOrderCountry, ...spainActivity }}>
+                    <OrdersPage country={orderCountry} />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/orders/:id"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <OrderThreadPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/metrics"
+              element={
+                <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
+                  <AppLayout>
+                    <MetricsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dev-metrics"
+              element={<ProtectedRoute requiredScopes={['API_METRICS_VIEW']}><AppLayout><DevMetricsPage /></AppLayout></ProtectedRoute>}
+            />
+            <Route
+              path="/metrics/revisions"
+              element={
+                <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
+                  <AppLayout>
+                    <RevisionAnalyticsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/metrics/sketches"
+              element={
+                <ProtectedRoute requiredScopes={['METRICS_VIEW']}>
+                  <AppLayout>
+                    <SketchAnalyticsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/workload"
+              element={
+                <ProtectedRoute requiredScopes={['WORKLOAD_VIEW']}>
+                  <AppLayout>
+                    <WorkloadPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/workload/journal"
+              element={
+                <ProtectedRoute requiredScopes={['WORKLOAD_VIEW']}>
+                  <AppLayout>
+                    <AssignmentJournalPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chats"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <ChatsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chats/:id"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <ChatThreadPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/notifications"
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <NotificationsPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/users"
+              element={
+                <ProtectedRoute requireShiftManagement>
+                  <AppLayout>
+                    <UsersPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dictionary/statuses"
+              element={
+                <ProtectedRoute requireAdmin>
+                  <AppLayout>
+                    <OrderStatusesPage />
+                  </AppLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dictionary"
+              element={<Navigate to="/dictionary/statuses" replace />}
+            />
+            {/* Старые адреса статусов: и отдельная страница, и /dictionary/orders. */}
+            <Route
+              path="/order-statuses"
+              element={<Navigate to="/dictionary/statuses" replace />}
+            />
+            <Route
+              path="/dictionary/orders"
+              element={<Navigate to="/dictionary/statuses" replace />}
+            />
+            <Route path="*" element={<Navigate to="/orders" replace />} />
+          </Routes>
+          <NotificationBellHost />
+        </NotificationsProvider>
       </BrowserRouter>
     </ThemeProvider>
   )
@@ -184,6 +184,8 @@ function App() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <AuthProvider>
+      <App />
+    </AuthProvider>
   </React.StrictMode>,
 )

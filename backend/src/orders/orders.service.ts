@@ -35,6 +35,12 @@ import { AttachmentsService } from '../storage/attachments.service';
 import { MAX_UPLOAD_BYTES } from '../storage/upload.config';
 import { UpdateAttachmentPhotoSizeDto } from '../storage/dto/update-attachment-photo-size.dto';
 
+const spainTag = { bsTagId: String(METAVISTA_SETTINGS.tagId) };
+const visibleOrder: Prisma.OrderWhereInput = {
+  OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null } } }],
+};
+const spainOrder: Prisma.OrderWhereInput = { lead: { is: { tags: { some: spainTag } } } };
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -62,6 +68,19 @@ export class OrdersService {
     username: true,
     role: true,
   } as const;
+
+  async getSpainActivity() {
+    const where = { AND: [visibleOrder, spainOrder] };
+    const [order, revision] = await Promise.all([
+      this.prisma.order.findFirst({ where, orderBy: { id: 'desc' }, select: { id: true } }),
+      this.prisma.revision.findFirst({
+        where: { order: { is: where } },
+        orderBy: { id: 'desc' },
+        select: { id: true },
+      }),
+    ]);
+    return { orderId: order?.id ?? 0, revisionId: revision?.id ?? 0 };
+  }
 
   /**
    * Пагинированная выборка заказов для ОДНОЙ колонки доски.
@@ -96,15 +115,14 @@ export class OrdersService {
     if (from && to && from > to) {
       throw new BadRequestException('Дата «До» должна быть не раньше даты «От»');
     }
-    const and: Prisma.OrderWhereInput[] = [{ OR: [{ metavista: { is: null } }, { metavista: { is: { deletedAt: null } } }] }];
+    const and: Prisma.OrderWhereInput[] = [visibleOrder];
     if (params.country !== undefined) {
       if (params.country !== 'ru' && params.country !== 'es') {
         throw new BadRequestException('Неизвестная страна заказов');
       }
-      const hasSpainTag = { bsTagId: String(METAVISTA_SETTINGS.tagId) };
       and.push(params.country === 'es'
-        ? { lead: { is: { tags: { some: hasSpainTag } } } }
-        : { OR: [{ lead: { is: null } }, { lead: { is: { tags: { none: hasSpainTag } } } }] });
+        ? spainOrder
+        : { OR: [{ lead: { is: null } }, { lead: { is: { tags: { none: spainTag } } } }] });
     }
     if (params.tagIds?.length) {
       and.push({ lead: { is: { tags: { some: { bsTagId: { in: [...new Set(params.tagIds)] } } } } } });
