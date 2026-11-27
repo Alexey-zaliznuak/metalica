@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
+import { CdekDeliveryCheckController } from './cdek-delivery-check.controller';
+import { CdekDeliveryPricesController } from './cdek-delivery-prices.controller';
 import { OrderEventsService } from './order-events.service';
 import { AssignmentModule } from '../assignment/assignment.module';
 import { BluesalesModule } from '../bluesales/bluesales.module';
@@ -13,7 +15,7 @@ import { OrderAttachmentCleanupWorker, OrderAutoCompleteWorker } from './order-l
 @Module({
   imports: [AssignmentModule, BluesalesModule, NotificationsModule],
   providers: [OrdersService, OrderEventsService, OrderStatusOutboxProcessor, ProductionFilesService, OrderLifecycleService, OrderAttachmentCleanupWorker, OrderAutoCompleteWorker],
-  controllers: [OrdersController],
+  controllers: [OrdersController, CdekDeliveryCheckController, CdekDeliveryPricesController],
   exports: [OrdersService],
 })
 export class OrdersModule {}
